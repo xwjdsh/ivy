@@ -80,7 +80,7 @@ Everything users care about (memory, email, calendar, coding help, news digests,
 ### Request flow (one user turn)
 
 1. The interface sends the user's message to the **Agent Loop** with a session id.
-2. The **Context Builder** assembles the request: the frozen system prompt, the tool list from all enabled plugins, the session history, and any per-turn context from plugins (e.g. relevant memories, today's date).
+2. The **Context Builder** assembles the request: the frozen system prompt, the tool list from all enabled plugins, the session history, and the new user message, prefixed with a `<context>` block built from plugins' per-turn context (e.g. the current time, relevant memories); see §5.3.
 3. The **Model Client** streams the request to the model.
 4. If the model calls tools, the loop sends each call through the **Permission Gate**, then to the owning plugin, and appends all results in a single message.
 5. Steps 3–4 repeat until the model ends the turn (or a step/budget limit is hit).
@@ -102,7 +102,7 @@ Everything users care about (memory, email, calendar, coding help, news digests,
 - Speaks the Anthropic Messages API to whatever `[providers.*]` endpoint is active. With Anthropic's own API the default model is **`claude-opus-5-5`**, with adaptive thinking and `effort` set explicitly per route (e.g. `medium` for chat, `high` for coding tasks, `low` for background jobs like memory extraction or summaries). Configurable per plugin/job.
 - Server-side refusal fallback (`fallbacks: "default"`) is on for Anthropic's API; set `refusal_fallback = false` for proxies and other models.
 - **Compatible endpoints vary.** Effort, adaptive thinking, prompt caching, refusal fallback, compaction and server tools are Anthropic API features; a compatible endpoint or a non-Claude model may ignore or reject them. Each gets a per-provider switch when a real endpoint needs it (today: `refusal_fallback`; `modelCapabilities` also drops params known models reject).
-- **Prompt caching:** tools and system prompt are kept byte-stable (plugins sorted by id, no timestamps), with a cache breakpoint after them. Volatile context (date/time, retrieved memories) goes into the message stream as a mid-conversation system message, never into the top-level system prompt.
+- **Prompt caching:** tools and system prompt are kept byte-stable (plugins sorted by id, no timestamps), with a cache breakpoint after them. Volatile context (date/time, retrieved memories) goes into the new user message as a `<context>` block (§5.3), never into the system prompt, so the cached prefix stays intact.
 - **Switching models:** the active provider's `models` lists what `/model` offers (a picker, or `/model <name>`); the switch lasts for the current run only. Requests only carry params the model accepts (`modelCapabilities`): Haiku gets no `effort` and no refusal fallback, which would be a 400. The prompt cache is per model, so the first call after a switch misses it.
 - **Long sessions:** use server-side compaction (beta) when a session grows large, and keep the returned compaction blocks in history.
 - **Providers:** `config.toml` can define several `[providers.<name>]` (each with `type`, `api_key`, `base_url`, a required `default_model` used at startup, optional `models` that `/model` can also switch to, and `refusal_fallback`), and `[agent] provider = "<name>"` picks the active one. Only `type = "anthropic"` exists today; another API kind would add a value here plus a `ModelClient`. Generation settings (`effort`, `max_tokens`) live in `[generation]`, independent of the provider.
@@ -120,7 +120,7 @@ Ivy speaks only the Anthropic Messages API (see Non-Goals): Claude directly, or 
 | Top-level `cache_control` | `Agent.buildRequest` | Ignored or rejected |
 | `eager_input_streaming` on tools | `PluginHost.apiTools` | Ignored or rejected |
 | Price table | `model.ts` | Cost shows `?` |
-| Planned: compaction, server tools (web search), mid-conversation system messages | — | Not available elsewhere |
+| Planned: compaction, server tools (web search) | — | Not available elsewhere |
 
 Other models on the same provider only need `/model`, or a different `default_model` (note: Claude Haiku supports neither `effort` nor fallbacks).
 
@@ -137,7 +137,7 @@ Builds each request from layers, ordered from most stable to least stable (for c
 | Tools | All enabled plugins, sorted | When plugins change |
 | System prompt | built-in `core.md` (operating & safety rules) + `~/.ivy/SOUL.md` (who Ivy is) + `~/.ivy/USER.md` (who the user is) + interface instructions (how replies are shown) + each plugin's static `instructions` | Rarely |
 | History | Session transcript | Append-only |
-| Turn context | Plugins' `contextFor(turn)` (e.g. relevant memories, calendar for today) | Every turn |
+| Turn context | Plugins' `contextFor(turn)` (e.g. current time, relevant memories), as a `<context>` block at the start of the user message | Every turn |
 
 Naming follows the common `SOUL.md` / `USER.md` convention of personal agents:
 
@@ -145,6 +145,26 @@ Naming follows the common `SOUL.md` / `USER.md` convention of personal agents:
 - `SOUL.md`: who Ivy is: personality, tone, values. Only identity, no operating rules.
 - `USER.md`: who the user is and how they like things done.
 - Interface instructions: supplied by the UI (the TUI says it renders Markdown; one-shot mode asks for plain text).
+
+#### Turn context
+
+Each user turn, the kernel asks every enabled plugin for `contextFor(turn)` and puts the non-empty answers, in plugin-id order, into one text block **before** the user's text in the same user message:
+
+```
+<context>
+## core
+Now: 2026-10-16 Fri 14:57 (Asia/Tokyo, UTC+09:00)
+## memory
+- [preference] Prefers short answers in Chinese.
+- [todo, open] Renew passport before 2026-12.
+</context>
+```
+
+- **Why not a mid-conversation system message:** that is a newer Claude-only API feature; compatible endpoints and other models may reject it. A text block in the user message works everywhere.
+- **History:** the block is stored in the session like the rest of the message (append-only), so a resumed or replayed session shows the model exactly what it saw. The prompt cache is unaffected because the block comes after all earlier history.
+- **Display:** the TUI, session previews and turn counts skip the `<context>` block; `-d` traces show it.
+- **Trust:** `core.md` tells the model the block is supplied by Ivy as reference data, not written by the user.
+- **Limits:** each plugin's context is capped (2,000 characters) and gets a short time budget (1 s); a plugin that fails or times out is skipped and logged, so a turn never fails because of context.
 
 `SOUL.md` and `USER.md` live in the data dir and are optional; a missing file is simply left out (with nothing at all, the request has no system prompt). Templates are in `examples/`. Later, Ivy may be allowed to edit `SOUL.md` itself, with confirmation and history.
 
@@ -166,22 +186,26 @@ Every tool declares a **risk level**:
 | `external` | send an email, post a message, accept an invite | always ask |
 | `dangerous` | shell commands, deleting data | always ask, show full command |
 
-Rules live in `~/.ivy/config.toml`, e.g.:
+Rules are tool-name globs (`*` matches anything). Argument patterns such as `shell__run(git status*)` come with the shell plugin in M2.
 
 ```toml
 [permissions]
-allow = ["memory__*", "fs__read", "shell__run(git status*)"]
-deny  = ["shell(rm -rf*)"]
+allow = ["memory__*"]
+deny  = ["gmail__send"]
 ```
 
-The interface shows the tool, its input, and options: *allow once / always for this session / always (save rule) / deny*.
+- **Precedence:** `deny` > `allow` > the risk level's default. A denied call is rejected without asking, and the model is told it was denied by a rule.
+- **Sources:** rules from `config.toml` (hand-written) plus learned rules in `~/.ivy/permissions.json`, which Ivy owns. Ivy never rewrites `config.toml`, so its comments and layout stay intact.
+- **Dialog:** *Yes* / *Yes, for this session* / *Always (saves an allow rule to permissions.json)* / *No*. `dangerous` tools never offer *Always*.
+- **Plugin defaults:** a plugin may ship default allow rules for low-impact tools (e.g. memory saves); user `deny` rules still win.
 
 ### 5.6 Plugin Host
 
 Loads, configures and runs plugins; see §6 for the plugin contract. Responsibilities:
 
 - Discovery: built-in plugins in `plugins/`, user plugins in `~/.ivy/plugins/`.
-- Enable/disable and per-plugin config from `config.toml`.
+- Enable/disable and per-plugin config from `config.toml`: `[plugins.<id>]` holds the plugin's own settings (validated by its `configSchema`) plus `enabled = false` to turn it off. Built-in plugins are on by default.
+- Plugin slash commands appear in the `/` list and `/help` next to the built-in ones; a name clash with a built-in command is an error at startup.
 - Namespacing: tool names are `<plugin>__<tool>` to avoid collisions (API tool names allow only `[a-zA-Z0-9_-]`, no dots).
 - Per-plugin storage directory and secrets access.
 - Scheduler for plugin jobs (cron syntax), active once the daemon exists (M4).
@@ -238,7 +262,7 @@ export interface IvyPlugin {
 
   tools?: ToolDef[];
   instructions?: string;
-  contextFor?(turn: TurnInfo): Promise<string | null>;
+  contextFor?(turn: TurnInfo): Promise<string | null> | string | null;
   commands?: CommandDef[];
   jobs?: JobDef[];
   hooks?: Partial<PluginHooks>;
@@ -259,6 +283,19 @@ export interface PluginContext {
   log: Logger;
   llm: LlmClient;             // for plugins that need their own model calls (e.g. summarizing)
   kernel: KernelApi;          // send notifications, call other plugins' tools, etc.
+}
+
+export interface TurnInfo {
+  sessionId: string;
+  userText: string;           // the new user message (for relevance)
+  now: Date;
+}
+
+export interface CommandDef {
+  name: string;               // "/remember"
+  args?: string;              // "<text>" (required) or "[query]" (optional), as in the / list
+  description: string;
+  run(args: string, ctx: CommandContext): Promise<string | void> | string | void;  // returned text is shown to the user
 }
 
 export interface JobDef {
@@ -283,9 +320,10 @@ A plugin is a folder with an `index.ts` that default-exports an `IvyPlugin`. The
 ├── config.toml          # global config, enabled plugins, permissions, model settings
 ├── SOUL.md              # who Ivy is (optional, loaded into system prompt)
 ├── USER.md              # who the user is (optional, loaded into system prompt)
+├── permissions.json     # allow rules learned from the permission dialog (Ivy-owned)
 ├── sessions/            # append-only JSONL transcripts
 ├── data/<pluginId>/     # per-plugin storage
-│   └── memory/          #   e.g. memory plugin: one markdown file per memory + index.sqlite
+│   └── memory/          #   memory plugin: one markdown file per memory
 ├── plugins/             # user-installed plugins
 ├── traces/              # raw API requests/responses per session (see §5.8)
 └── logs/                # kernel & daemon logs
@@ -299,13 +337,47 @@ The data root is `$IVY_HOME`, default `~/.ivy`. During development `bun run ivy`
 
 | Plugin | Milestone | Summary | Key tools |
 |---|---|---|---|
-| `core` | M0 | Time, date, basic system info | `now` |
-| `memory` | M1 | Long-term facts, preferences, notes, todos as markdown files; keyword search (SQLite FTS5); auto-extraction after turns (opt-in) | `save`, `search`, `update`, `delete`, `list_todos` |
+| `core` | M0 / M1 | Current time (tool + per-turn context), date arithmetic | `now`, `date_calc` |
+| `memory` | M1 | Long-term preferences, facts, todos and notes as markdown files; relevant ones injected each turn (§8.1) | `save`, `search`, `list`, `update`, `delete` |
 | `fs` + `shell` | M2 | Read/edit files and run commands in allowed directories — the coding/work helper | `read`, `write`, `edit`, `glob`, `grep`, `run` |
 | `mcp` bridge | M2 | Wraps configured MCP servers as plugins | (from servers) |
 | `gmail` / `calendar` | M3 | Triage, summarize, draft replies, today's agenda — via MCP servers or Google APIs | `search`, `read_thread`, `draft`, `agenda` |
 | `web` | M3 | Web search & fetch (Anthropic server tools on Anthropic's API; otherwise a client-side tool) | `search`, `fetch` |
 | `digest` | M4 | Scheduled brief from RSS / GitHub / email / calendar | job `morning-brief` |
+
+### 8.1 Memory plugin
+
+**Storage.** One markdown file per memory in `~/.ivy/data/memory/`, the source of truth, readable and editable by hand, and easy to back up with git:
+
+```markdown
+---
+id: 2026-10-16-a1b2c3
+type: todo            # preference | fact | todo | note
+tags: [travel]
+status: open          # todos only: open | done
+created: 2026-10-16T14:57:00+09:00
+updated: 2026-10-16T14:57:00+09:00
+---
+Renew passport before 2026-12.
+```
+
+**Search.** All memories are loaded into memory at startup (and reloaded when files change). Relevance is a simple keyword score: words for Latin text, character bigrams for CJK (so Chinese matches without a word segmenter), plus a small recency boost. A personal memory store stays small (hundreds to a few thousand entries), so a linear scan is fast enough. SQLite FTS or embeddings can replace it later behind the same `search` function.
+
+**Writing.** The model saves memories with tools, guided by the plugin's `instructions`: save durable preferences, facts and todos (or when the user says "remember"); don't save one-off details; search first and update instead of duplicating. The user can save directly with `/remember`. Automatic extraction after each turn is a later, opt-in addition (backlog).
+
+**Reading.** `contextFor` injects the top 5 memories relevant to the new message (above a minimum score) into the turn's `<context>` block. The model can also call `memory__search` / `memory__list` for more.
+
+**Tools and permissions.**
+
+| Tool | Risk | Default |
+|---|---|---|
+| `save(content, type, tags?)` | write | allowed (plugin default rule) |
+| `search(query, type?, limit?)` | read | allowed |
+| `list(type?, status?)` | read | allowed |
+| `update(id, content?, tags?, status?)` | write | allowed (plugin default rule) |
+| `delete(id)` | write | asks |
+
+**Commands.** `/remember <text>` saves a note as-is; `/memory [query]` lists recent memories or searches.
 
 ## 9. Project Layout
 
@@ -361,11 +433,21 @@ Each milestone ends with a few days of real use and an update to this doc.
 - **Deferred:** `/trace` and `ivy replay` (§5.8) → M2 with evals; server-side compaction for long sessions → when sessions get long; large-paste placeholders and a custom Markdown renderer → backlog; progress updates while thinking (`thinking.display: "updates"`) → M1.
 
 ### M1 — Memory
-- Plugin host v1 (load built-in plugins, tools/instructions/contextFor/commands).
-- `USER.md` in the system prompt.
-- `memory` plugin: save/search/update/delete, `/remember`, relevant memories injected per turn.
-- Permission Gate v1 (read/write/external/dangerous + prompts).
-- **Done when:** Ivy remembers facts and todos across sessions and uses them without being asked.
+Goal: Ivy starts remembering. Built in this order; each step is shippable on its own.
+
+1. **Plugin host v1:** `contextFor` → `<context>` block (§5.3), plugin slash commands, `[plugins.<id>] enabled` and per-plugin config validation.
+   *Done when:* a test plugin's context reaches the model, its command shows in the `/` list, and disabling it removes both.
+2. **core plugin:** per-turn current time in context; `date_calc` tool (difference between dates, add/subtract days/weeks/months, weekday of a date, timezone conversion).
+   *Done when:* "what's the date next Wednesday?" is answered in one model call without calling `now`.
+3. **Permission rules:** `[permissions]` allow/deny globs, `permissions.json` learned rules, *Always* in the dialog, plugin default rules (§5.5).
+   *Done when:* a tool allowed with *Always* isn't asked about after a restart, and a `deny` rule beats every allow.
+4. **memory plugin** (§8.1): files, keyword search incl. CJK, tools, instructions, per-turn context, `/remember`, `/memory`.
+   *Done when:* a preference or todo mentioned in one session is used, unprompted, in a later one.
+5. *(Optional)* Progress notes while the model works (`thinking.display: "updates"`), only where the provider supports it.
+
+`USER.md` in the system prompt (originally listed here) shipped in M0.
+
+- **Done when (milestone):** Ivy remembers facts and todos across sessions and uses them without being asked.
 
 ### M2 — Work helper
 - `fs` + `shell` plugins with directory allowlist and permission rules.
@@ -388,7 +470,8 @@ Each milestone ends with a few days of real use and an update to this doc.
 ### M5+ — Ideas backlog
 - Chat-app interface for phone access.
 - Semantic (embedding) search for memory.
-- Automatic memory extraction and periodic memory cleanup.
+- Automatic memory extraction (opt-in) and periodic memory cleanup.
+- Memory search on SQLite FTS or embeddings if the keyword scan gets slow or misses too much.
 - Usage dashboard; per-plugin effort/model tuning.
 - Subagents for fan-out research tasks.
 - TUI: collapse large pastes into `[Pasted text: N lines]` placeholders; own Markdown renderer (lowlight code highlighting, width-aware tables) if marked-terminal falls short.
@@ -396,7 +479,7 @@ Each milestone ends with a few days of real use and an update to this doc.
 ## 12. Open Questions
 
 1. ~~**TUI library**~~ → Ink (decided in M0).
-2. **Memory format:** one file per memory vs. a few topic files? Auto-extraction on by default or opt-in? → decide in M1.
+2. ~~**Memory format**~~ → one markdown file per memory; written by the model via tools plus `/remember`; auto-extraction later and opt-in (decided for M1, §8.1).
 3. **Email/calendar:** MCP servers vs. direct Google API plugins (OAuth handling, offline access for the daemon)? → decide in M3.
 4. **Notifications:** macOS notifications only, or also push to phone? → decide in M4.
 5. **Language of conversation:** Ivy's code and docs are English; should Ivy reply in the language I write in (Chinese/English)? Default: yes, mirror the user.
@@ -421,4 +504,8 @@ Each milestone ends with a few days of real use and an update to this doc.
 | 2026-10-16 | No provider abstraction yet; coupling documented in §5.2 | Avoid premature abstraction; switching path is known |
 | 2026-10-16 | Ink TUI for interactive mode; plain text for one-shot | Rich UI where it helps, script-friendly output elsewhere |
 | 2026-10-16 | Built-in `core.md` for operating/safety rules; SOUL.md is identity only; UI supplies format instructions | Rules must not depend on user files; personality and presentation stay separate |
+| 2026-10-16 | Per-turn context as a `<context>` block in the user message, not a mid-conversation system message | Works on every Anthropic-compatible endpoint and model; stored in history for faithful replay |
+| 2026-10-16 | Memory: markdown file per memory, in-memory keyword scoring with CJK bigrams, no SQLite in v1 | Human-editable source of truth; Chinese works without a segmenter; small data |
+| 2026-10-16 | Memories written by the model via tools (+ `/remember`); auto-extraction later, opt-in | Fewer junk memories; no extra model call per turn |
+| 2026-10-16 | Learned permission rules go to `permissions.json`, not `config.toml` | Never rewrite the user's hand-edited config |
 | 2026-10-16 | Use the beta Messages API (`client.beta.messages`) | Needed for `fallbacks: "default"` now and compaction later |
