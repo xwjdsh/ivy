@@ -4,6 +4,8 @@ import { matchCommands } from "../commands.ts";
 import * as E from "./editor.ts";
 
 const PROMPT = "› ";
+/** Rows taken by the box's top border, above the first text row. */
+const BORDER_TOP = 1;
 const INDENT = "  ";
 
 interface Props {
@@ -34,14 +36,16 @@ export function Input({ history, active, busy, width, onSubmit, onChange }: Prop
   useEffect(() => onChange(state.value), [state.value, onChange]);
 
   // Place the real terminal cursor so IME composition appears in the right spot.
-  useEffect(() => {
-    if (!active || !metrics.hasMeasured) {
-      setCursorPosition(undefined);
-      return;
-    }
+  // This must run during render: Ink applies the position in the same commit
+  // (useInsertionEffect). Calling it from useEffect lags one frame behind, and
+  // after a layout change (e.g. closing the session picker) nothing re-renders
+  // to fix it.
+  if (active && metrics.hasMeasured) {
     const cell = E.cursorCell(rows, state.cursor);
-    setCursorPosition({ x: PROMPT.length + cell.col, y: metrics.top + cell.row });
-  });
+    setCursorPosition({ x: PROMPT.length + cell.col, y: metrics.top + BORDER_TOP + cell.row });
+  } else {
+    setCursorPosition(undefined);
+  }
 
   // Highlighted command in the "/" completion list. Tied to the text it was chosen for,
   // so editing the input resets the highlight to the first match.
@@ -161,20 +165,31 @@ export function Input({ history, active, busy, width, onSubmit, onChange }: Prop
     : "Message Ivy, or / for commands";
 
   return (
-    <Box ref={ref} flexDirection="column">
-      {state.value === "" ? (
-        <Text>
-          <Text color="cyan">{PROMPT}</Text>
-          <Text dimColor>{placeholder}</Text>
-        </Text>
-      ) : (
-        rows.map((row, i) => (
-          <Text key={row.start} wrap="truncate">
-            <Text color="cyan">{i === 0 ? PROMPT : INDENT}</Text>
-            {row.text}
+    <>
+      {/* Top and bottom rules set the input apart from the transcript. */}
+      <Box
+        ref={ref}
+        flexDirection="column"
+        marginTop={1}
+        borderStyle="single"
+        borderLeft={false}
+        borderRight={false}
+        borderDimColor
+      >
+        {state.value === "" ? (
+          <Text>
+            <Text color="cyan">{PROMPT}</Text>
+            <Text dimColor>{placeholder}</Text>
           </Text>
-        ))
-      )}
+        ) : (
+          rows.map((row, i) => (
+            <Text key={row.start} wrap="truncate">
+              <Text color="cyan">{i === 0 ? PROMPT : INDENT}</Text>
+              {row.text}
+            </Text>
+          ))
+        )}
+      </Box>
       {matches.length > 0 && (
         <Box flexDirection="column" paddingLeft={2}>
           {matches.map((c, i) => (
@@ -188,6 +203,6 @@ export function Input({ history, active, busy, width, onSubmit, onChange }: Prop
           ))}
         </Box>
       )}
-    </Box>
+    </>
   );
 }

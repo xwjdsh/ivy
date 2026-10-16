@@ -3,6 +3,7 @@ import {
   type Ivy,
   Session,
   type SessionSummary,
+  summarizeUsage,
   type ToolCallRequest,
   Tracer,
   type TurnResult,
@@ -12,6 +13,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { COMMANDS, matchCommands } from "../commands.ts";
 import type { InputHistory } from "../history.ts";
 import { renderMarkdown, splitFinished } from "../markdown.ts";
+import { compact, usageReport } from "../usage-report.ts";
 import { Input } from "./input.tsx";
 import { historyItems, type Item, itemId } from "./items.ts";
 import { SessionPicker } from "./session-picker.tsx";
@@ -88,7 +90,14 @@ export function App({
   const sessionRef = useRef(initialSession);
   const tracerRef = useRef(new Tracer(`${ivy.paths.traces}/${initialSession.id}`));
   const [sessionId, setSessionId] = useState(initialSession.id);
-  const [cost, setCost] = useState(initialSession.costUsd);
+
+  // Token counts: input includes cache reads/writes, i.e. the full prompt sent each call.
+  const sessionTokens = (id: string) => {
+    const u = summarizeUsage(ivy.paths.sessions, { sessionId: id });
+    return { in: u.inputTokens + u.cacheReadTokens + u.cacheWriteTokens, out: u.outputTokens };
+  };
+  const [tokens, setTokens] = useState(() => sessionTokens(initialSession.id));
+  const turnTokens = useRef({ in: 0, out: 0 });
 
   const header = (): Item => ({
     id: itemId(),
@@ -189,7 +198,14 @@ export function App({
         setPhase((p) => p && { ...p, label: "Thinking" });
         break;
       case "step": {
-        setCost((c) => c + (e.costUsd ?? 0));
+        const u = e.usage;
+        const stepIn =
+          u.input_tokens + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0);
+        turnTokens.current = {
+          in: turnTokens.current.in + stepIn,
+          out: turnTokens.current.out + u.output_tokens,
+        };
+        setTokens((t) => ({ in: t.in + stepIn, out: t.out + u.output_tokens }));
         if (debug) {
           const u = e.usage;
           push({
@@ -208,6 +224,7 @@ export function App({
   };
 
   const runTurn = async (text: string) => {
+    turnTokens.current = { in: 0, out: 0 };
     turnRef.current += 1;
     setExpandedTurn(null);
     push({ id: itemId(), kind: "user", text });
@@ -236,7 +253,7 @@ export function App({
     push({
       id: itemId(),
       kind: "turn_end",
-      summary: `$${result.costUsd.toFixed(4)} · ${result.steps} step(s) · ${((Date.now() - startedAt) / 1000).toFixed(1)}s`,
+      summary: `${result.steps} step(s) · ${((Date.now() - startedAt) / 1000).toFixed(1)}s · ${compact(turnTokens.current.in)} in / ${compact(turnTokens.current.out)} out tokens`,
       note,
       noteTone: result.stopReason === "error" ? "error" : "warn",
     });
@@ -247,7 +264,7 @@ export function App({
     tracerRef.current = new Tracer(`${ivy.paths.traces}/${next.id}`);
     allowedTools.current.clear();
     setSessionId(next.id);
-    setCost(next.costUsd);
+    setTokens(sessionTokens(next.id));
   };
 
   const resumeSession = (id: string) => {
@@ -291,6 +308,9 @@ export function App({
         return;
       case "/help":
         info(HELP);
+        return;
+      case "/usage":
+        info(usageReport(ivy.paths.sessions, sessionRef.current.id));
         return;
       case "/new":
       case "/clear": {
@@ -416,7 +436,7 @@ export function App({
         model={ivy.config.model.name}
         effort={ivy.config.model.effort}
         sessionId={sessionId}
-        costUsd={cost}
+        tokens={`${compact(tokens.in)} in / ${compact(tokens.out)} out`}
         hint={busy ? "esc to interrupt" : exitArmed ? "Press Ctrl-C again to exit" : undefined}
       />
     </Box>

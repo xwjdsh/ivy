@@ -123,10 +123,12 @@ test("sends a message and renders the streamed Markdown answer", async () => {
   await type("hi");
   await type(ENTER);
   await tick(50);
-  expect(frame()).toContain("› hi");
+  expect(frame()).toContain("> hi");
   expect(frame()).toContain("Hello there");
   expect(frame()).not.toContain("**");
-  expect(frame()).toMatch(/\$0\.\d{4} · 1 step\(s\)/);
+  expect(frame()).toMatch(/1 step\(s\) · [\d.]+s · 10 in \/ 5 out tokens/);
+  expect(frame()).toContain("· 10 in / 5 out"); // status bar session total
+  expect(frame()).not.toContain("$");
 });
 
 test("risky tool asks once; 'for this session' skips later prompts", async () => {
@@ -293,7 +295,8 @@ test("/ list: arrows and Ctrl+P/N move the selection; Tab fills it in", async ()
   await type(UP); // wraps to the last item
   expect(frame()).toContain("❯ /exit");
   await type(UP);
-  await type(UP); // /help → /resume
+  await type(UP);
+  await type(UP); // /help → /usage → /resume
   expect(frame()).toContain("❯ /resume");
   await type(TAB); // fills in "/resume " to type an id
   expect(frame()).toContain("› /resume"); // trailing space is trimmed in the frame

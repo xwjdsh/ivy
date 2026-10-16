@@ -21,13 +21,14 @@ export function StatusBar(props: {
   model: string;
   effort: string;
   sessionId: string;
-  costUsd: number;
+  /** Session token totals, e.g. "12.3k in / 1.2k out". */
+  tokens: string;
   hint?: string;
 }) {
   return (
     <Box justifyContent="space-between">
       <Text dimColor>
-        {props.model} · {props.effort} · {props.sessionId} · ${props.costUsd.toFixed(4)}
+        {props.model} · {props.effort} · {props.sessionId} · {props.tokens}
       </Text>
       {props.hint && <Text dimColor>{props.hint}</Text>}
     </Box>
@@ -155,7 +156,7 @@ export function ItemView({
     case "user":
       return (
         <Box marginTop={1}>
-          <Text color="cyan">› </Text>
+          <Text dimColor>{"> "}</Text>
           <Text bold>{item.text}</Text>
         </Box>
       );
@@ -175,16 +176,18 @@ export function ItemView({
     }
     case "info":
       return (
-        <Text
-          color={item.tone === "error" ? "red" : item.tone === "warn" ? "yellow" : undefined}
-          dimColor={item.tone === "dim" || item.tone === undefined}
-        >
-          {item.text}
-        </Text>
+        <Box marginTop={1}>
+          <Text
+            color={item.tone === "error" ? "red" : item.tone === "warn" ? "yellow" : undefined}
+            dimColor={item.tone === "dim" || item.tone === undefined}
+          >
+            {item.text}
+          </Text>
+        </Box>
       );
     case "turn_end":
       return (
-        <Box flexDirection="column">
+        <Box flexDirection="column" marginTop={1}>
           {item.note && (
             <Text color={item.noteTone === "error" ? "red" : "yellow"}>{item.note}</Text>
           )}

@@ -16,7 +16,6 @@ test("sessions persist, reload and list newest first", async () => {
 
   const loaded = Session.load(dir, a.id);
   expect(loaded.messages).toEqual(a.messages);
-  expect(loaded.costUsd).toBeCloseTo(0.01);
 
   const list = Session.list(dir);
   expect(list.map((s) => s.id)).toEqual([b.id, a.id]);

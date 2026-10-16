@@ -28,8 +28,6 @@ export interface SessionSummary {
  */
 export class Session {
   readonly messages: MessageParam[] = [];
-  /** Total estimated cost of all model calls in this session. */
-  costUsd = 0;
 
   /** Meta record not yet written: the file is created lazily on the first append. */
   private pendingMeta: SessionRecord | null = null;
@@ -53,7 +51,6 @@ export class Session {
     const session = new Session(id, file);
     for (const record of readRecords(file)) {
       if (record.type === "message") session.messages.push(record.message);
-      if (record.type === "usage") session.costUsd += record.costUsd;
     }
     return session;
   }
@@ -97,7 +94,6 @@ export class Session {
   }
 
   recordUsage(usage: Anthropic.Beta.BetaUsage, costUsd: number): void {
-    this.costUsd += costUsd;
     this.write({ type: "usage", ts: new Date().toISOString(), usage, costUsd });
   }
 
@@ -112,7 +108,7 @@ export class Session {
   }
 }
 
-function readRecords(file: string): SessionRecord[] {
+export function readRecords(file: string): SessionRecord[] {
   return readFileSync(file, "utf8")
     .split("\n")
     .filter(Boolean)
