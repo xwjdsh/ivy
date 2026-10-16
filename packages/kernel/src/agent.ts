@@ -1,15 +1,9 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { RiskLevel } from "@ivy/plugin-api";
+import { type Capabilities, type OptionalFeature, rejectedFeature } from "./capabilities.ts";
 import type { Config } from "./config.ts";
 import { createLogger } from "./log.ts";
-import {
-  estimateCost,
-  isOfficialAnthropicApi,
-  type ModelClient,
-  type ModelMessage,
-  type ModelRequest,
-  modelCapabilities,
-} from "./model.ts";
+import { estimateCost, type ModelClient, type ModelMessage, type ModelRequest } from "./model.ts";
 import { errorMessage, type PluginHost } from "./plugins.ts";
 import type { Session } from "./session.ts";
 import type { Tracer } from "./trace.ts";
@@ -29,6 +23,8 @@ export type StopReason =
 
 export type AgentEvent =
   | { type: "text"; delta: string }
+  /** Something the user should know about, e.g. a feature the endpoint turned out not to support. */
+  | { type: "notice"; text: string }
   | { type: "tool_call"; id: string; name: string; input: unknown }
   | { type: "tool_result"; id: string; name: string; content: string; isError: boolean }
   | {
@@ -52,6 +48,8 @@ export interface AgentOptions {
   model: ModelClient;
   plugins: PluginHost;
   systemPrompt: string;
+  /** What the current model supports on the active endpoint. */
+  capabilities: Capabilities;
   /** Asked before any tool whose risk is not "read". Resolve true to allow. */
   confirm(call: ToolCallRequest): Promise<boolean>;
 }
@@ -128,6 +126,18 @@ export class Agent {
           latencyMs,
         });
         if (turn.signal.aborted) return { stopReason: "interrupted", steps: step, costUsd };
+        // The endpoint rejected an optional feature (compatibility first): turn it off for
+        // this model, remember that, and resend. Nothing was appended, so this is safe.
+        const feature = downgradable(err, request);
+        if (feature) {
+          this.opts.capabilities.markUnsupported(this.modelName, feature);
+          turn.onEvent({
+            type: "notice",
+            text: `${this.modelName} doesn't support ${FEATURE_NAMES[feature]} here; continuing without it.`,
+          });
+          step--;
+          continue;
+        }
         // With eager input streaming, an unparseable tool input rejects the stream.
         // Nothing was appended, so re-issuing the same request is safe.
         if (isToolJsonParseError(err) && parseRetries++ < MAX_PARSE_RETRIES) {
@@ -146,6 +156,15 @@ export class Agent {
         startedAt: startedAt.toISOString(),
         latencyMs,
       });
+      // Server-side refusal fallback: the model declined and another one answered.
+      for (const block of message.content) {
+        if (block.type === "fallback") {
+          turn.onEvent({
+            type: "notice",
+            text: `${block.from.model} declined this request; ${block.to.model} answered instead.`,
+          });
+        }
+      }
       const stepCost = estimateCost(message.model, message.usage);
       costUsd += stepCost ?? 0;
       session.recordUsage(message.usage, stepCost ?? 0);
@@ -193,20 +212,23 @@ export class Agent {
 
   private buildRequest(session: Session): ModelRequest {
     const { config, plugins, systemPrompt } = this.opts;
-    const caps = modelCapabilities(this.modelName);
+    const caps = this.opts.capabilities.for(this.modelName);
     const request: ModelRequest = {
       model: this.modelName,
-      max_tokens: config.generation.max_tokens,
+      max_tokens: Math.min(
+        config.generation.max_tokens,
+        caps.maxTokens ?? Number.POSITIVE_INFINITY,
+      ),
       tools: plugins.apiTools(),
       messages: renderMessages(session.messages, (m) => session.contextOf(m), this.contextMode()),
       // Automatic caching: caches the longest stable prefix, which moves forward each turn.
       cache_control: { type: "ephemeral" },
     };
-    if (caps.effort) request.output_config = { effort: config.generation.effort };
+    if (caps.effort) request.output_config = { effort: caps.effort };
     // The API rejects empty text blocks, so an empty prompt means no system field.
     if (systemPrompt) request.system = [{ type: "text", text: systemPrompt }];
     const betas: string[] = [];
-    if (config.activeProvider.refusal_fallback && caps.fallbacks) {
+    if (caps.fallbacks) {
       betas.push("server-side-fallback-2026-07-01");
       request.fallbacks = "default";
     }
@@ -215,10 +237,9 @@ export class Agent {
     return request;
   }
 
-  /** System messages on Anthropic's own API with a model that supports them; text blocks elsewhere. */
+  /** System messages where the model and endpoint support them; text blocks elsewhere. */
   contextMode(): ContextMode {
-    const official = isOfficialAnthropicApi(this.opts.config.activeProvider.base_url);
-    return official && modelCapabilities(this.modelName).systemMessages ? "system" : "block";
+    return this.opts.capabilities.for(this.modelName).systemMessages ? "system" : "block";
   }
 
   /** Ask permission sequentially (prompts can't overlap), then run approved tools in parallel. */
@@ -255,6 +276,23 @@ export class Agent {
       }),
     );
   }
+}
+
+const FEATURE_NAMES: Record<OptionalFeature, string> = {
+  effort: "the effort setting",
+  fallbacks: "server-side refusal fallback",
+  systemMessages: "mid-conversation system messages",
+};
+
+/** A 400 about an optional feature this request actually used. */
+function downgradable(err: unknown, request: ModelRequest): OptionalFeature | null {
+  if (!(err instanceof Anthropic.BadRequestError)) return null;
+  const feature = rejectedFeature(err.message);
+  const used =
+    (feature === "effort" && request.output_config?.effort !== undefined) ||
+    (feature === "fallbacks" && request.fallbacks !== undefined) ||
+    (feature === "systemMessages" && request.messages.some((m) => m.role === "system"));
+  return used ? feature : null;
 }
 
 /**

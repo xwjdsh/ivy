@@ -14,6 +14,8 @@ export interface ModelClient {
     handlers: StreamHandlers,
     signal: AbortSignal,
   ): Promise<ModelMessage>;
+  /** The endpoint's model catalogue with capabilities (Anthropic's Models API). */
+  listModels?(): Promise<Anthropic.Models.ModelInfo[]>;
 }
 
 export class AnthropicModelClient implements ModelClient {
@@ -37,44 +39,12 @@ export class AnthropicModelClient implements ModelClient {
     if (handlers.onText) stream.on("text", handlers.onText);
     return stream.finalMessage();
   }
-}
 
-const FALLBACK_MODELS = new Set([
-  "claude-fable-5-1",
-  "claude-opus-5-5",
-  "claude-opus-5",
-  "claude-sonnet-5-5",
-]);
-
-/** Models that accept mid-conversation `role: "system"` messages (and `clear_at`). */
-const SYSTEM_MESSAGE_MODELS = new Set([
-  "claude-opus-5-5",
-  "claude-opus-5",
-  "claude-opus-4-8",
-  "claude-sonnet-5-5",
-  "claude-fable-5-1",
-  "claude-fable-5",
-  "claude-mythos-5-1",
-  "claude-mythos-5",
-]);
-
-export interface ModelCapabilities {
-  effort: boolean;
-  fallbacks: boolean;
-  /** Mid-conversation system messages with `clear_at` (used for per-turn context). */
-  systemMessages: boolean;
-}
-
-/**
- * Request features not every model accepts; sending them to the wrong model is a 400.
- * Unknown models are assumed to support effort and nothing newer.
- */
-export function modelCapabilities(model: string): ModelCapabilities {
-  return {
-    effort: !model.startsWith("claude-haiku"),
-    fallbacks: FALLBACK_MODELS.has(model),
-    systemMessages: SYSTEM_MESSAGE_MODELS.has(model),
-  };
+  async listModels(): Promise<Anthropic.Models.ModelInfo[]> {
+    const models: Anthropic.Models.ModelInfo[] = [];
+    for await (const info of this.client.models.list()) models.push(info);
+    return models;
+  }
 }
 
 /** Anthropic's own API. Compatible endpoints (proxies) may not support its newest features. */

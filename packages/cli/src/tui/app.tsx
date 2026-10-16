@@ -1,7 +1,6 @@
 import {
   type AgentEvent,
   type Ivy,
-  modelCapabilities,
   Session,
   type SessionSummary,
   summarizeUsage,
@@ -203,6 +202,9 @@ export function App({
         });
         toolInputs.current.delete(e.id);
         setPhase((p) => p && { ...p, label: "Thinking" });
+        break;
+      case "notice":
+        push({ id: itemId(), kind: "info", text: e.text, tone: "warn" });
         break;
       case "step": {
         const u = e.usage;
@@ -520,7 +522,7 @@ export function App({
       <StatusBar
         provider={ivy.config.activeProvider.name}
         model={model}
-        effort={modelCapabilities(model).effort ? ivy.config.generation.effort : undefined}
+        effort={ivy.capabilities.for(model).effort}
         sessionId={sessionId}
         tokens={formatTokens(tokens)}
         hint={busy ? "esc to interrupt" : exitArmed ? "Press Ctrl-C again to exit" : undefined}

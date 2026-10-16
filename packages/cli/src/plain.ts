@@ -58,6 +58,10 @@ export async function runPlain(
           `  ${e.isError ? c.red("✗") : c.dim("⎿")} ${c.dim(e.content.replace(/\s+/g, " ").slice(0, 200))}\n`,
         );
         break;
+      case "notice":
+        newline();
+        process.stderr.write(c.yellow(`${e.text}\n`));
+        break;
       case "step":
         if (debug) {
           const u = e.usage;

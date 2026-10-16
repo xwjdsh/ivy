@@ -24,7 +24,11 @@ const ProviderSchema = z.strictObject({
   default_model: z.string().min(1),
   /** Other models /model can switch to; default_model is always included. */
   models: z.array(z.string().min(1)).default([]),
-  /** Server-side refusal fallback (`fallbacks: "default"`); proxies may not support it. */
+  /**
+   * Server-side refusal fallback where supported: if the model declines, Anthropic re-runs
+   * the request on a fallback model (a notice says so). Anthropic recommends it on; set
+   * false to see refusals instead.
+   */
   refusal_fallback: z.boolean().default(true),
 });
 

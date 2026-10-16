@@ -6,8 +6,14 @@ import Anthropic from "@anthropic-ai/sdk";
 import { definePlugin, defineTool, type IvyPlugin, type RiskLevel } from "@ivy/plugin-api";
 import { z } from "zod";
 import { Agent, type AgentEvent, type ToolCallRequest } from "./agent.ts";
+import { Capabilities } from "./capabilities.ts";
 import { loadConfig, resolvePaths } from "./config.ts";
-import type { ModelClient, ModelMessage, ModelRequest } from "./model.ts";
+import {
+  isOfficialAnthropicApi,
+  type ModelClient,
+  type ModelMessage,
+  type ModelRequest,
+} from "./model.ts";
 import { PluginHost } from "./plugins.ts";
 import { Session } from "./session.ts";
 
@@ -87,7 +93,15 @@ describe("Agent.runTurn", () => {
     const plugins = new PluginHost(paths.data, {});
     await plugins.register(testPlugin(risk));
     for (const p of extraPlugins) await plugins.register(p);
-    return new Agent({ config: loadConfig(paths), model, plugins, systemPrompt, confirm });
+    const config = loadConfig(paths);
+    const p = config.activeProvider;
+    const capabilities = new Capabilities(
+      join(dir, "cache", "models.json"),
+      p.base_url,
+      isOfficialAnthropicApi(p.base_url),
+      { effort: config.generation.effort, refusalFallback: p.refusal_fallback },
+    );
+    return new Agent({ config, model, plugins, systemPrompt, confirm, capabilities });
   }
 
   const run = (agent: Agent, input: string, signal = new AbortController().signal) =>
@@ -302,6 +316,70 @@ describe("Agent.runTurn", () => {
     const model = new FakeModel([reply("end_turn", [text("ok")])]);
     await run(await makeAgent(model), "hi");
     expect(session.messages[0]).toEqual({ role: "user", content: "hi" });
+  });
+
+  const badRequest = (message: string) => () => {
+    // Shaped like a real API error body; the SDK builds err.message from it.
+    const body = { type: "error", error: { type: "invalid_request_error", message } };
+    throw new Anthropic.BadRequestError(400, body, undefined, new Headers());
+  };
+
+  test("a 400 about system messages: downgrade to <context> blocks, retry, remember", async () => {
+    const model = new FakeModel([
+      badRequest("role 'system' is not supported on this model"),
+      reply("end_turn", [text("ok")]),
+      reply("end_turn", [text("again")]),
+    ]);
+    const agent = await makeAgent(model, "read", undefined, "sys", [clock]);
+    const result = await run(agent, "what time is it");
+    expect(result.stopReason).toBe("end_turn");
+    expect(model.requests[0]?.messages.some((m) => m.role === "system")).toBe(true);
+    expect(model.requests[1]?.messages.some((m) => m.role === "system")).toBe(false);
+    expect(events).toContainEqual({
+      type: "notice",
+      text: "claude-opus-5-5 doesn't support mid-conversation system messages here; continuing without it.",
+    });
+    // Remembered: the next turn goes straight to blocks, even for a fresh agent.
+    const fresh = await makeAgent(model, "read", undefined, "sys", [clock]);
+    await run(fresh, "and now?");
+    expect(model.requests[2]?.messages.some((m) => m.role === "system")).toBe(false);
+  });
+
+  test("a 400 about fallbacks or effort drops just that parameter", async () => {
+    const model = new FakeModel([
+      badRequest("fallbacks: unknown field"),
+      badRequest("output_config.effort: not supported for this model"),
+      reply("end_turn", [text("ok")]),
+    ]);
+    await run(await makeAgent(model), "hi");
+    expect(model.requests[0]).toHaveProperty("fallbacks");
+    expect(model.requests[1]).not.toHaveProperty("fallbacks");
+    expect(model.requests[1]).toHaveProperty("output_config");
+    expect(model.requests[2]).not.toHaveProperty("output_config");
+    expect(events.filter((e) => e.type === "notice")).toHaveLength(2);
+  });
+
+  test("a server-side refusal fallback is reported as a notice", async () => {
+    const fallback = {
+      type: "fallback",
+      from: { model: "claude-opus-5-5" },
+      to: { model: "claude-opus-4-8" },
+      trigger: { type: "refusal" },
+    } as unknown as Block;
+    const model = new FakeModel([reply("end_turn", [fallback, text("here you go")])]);
+    const result = await run(await makeAgent(model), "a borderline question");
+    expect(result.stopReason).toBe("end_turn");
+    expect(events).toContainEqual({
+      type: "notice",
+      text: "claude-opus-5-5 declined this request; claude-opus-4-8 answered instead.",
+    });
+  });
+
+  test("an unrelated 400 is a normal error, not a retry", async () => {
+    const model = new FakeModel([badRequest("messages: text content blocks must be non-empty")]);
+    const result = await run(await makeAgent(model), "hi");
+    expect(result).toMatchObject({ stopReason: "error" });
+    expect(model.requests).toHaveLength(1);
   });
 
   test("request uses caching, effort and fallbacks from config", async () => {

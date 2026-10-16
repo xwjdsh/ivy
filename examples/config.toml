@@ -12,14 +12,13 @@ api_key = ""                      # required
 base_url = "https://api.anthropic.com"
 default_model = "claude-opus-5-5" # required; used at startup
 models = ["claude-sonnet-5-5", "claude-haiku-4-5"]  # optional; other models /model can switch to
-refusal_fallback = true           # server-side refusal fallback; proxies may not support it
+# refusal_fallback = false        # optional, default true: if the model declines, retry on a fallback model
 
 # A second provider, e.g. a proxy. Switch with `provider = "proxy"` under [agent].
 # [providers.proxy]
 # api_key = "..."
 # default_model = "claude-sonnet-5-5"
 # base_url = "https://my-proxy.example.com"
-# refusal_fallback = false
 
 [generation]
 effort = "medium"                 # low | medium | high | xhigh | max

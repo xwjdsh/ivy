@@ -1,13 +1,15 @@
 import { join } from "node:path";
 import type { IvyPlugin } from "@ivy/plugin-api";
 import { Agent, type ToolCallRequest } from "./agent.ts";
+import { Capabilities } from "./capabilities.ts";
 import { type Config, loadConfig, type Paths, resolvePaths } from "./config.ts";
 import { buildSystemPrompt } from "./context.ts";
-import { AnthropicModelClient, type ModelClient } from "./model.ts";
+import { AnthropicModelClient, isOfficialAnthropicApi, type ModelClient } from "./model.ts";
 import { PluginHost } from "./plugins.ts";
 import { pruneTraces, Tracer } from "./trace.ts";
 
 export * from "./agent.ts";
+export * from "./capabilities.ts";
 export * from "./config.ts";
 export { setLogLevel } from "./log.ts";
 export * from "./model.ts";
@@ -32,6 +34,7 @@ export interface Ivy {
   config: Config;
   paths: Paths;
   systemPrompt: string;
+  capabilities: Capabilities;
   /** Tracer for a session, or undefined when tracing is off. */
   tracer(sessionId: string): Tracer | undefined;
 }
@@ -45,16 +48,29 @@ export async function createIvy(opts: IvyOptions): Promise<Ivy> {
   for (const plugin of opts.plugins) await plugins.register(plugin);
 
   const systemPrompt = buildSystemPrompt(paths, plugins, opts.interfaceInstructions);
+  const p = config.activeProvider;
+  const capabilities = new Capabilities(
+    join(paths.home, "cache", "models.json"),
+    p.base_url,
+    isOfficialAnthropicApi(p.base_url),
+    { effort: config.generation.effort, refusalFallback: p.refusal_fallback },
+  );
+  const model = opts.model ?? createModelClient(config, paths);
+  // Refresh model facts in the background; startup never waits on the network.
+  const lister = model.listModels?.bind(model);
+  if (lister) void capabilities.refresh({ listModels: lister });
+
   const agent = new Agent({
     config,
-    model: opts.model ?? createModelClient(config, paths),
+    model,
+    capabilities,
     plugins,
     systemPrompt,
     confirm: opts.confirm,
   });
   const tracer = (sessionId: string) =>
     config.trace.enabled ? new Tracer(join(paths.traces, sessionId)) : undefined;
-  return { agent, plugins, config, paths, systemPrompt, tracer };
+  return { agent, plugins, config, paths, systemPrompt, capabilities, tracer };
 }
 
 /** The client for the active provider's API kind. */
