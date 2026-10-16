@@ -16,10 +16,17 @@ test("sessions persist, reload and list newest first", async () => {
 
   const loaded = Session.load(dir, a.id);
   expect(loaded.messages).toEqual(a.messages);
+  expect(loaded.costUsd).toBeCloseTo(0.01);
 
   const list = Session.list(dir);
   expect(list.map((s) => s.id)).toEqual([b.id, a.id]);
-  expect(list[1]?.preview).toBe("first question");
+  expect(list[1]).toMatchObject({ preview: "first question", turns: 1 });
+
+  // Activity, not creation time, decides the order.
+  await Bun.sleep(5);
+  Session.load(dir, a.id).append({ role: "user", content: "follow-up" });
+  expect(Session.list(dir).map((s) => s.id)).toEqual([a.id, b.id]);
+  expect(Session.list(dir)[0]).toMatchObject({ turns: 2, preview: "first question" });
 });
 
 test("loading an unknown session throws", () => {

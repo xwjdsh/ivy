@@ -14,6 +14,11 @@ export interface SessionSummary {
   id: string;
   file: string;
   createdAt: string;
+  /** Time of the last record: when the session was last active. */
+  updatedAt: string;
+  /** Number of user prompts (tool results don't count). */
+  turns: number;
+  /** Start of the first user prompt. */
   preview: string;
 }
 
@@ -23,6 +28,8 @@ export interface SessionSummary {
  */
 export class Session {
   readonly messages: MessageParam[] = [];
+  /** Total estimated cost of all model calls in this session. */
+  costUsd = 0;
 
   /** Meta record not yet written: the file is created lazily on the first append. */
   private pendingMeta: SessionRecord | null = null;
@@ -46,11 +53,12 @@ export class Session {
     const session = new Session(id, file);
     for (const record of readRecords(file)) {
       if (record.type === "message") session.messages.push(record.message);
+      if (record.type === "usage") session.costUsd += record.costUsd;
     }
     return session;
   }
 
-  /** Most recent sessions first. */
+  /** Most recently active sessions first. */
   static list(dir: string, limit = 20): SessionSummary[] {
     if (!existsSync(dir)) return [];
     return readdirSync(dir)
@@ -59,15 +67,25 @@ export class Session {
         const file = join(dir, f);
         const records = readRecords(file);
         const meta = records.find((r) => r.type === "meta");
-        const firstUser = records.find((r) => r.type === "message" && r.message.role === "user");
+        const prompts = records.filter(
+          (r) =>
+            r.type === "message" &&
+            r.message.role === "user" &&
+            typeof r.message.content === "string",
+        );
+        const first = prompts[0];
+        const last = records.at(-1);
+        const createdAt = meta?.type === "meta" ? meta.createdAt : "";
         return {
           id: f.replace(/\.jsonl$/, ""),
           file,
-          createdAt: meta?.type === "meta" ? meta.createdAt : "",
-          preview: firstUser?.type === "message" ? textOf(firstUser.message).slice(0, 80) : "",
+          createdAt,
+          updatedAt: last && last.type !== "meta" ? last.ts : createdAt,
+          turns: prompts.length,
+          preview: first?.type === "message" ? textOf(first.message).slice(0, 80) : "",
         };
       })
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
       .slice(0, limit);
   }
 
@@ -79,6 +97,7 @@ export class Session {
   }
 
   recordUsage(usage: Anthropic.Beta.BetaUsage, costUsd: number): void {
+    this.costUsd += costUsd;
     this.write({ type: "usage", ts: new Date().toISOString(), usage, costUsd });
   }
 
