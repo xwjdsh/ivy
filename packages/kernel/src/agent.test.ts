@@ -382,6 +382,29 @@ describe("Agent.runTurn", () => {
     expect(model.requests).toHaveLength(1);
   });
 
+  test("verbose events: context once per turn, request info before each call, served-by model", async () => {
+    const model = new FakeModel([
+      reply("tool_use", [toolUse("tu_1", "t__echo", { msg: "x" })]),
+      reply("end_turn", [text("done")]),
+    ]);
+    await run(await makeAgent(model, "read", undefined, "sys", [clock]), "what time is it");
+    expect(events.filter((e) => e.type === "context")).toEqual([{ type: "context", text: CTX }]);
+    const requests = events.filter((e) => e.type === "request");
+    expect(requests).toHaveLength(2);
+    expect(requests[0]).toMatchObject({
+      step: 1,
+      info: {
+        model: "claude-opus-5-5",
+        effort: { configured: "medium", sent: "medium" },
+        contextMode: "system",
+        messages: 2,
+        tools: 1,
+        maxTokens: 64000,
+      },
+    });
+    expect(events.find((e) => e.type === "step")).toMatchObject({ model: "claude-opus-5-5" });
+  });
+
   test("request uses caching, effort and fallbacks from config", async () => {
     const model = new FakeModel([reply("end_turn", [text("hi")])]);
     await run(await makeAgent(model), "hello");

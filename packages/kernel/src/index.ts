@@ -3,7 +3,7 @@ import type { IvyPlugin } from "@ivy/plugin-api";
 import { Agent, type ToolCallRequest } from "./agent.ts";
 import { Capabilities } from "./capabilities.ts";
 import { type Config, loadConfig, type Paths, resolvePaths } from "./config.ts";
-import { buildSystemPrompt } from "./context.ts";
+import { buildSystemPrompt, systemPromptParts } from "./context.ts";
 import { AnthropicModelClient, isOfficialAnthropicApi, type ModelClient } from "./model.ts";
 import { PluginHost } from "./plugins.ts";
 import { pruneTraces, Tracer } from "./trace.ts";
@@ -11,7 +11,8 @@ import { pruneTraces, Tracer } from "./trace.ts";
 export * from "./agent.ts";
 export * from "./capabilities.ts";
 export * from "./config.ts";
-export { setLogLevel } from "./log.ts";
+export * from "./config-edit.ts";
+export { createLogger, type LogLevel, setLogLevel, setLogSink } from "./log.ts";
 export * from "./model.ts";
 export * from "./plugins.ts";
 export * from "./session.ts";
@@ -34,6 +35,8 @@ export interface Ivy {
   config: Config;
   paths: Paths;
   systemPrompt: string;
+  /** The system prompt's sections with names (verbose view). */
+  systemPromptParts: Array<{ name: string; text: string }>;
   capabilities: Capabilities;
   /** Tracer for a session, or undefined when tracing is off. */
   tracer(sessionId: string): Tracer | undefined;
@@ -70,7 +73,17 @@ export async function createIvy(opts: IvyOptions): Promise<Ivy> {
   });
   const tracer = (sessionId: string) =>
     config.trace.enabled ? new Tracer(join(paths.traces, sessionId)) : undefined;
-  return { agent, plugins, config, paths, systemPrompt, capabilities, tracer };
+  const parts = systemPromptParts(paths, plugins, opts.interfaceInstructions);
+  return {
+    agent,
+    plugins,
+    config,
+    paths,
+    systemPrompt,
+    systemPromptParts: parts,
+    capabilities,
+    tracer,
+  };
 }
 
 /** The client for the active provider's API kind. */

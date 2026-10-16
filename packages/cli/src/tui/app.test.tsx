@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -110,7 +110,7 @@ async function start(script: Step[], configToml?: string, extraPlugins: IvyPlugi
       history={history}
       bridge={bridge}
       screen={screen}
-      debug={false}
+      verbose={false}
     />,
   );
   cleanup = ui.unmount;
@@ -298,10 +298,7 @@ test("/ list: arrows and Ctrl+P/N move the selection; Tab fills it in", async ()
   expect(frame()).toContain("❯ /new");
   await type(UP); // wraps to the last item
   expect(frame()).toContain("❯ /exit");
-  await type(UP);
-  await type(UP);
-  await type(UP);
-  await type(UP); // /help → /usage → /model → /resume
+  for (let i = 0; i < 7; i++) await type(UP); // /help, /verbose, /status, /usage, /effort, /model, /resume
   expect(frame()).toContain("❯ /resume");
   await type(TAB); // fills in "/resume " to type an id
   expect(frame()).toContain("› /resume"); // trailing space is trimmed in the frame
@@ -358,11 +355,14 @@ test("/model opens a picker; choosing switches the model for later turns", async
   const { type, frame, model } = await start([{ stop: "end_turn", content: [text("ok")] }]);
   await type("/model");
   await type(ENTER);
-  expect(frame()).toContain("Switch model on anthropic");
+  expect(frame()).toContain("Switch model on anthropic (saved as default)");
   expect(frame()).toContain("❯ claude-opus-5-5  (current)");
   await type(DOWN);
   await type(ENTER);
-  expect(frame()).toContain("Model: claude-sonnet-5-5 (this run only)");
+  expect(frame()).toContain("Model: claude-sonnet-5-5 (saved to config.toml)");
+  expect(readFileSync(join(home, "config.toml"), "utf8")).toContain(
+    'default_model = "claude-sonnet-5-5"',
+  );
   expect(frame()).toContain("claude-sonnet-5-5 · medium");
   await type("hi");
   await type(ENTER);
@@ -463,4 +463,83 @@ test("a disabled plugin contributes no command and no context", async () => {
   await type(ENTER);
   await tick(50);
   expect(JSON.stringify(model.requests[0]?.messages)).not.toContain("<context>");
+});
+
+test("/effort opens a picker; the choice is used and saved to config.toml", async () => {
+  const { type, frame, model } = await start([{ stop: "end_turn", content: [text("ok")] }]);
+  await type("/effort");
+  await type(ENTER);
+  expect(frame()).toContain("Switch effort (saved as default)");
+  expect(frame()).toContain("❯ medium  (current)");
+  await type(DOWN);
+  await type(ENTER);
+  expect(frame()).toContain("Effort: high (saved to config.toml).");
+  expect(frame()).toContain("claude-opus-5-5 · high ·");
+  expect(readFileSync(join(home, "config.toml"), "utf8")).toContain('effort = "high"');
+  await type("hi");
+  await type(ENTER);
+  await tick(50);
+  expect(model.requests[0]?.output_config).toEqual({ effort: "high" });
+});
+
+test("/effort <level> switches directly; unknown levels are rejected", async () => {
+  const { type, frame } = await start([]);
+  await type("/effort low");
+  await type(ENTER);
+  expect(frame()).toContain("Effort: low (saved to config.toml).");
+  await type("/effort turbo");
+  await type(ENTER);
+  expect(frame()).toContain("Unknown effort turbo. Levels: low, medium, high, xhigh, max");
+});
+
+test("/effort on a model without effort support says it isn't sent", async () => {
+  const { type, frame } = await start([]);
+  await type("/model claude-haiku-4-5");
+  await type(ENTER);
+  await type("/effort high");
+  await type(ENTER);
+  expect(frame().replace(/\s+/g, " ")).toContain(
+    "claude-haiku-4-5 doesn't take an effort setting, so it isn't sent.",
+  );
+});
+
+test("/verbose toggles details: request/step lines, the hidden context, full tool input", async () => {
+  const { type, frame } = await start(
+    [
+      { stop: "tool_use", content: [toolUse("a", "t__lines", { verbose: true })] },
+      { stop: "end_turn", content: [text("done")] },
+    ],
+    undefined,
+    [notes],
+  );
+  await type("/verbose");
+  await type(ENTER);
+  expect(frame()).toContain("Verbose on.");
+  expect(frame()).toContain("refusal fallback: on");
+  expect(frame()).toMatch(/· verbose$/m);
+  await type("show lines");
+  await type(ENTER);
+  await tick(50);
+  const f = frame();
+  expect(f).toContain("context:\n<context>\n## notes\nNote: the user likes tea.");
+  expect(f).toContain("→ step 1 · claude-opus-5-5 · effort medium · context system");
+  expect(f).toContain("← step 2 · end_turn");
+  expect(f).toContain('"verbose": true');
+
+  await type("/verbose");
+  await type(ENTER);
+  expect(frame()).toContain("Verbose off.");
+  expect(frame()).not.toMatch(/· verbose$/m);
+});
+
+test("/status shows provider, capabilities, prompt parts, plugins and paths", async () => {
+  const { type, frame } = await start([], undefined, [notes]);
+  await type("/status");
+  await type(ENTER);
+  const f = frame().replace(/\s+/g, " ");
+  expect(f).toContain("provider: anthropic · https://api.anthropic.com");
+  expect(f).toContain("model: claude-opus-5-5");
+  expect(f).toMatch(/system prompt: core\.md \d+ · total \d+ chars/);
+  expect(f).toContain("notes (context, /note)");
+  expect(f).toContain("config: ");
 });

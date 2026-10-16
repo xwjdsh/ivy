@@ -29,7 +29,7 @@ const HELP = `Usage: ivy [options] [prompt]
 Options:
   -c, --continue      Continue the most recent session
   -r, --resume [id]   Resume session <id>, or pick one
-  -d, --debug         Show per-step tokens, cost, latency and trace files
+  -v, --verbose       Show request/response details, hidden context and logs
   -h, --help          Show this help`;
 
 /** parseArgs has no optional option values; a bare -r/--resume becomes "" (= open the picker). */
@@ -48,7 +48,7 @@ async function main(): Promise<number> {
     options: {
       continue: { type: "boolean", short: "c" },
       resume: { type: "string", short: "r" },
-      debug: { type: "boolean", short: "d" },
+      verbose: { type: "boolean", short: "v" },
       help: { type: "boolean", short: "h" },
     },
   });
@@ -56,7 +56,7 @@ async function main(): Promise<number> {
     console.log(HELP);
     return 0;
   }
-  const debug = values.debug ?? false;
+  const verbose = values.verbose ?? false;
   const prompt = positionals.join(" ").trim();
   const interactive = prompt === "";
 
@@ -64,8 +64,8 @@ async function main(): Promise<number> {
     console.error('Interactive mode needs a terminal. Pass a prompt instead: ivy "question"');
     return 1;
   }
-  // In the TUI, stderr logging would corrupt the screen; debug info is shown inline instead.
-  if (debug && !interactive) setLogLevel("debug");
+  // In the TUI, stderr logging would corrupt the screen; verbose details are shown inline instead.
+  if (verbose && !interactive) setLogLevel("debug");
 
   const bridge: ConfirmBridge = { confirm: confirmPlain };
   const ivy = await createIvy({
@@ -89,13 +89,13 @@ async function main(): Promise<number> {
 
   try {
     if (!interactive) {
-      const result = await runPlain(ivy, session, ivy.tracer(session.id), prompt, debug);
+      const result = await runPlain(ivy, session, ivy.tracer(session.id), prompt, verbose);
       return result.stopReason === "error" ? 1 : 0;
     }
     const history = new InputHistory(join(ivy.paths.home, "input_history.jsonl"));
     const screen: Screen = { clear: () => {} };
     const app = render(
-      createElement(App, { ivy, session, history, bridge, screen, debug, pickSession }),
+      createElement(App, { ivy, session, history, bridge, screen, verbose, pickSession }),
       {
         exitOnCtrlC: false,
         kittyKeyboard: { mode: "auto" },

@@ -3,7 +3,8 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { z } from "zod";
 
-const Effort = z.enum(["low", "medium", "high", "xhigh", "max"]);
+export const EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const;
+const Effort = z.enum(EFFORT_LEVELS);
 
 /** API kinds Ivy can talk to. Adding one also needs a ModelClient (see createModelClient). */
 export const PROVIDER_TYPES = ["anthropic"] as const;

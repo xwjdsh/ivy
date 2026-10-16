@@ -25,17 +25,34 @@ export type AgentEvent =
   | { type: "text"; delta: string }
   /** Something the user should know about, e.g. a feature the endpoint turned out not to support. */
   | { type: "notice"; text: string }
+  /** This turn's plugin context (verbose view; it is otherwise hidden). */
+  | { type: "context"; text: string }
+  /** What is about to be sent for one model call (verbose view). */
+  | { type: "request"; step: number; info: RequestInfo }
   | { type: "tool_call"; id: string; name: string; input: unknown }
   | { type: "tool_result"; id: string; name: string; content: string; isError: boolean }
   | {
       type: "step";
       step: number;
+      /** Model that produced the response (differs from the request after a fallback). */
+      model: string;
       stopReason: string | null;
       usage: Anthropic.Beta.BetaUsage;
       costUsd: number | null;
       latencyMs: number;
       traceFile?: string;
     };
+
+export interface RequestInfo {
+  model: string;
+  /** Configured effort, and what is actually sent after per-model adjustment. */
+  effort: { configured: string; sent?: string };
+  contextMode: ContextMode;
+  betas: string[];
+  messages: number;
+  tools: number;
+  maxTokens: number;
+}
 
 export interface ToolCallRequest {
   name: string;
@@ -102,12 +119,14 @@ export class Agent {
       now: new Date(),
     });
     session.appendPrompt(userText, context);
+    if (context) turn.onEvent({ type: "context", text: context });
 
     let costUsd = 0;
     let parseRetries = 0;
 
     for (let step = 1; step <= config.agent.max_steps; step++) {
       const request = this.buildRequest(session);
+      turn.onEvent({ type: "request", step, info: this.describe(request) });
       const startedAt = new Date();
       let message: ModelMessage;
 
@@ -171,6 +190,7 @@ export class Agent {
       turn.onEvent({
         type: "step",
         step,
+        model: message.model,
         stopReason: message.stop_reason,
         usage: message.usage,
         costUsd: stepCost,
@@ -235,6 +255,21 @@ export class Agent {
     if (request.messages.some((m) => m.role === "system")) betas.push(CONTEXT_SYSTEM_BETA);
     if (betas.length > 0) request.betas = betas;
     return request;
+  }
+
+  private describe(request: ModelRequest): RequestInfo {
+    return {
+      model: request.model,
+      effort: {
+        configured: this.opts.capabilities.effort,
+        sent: request.output_config?.effort ?? undefined,
+      },
+      contextMode: this.contextMode(),
+      betas: request.betas ?? [],
+      messages: request.messages.length,
+      tools: request.tools?.length ?? 0,
+      maxTokens: request.max_tokens,
+    };
   }
 
   /** System messages where the model and endpoint support them; text blocks elsewhere. */

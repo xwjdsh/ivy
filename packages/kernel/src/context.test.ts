@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { definePlugin } from "@ivy/plugin-api";
 import { resolvePaths } from "./config.ts";
-import { buildSystemPrompt } from "./context.ts";
+import { buildSystemPrompt, systemPromptParts } from "./context.ts";
 import { PluginHost } from "./plugins.ts";
 
 const tempPaths = () => resolvePaths(mkdtempSync(join(tmpdir(), "ivy-ctx-")));
@@ -40,4 +40,15 @@ test("core rules are always there; optional parts are left out when missing", ()
   expect(prompt).not.toContain("# About the user");
   expect(prompt).not.toContain("# Interface");
   expect(prompt).not.toContain("# Plugin instructions");
+});
+
+test("systemPromptParts names each section; joined they are the system prompt", () => {
+  const paths = tempPaths();
+  writeFileSync(paths.user, "Hi");
+  const plugins = new PluginHost(paths.data, {});
+  const parts = systemPromptParts(paths, plugins, "Renders Markdown.");
+  expect(parts.map((p) => p.name)).toEqual(["core.md", "USER.md", "interface"]);
+  expect(parts.map((p) => p.text).join("\n\n")).toBe(
+    buildSystemPrompt(paths, plugins, "Renders Markdown."),
+  );
 });

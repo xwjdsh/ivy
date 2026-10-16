@@ -1,8 +1,14 @@
 import {
   type AgentEvent,
+  EFFORT_LEVELS,
+  type Effort,
   type Ivy,
   Session,
   type SessionSummary,
+  saveDefaultModel,
+  saveEffort,
+  setLogLevel,
+  setLogSink,
   summarizeUsage,
   type ToolCallRequest,
   type TurnResult,
@@ -13,6 +19,7 @@ import { availableCommands, type CommandInfo, matchCommands } from "../commands.
 import type { InputHistory } from "../history.ts";
 import { renderMarkdown, splitFinished } from "../markdown.ts";
 import { addTokens, formatTokens, type TokenCount, usageReport } from "../usage-report.ts";
+import { formatRequest, formatStep, statusReport } from "../verbose-format.ts";
 import { Input } from "./input.tsx";
 import { historyItems, type Item, itemId } from "./items.ts";
 import { Picker } from "./picker.tsx";
@@ -42,7 +49,7 @@ export interface AppProps {
   history: InputHistory;
   bridge: ConfirmBridge;
   screen: Screen;
-  debug: boolean;
+  verbose: boolean;
   /** Open the session picker on start (`ivy -r` without an id). */
   pickSession?: boolean;
 }
@@ -81,7 +88,7 @@ export function App({
   history,
   bridge,
   screen,
-  debug,
+  verbose,
   pickSession = false,
 }: AppProps) {
   const { exit } = useApp();
@@ -89,6 +96,12 @@ export function App({
   const width = Math.max(20, columns - 1);
 
   const sessionRef = useRef(initialSession);
+
+  // Verbose view: request/response details, the hidden per-turn context, full tool input,
+  // capability decisions and plugin logs. A ref so a turn in flight sees toggles at once.
+  const [verboseOn, setVerboseOn] = useState(verbose);
+  const verboseRef = useRef(verbose);
+  const requestedModel = useRef<string | undefined>(undefined);
   const tracerRef = useRef(ivy.tracer(initialSession.id));
   const [sessionId, setSessionId] = useState(initialSession.id);
 
@@ -115,6 +128,16 @@ export function App({
     ...historyItems(initialSession.messages),
   ]);
   const push = useCallback((...next: Item[]) => setItems((prev) => [...prev, ...next]), []);
+
+  // stderr would corrupt the screen: logs go into the transcript when verbose, else nowhere.
+  useEffect(() => {
+    verboseRef.current = verboseOn;
+    setLogLevel(verboseOn ? "debug" : "warn");
+    setLogSink((line) => {
+      if (verboseRef.current) push({ id: itemId(), kind: "info", text: line });
+    });
+  }, [verboseOn, push]);
+  useEffect(() => () => setLogSink(null), []);
 
   // <Static> prints each item once. To reprint (new width, expanded tools, switched
   // session) we clear the terminal and remount it with a new key, as Gemini CLI does.
@@ -207,6 +230,8 @@ export function App({
         push({ id: itemId(), kind: "info", text: e.text, tone: "warn" });
         break;
       case "step": {
+        // The step's message is complete: print the rest of its text before any step details.
+        flushText(true);
         const u = e.usage;
         const cached = u.cache_read_input_tokens ?? 0;
         const step: TokenCount = {
@@ -216,20 +241,20 @@ export function App({
         };
         turnTokens.current = addTokens(turnTokens.current, step);
         setTokens((t) => addTokens(t, step));
-        if (debug) {
-          const u = e.usage;
-          push({
-            id: itemId(),
-            kind: "info",
-            text:
-              `[step ${e.step}] stop=${e.stopReason} in=${u.input_tokens} out=${u.output_tokens} ` +
-              `cache_read=${u.cache_read_input_tokens ?? 0} cache_write=${u.cache_creation_input_tokens ?? 0} ` +
-              `$${(e.costUsd ?? 0).toFixed(4)} ${(e.latencyMs / 1000).toFixed(1)}s` +
-              (e.traceFile ? `\n  trace: ${e.traceFile}` : ""),
-          });
+        if (verboseRef.current) {
+          push({ id: itemId(), kind: "info", text: formatStep(e, requestedModel.current) });
         }
         break;
       }
+      case "context":
+        if (verboseRef.current) push({ id: itemId(), kind: "info", text: `context:\n${e.text}` });
+        break;
+      case "request":
+        requestedModel.current = e.info.model;
+        if (verboseRef.current) {
+          push({ id: itemId(), kind: "info", text: formatRequest(e.step, e.info) });
+        }
+        break;
     }
   };
 
@@ -306,14 +331,56 @@ export function App({
       .map(({ def }) => ({ name: def.name, args: def.args, description: def.description })),
   );
 
-  // Model for this run only; /model switches it without touching config.toml.
+  // /model switches now and saves the choice as the provider's default_model.
   const [model, setModel] = useState(ivy.agent.model);
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
+
+  // /effort switches now and saves the choice as [generation] effort.
+  const [effort, setEffortState] = useState<Effort>(ivy.capabilities.effort);
+  const [effortPickerOpen, setEffortPickerOpen] = useState(false);
+  const switchEffort = (level: Effort) => {
+    if (level === effort) return;
+    ivy.capabilities.setEffort(level);
+    setEffortState(level);
+    const used = ivy.capabilities.for(model).effort;
+    const note =
+      used === undefined
+        ? ` ${model} doesn't take an effort setting, so it isn't sent.`
+        : used !== level
+          ? ` ${model} doesn't support it; ${used} is used.`
+          : "";
+    try {
+      saveEffort(ivy.paths, level);
+      push({ id: itemId(), kind: "info", text: `Effort: ${level} (saved to config.toml).${note}` });
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      push({
+        id: itemId(),
+        kind: "info",
+        text: `Effort: ${level} for this run only. ${reason}${note}`,
+        tone: "warn",
+      });
+    }
+  };
   const switchModel = (name: string) => {
     if (name === model) return;
     ivy.agent.setModel(name);
     setModel(name);
-    push({ id: itemId(), kind: "info", text: `Model: ${name} (this run only)` });
+    if (verboseRef.current) {
+      push({ id: itemId(), kind: "info", text: ivy.capabilities.explain(name).join("\n") });
+    }
+    try {
+      saveDefaultModel(ivy.paths, ivy.config.activeProvider.name, name);
+      push({ id: itemId(), kind: "info", text: `Model: ${name} (saved to config.toml)` });
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      push({
+        id: itemId(),
+        kind: "info",
+        text: `Model: ${name} for this run only. ${reason}`,
+        tone: "warn",
+      });
+    }
   };
   const openPicker = () => {
     const others = Session.list(ivy.paths.sessions).filter((s) => s.id !== sessionRef.current.id);
@@ -354,6 +421,28 @@ export function App({
             "error",
           );
         }
+        return;
+      }
+      case "/effort": {
+        const level = args[0];
+        if (!level) setEffortPickerOpen(true);
+        else if ((EFFORT_LEVELS as readonly string[]).includes(level))
+          switchEffort(level as Effort);
+        else info(`Unknown effort ${level}. Levels: ${EFFORT_LEVELS.join(", ")}`, "error");
+        return;
+      }
+      case "/status":
+        info(statusReport(ivy, model, sessionRef.current.id, sessionRef.current.file));
+        return;
+      case "/verbose": {
+        const on = !verboseRef.current;
+        verboseRef.current = on;
+        setVerboseOn(on);
+        info(
+          on
+            ? `Verbose on. /status shows the current state.\n${ivy.capabilities.explain(model).join("\n")}`
+            : "Verbose off.",
+        );
         return;
       }
       case "/usage":
@@ -422,6 +511,7 @@ export function App({
       if (busy) return interrupt();
       if (picker) return setPicker(null);
       if (modelPickerOpen) return setModelPickerOpen(false);
+      if (effortPickerOpen) return setEffortPickerOpen(false);
       if (inputValue !== "") return; // the input box clears itself
       if (Date.now() - exitArmedAt < EXIT_CONFIRM_MS) return exit();
       setExitArmedAt(Date.now());
@@ -446,6 +536,7 @@ export function App({
     (permission ? 8 : 0) +
     (picker ? picker.length + 4 : 0) +
     (modelPickerOpen ? ivy.config.activeProvider.models.length + 4 : 0) +
+    (effortPickerOpen ? EFFORT_LEVELS.length + 4 : 0) +
     completions.length;
   const maxLiveLines = Math.max(3, rows - reserved);
   let liveLines = streaming.trim() === "" ? [] : renderMarkdown(streaming, width).split("\n");
@@ -463,6 +554,7 @@ export function App({
             width={width}
             expandedTurn={expandedTurn}
             latestTurn={turnRef.current}
+            verbose={verboseOn}
           />
         )}
       </Static>
@@ -487,7 +579,7 @@ export function App({
       {permission && <PermissionPrompt call={permission.call} onChoose={answerPermission} />}
       {modelPickerOpen && (
         <Picker
-          title={`Switch model on ${ivy.config.activeProvider.name} (this run only)`}
+          title={`Switch model on ${ivy.config.activeProvider.name} (saved as default)`}
           items={ivy.config.activeProvider.models}
           itemKey={(name) => name}
           initialIndex={Math.max(0, ivy.config.activeProvider.models.indexOf(model))}
@@ -497,6 +589,20 @@ export function App({
             switchModel(name);
           }}
           onCancel={() => setModelPickerOpen(false)}
+        />
+      )}
+      {effortPickerOpen && (
+        <Picker
+          title="Switch effort (saved as default)"
+          items={[...EFFORT_LEVELS]}
+          initialIndex={EFFORT_LEVELS.indexOf(effort)}
+          itemKey={(level) => level}
+          renderItem={(level) => (level === effort ? `${level}  (current)` : level)}
+          onPick={(level) => {
+            setEffortPickerOpen(false);
+            switchEffort(level);
+          }}
+          onCancel={() => setEffortPickerOpen(false)}
         />
       )}
       {picker && (
@@ -513,7 +619,7 @@ export function App({
       <Input
         history={history.entries}
         commands={commands}
-        active={!permission && !picker && !modelPickerOpen}
+        active={!permission && !picker && !modelPickerOpen && !effortPickerOpen}
         busy={busy}
         width={width}
         onSubmit={onSubmit}
@@ -522,9 +628,10 @@ export function App({
       <StatusBar
         provider={ivy.config.activeProvider.name}
         model={model}
-        effort={ivy.capabilities.for(model).effort}
+        effort={effort && ivy.capabilities.for(model).effort}
         sessionId={sessionId}
         tokens={formatTokens(tokens)}
+        verbose={verboseOn}
         hint={busy ? "esc to interrupt" : exitArmed ? "Press Ctrl-C again to exit" : undefined}
       />
     </Box>

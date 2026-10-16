@@ -5,7 +5,7 @@ A personal AI agent for the terminal. See [docs/DESIGN.md](docs/DESIGN.md).
 ```bash
 bun install
 mkdir -p .ivy && cp -n examples/* .ivy/   # then set api_key in .ivy/config.toml
-bun run ivy            # chat; `-c` continues the last session, `-d` shows debug info
+bun run ivy            # chat; `-c` continues the last session, `-v` shows verbose details
 bun test && bun run typecheck && bun run lint
 bun run build          # single binary at dist/ivy (prompts are embedded)
 ```

@@ -1,5 +1,6 @@
 import { createInterface } from "node:readline/promises";
 import type { AgentEvent, Ivy, Session, ToolCallRequest, Tracer, TurnResult } from "@ivy/kernel";
+import { formatRequest, formatStep } from "./verbose-format.ts";
 
 const c = {
   dim: (s: string) => `\x1b[2m${s}\x1b[0m`,
@@ -29,7 +30,7 @@ export async function runPlain(
   session: Session,
   tracer: Tracer | undefined,
   prompt: string,
-  debug: boolean,
+  verbose: boolean,
 ): Promise<TurnResult> {
   let atLineStart = true;
   const write = (s: string) => {
@@ -44,6 +45,7 @@ export async function runPlain(
   const onSigint = () => controller.abort();
   process.on("SIGINT", onSigint);
 
+  let requestedModel: string | undefined;
   const render = (e: AgentEvent) => {
     switch (e.type) {
       case "text":
@@ -62,18 +64,23 @@ export async function runPlain(
         newline();
         process.stderr.write(c.yellow(`${e.text}\n`));
         break;
-      case "step":
-        if (debug) {
-          const u = e.usage;
+      case "context":
+        if (verbose) {
           newline();
-          process.stderr.write(
-            c.dim(
-              `[step ${e.step}] stop=${e.stopReason} in=${u.input_tokens} out=${u.output_tokens} ` +
-                `cache_read=${u.cache_read_input_tokens ?? 0} cache_write=${u.cache_creation_input_tokens ?? 0} ` +
-                `$${(e.costUsd ?? 0).toFixed(4)} ${(e.latencyMs / 1000).toFixed(1)}s\n` +
-                (e.traceFile ? `  trace: ${e.traceFile}\n` : ""),
-            ),
-          );
+          process.stderr.write(c.dim(`context:\n${e.text}\n`));
+        }
+        break;
+      case "request":
+        requestedModel = e.info.model;
+        if (verbose) {
+          newline();
+          process.stderr.write(c.dim(`${formatRequest(e.step, e.info)}\n`));
+        }
+        break;
+      case "step":
+        if (verbose) {
+          newline();
+          process.stderr.write(c.dim(`${formatStep(e, requestedModel)}\n`));
         }
         break;
     }
@@ -90,7 +97,7 @@ export async function runPlain(
       process.stderr.write(c.red(`[error] ${result.error ?? ""}\n`));
     else if (result.stopReason !== "end_turn")
       process.stderr.write(c.yellow(`[${result.stopReason}]\n`));
-    if (debug)
+    if (verbose)
       process.stderr.write(c.dim(`$${result.costUsd.toFixed(4)} · ${result.steps} step(s)\n`));
     return result;
   } finally {

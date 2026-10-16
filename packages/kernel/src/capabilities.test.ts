@@ -125,3 +125,17 @@ test("rejectedFeature recognises the errors we can recover from", () => {
   expect(rejectedFeature("output_config.effort: invalid")).toBe("effort");
   expect(rejectedFeature("messages: text content blocks must be non-empty")).toBeNull();
 });
+
+test("explain says why each feature is on or off", () => {
+  const c = caps();
+  c.markUnsupported("claude-opus-5-5", "systemMessages");
+  const lines = c.explain("claude-opus-5-5").join("\n");
+  expect(lines).toContain("official Anthropic API");
+  expect(lines).toContain("refusal fallback: on");
+  expect(lines).toContain(
+    "system messages for context: off: rejected by this endpoint earlier (learned)",
+  );
+  expect(caps(PROXY).explain("qoder/x").join("\n")).toContain(
+    "refusal fallback: off: compatible endpoint",
+  );
+});

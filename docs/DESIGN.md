@@ -110,7 +110,7 @@ Everything users care about (memory, email, calendar, coding help, news digests,
   3. **Defaults:** on the official API, Claude models get the optional features, except a fixed pattern of *older* models known to lack them (this list only covers the past, so it never grows). Compatible endpoints get only the basics plus `effort` (dropped on a 400). `refusal_fallback = false` in a provider turns fallbacks off.
 - The official endpoint is recognised by `base_url` (`api.anthropic.com`).
 - **Prompt caching:** tools and system prompt are kept byte-stable (plugins sorted by id, no timestamps), with a cache breakpoint after them. Volatile context (date/time, retrieved memories) goes into the new user message as a `<context>` block (§5.3), never into the system prompt, so the cached prefix stays intact.
-- **Switching models:** the active provider's `models` lists what `/model` offers (a picker, or `/model <name>`); the switch lasts for the current run only. Requests only carry params the model accepts (`Capabilities`): e.g. Haiku gets no `effort` and no refusal fallback, and an unsupported effort level is lowered to the nearest one the model has. The prompt cache is per model, so the first call after a switch misses it.
+- **Switching models:** the active provider's `models` lists what `/model` offers (a picker, or `/model <name>`); the choice is saved as the provider's `default_model` in `config.toml` (that one line is edited in place; comments and layout are kept). `/effort` works the same way for `[generation] effort` (a picker or `/effort <level>`); note that changing the top-level effort mid-session invalidates the cached messages once (Anthropic's per-message effort beta would avoid that; possible enhancement). Requests only carry params the model accepts (`Capabilities`): e.g. Haiku gets no `effort` and no refusal fallback, and an unsupported effort level is lowered to the nearest one the model has. The prompt cache is per model, so the first call after a switch misses it.
 - **Long sessions:** use server-side compaction (beta) when a session grows large, and keep the returned compaction blocks in history.
 - **Providers:** `config.toml` can define several `[providers.<name>]` (each with `type`, `api_key`, `base_url`, a required `default_model` used at startup, optional `models` that `/model` can also switch to, and optional `refusal_fallback`, default true), and `[agent] provider = "<name>"` picks the active one. Only `type = "anthropic"` exists today; another API kind would add a value here plus a `ModelClient`. Generation settings (`effort`, `max_tokens`) live in `[generation]`, independent of the provider.
 - Credentials and endpoint come only from `config.toml`. `ANTHROPIC_*` environment variables and `ant` profiles are deliberately ignored, so there is one source of truth. Config is strict: unknown keys are errors.
@@ -206,7 +206,7 @@ deny  = ["gmail__send"]
 ```
 
 - **Precedence:** `deny` > `allow` > the risk level's default. A denied call is rejected without asking, and the model is told it was denied by a rule.
-- **Sources:** rules from `config.toml` (hand-written) plus learned rules in `~/.ivy/permissions.json`, which Ivy owns. Ivy never rewrites `config.toml`, so its comments and layout stay intact.
+- **Sources:** rules from `config.toml` (hand-written) plus learned rules in `~/.ivy/permissions.json`, which Ivy owns. Ivy never rewrites `config.toml` as a whole; the only in-place edits are `/model` and `/effort` saving their choice (§5.2).
 - **Dialog:** *Yes* / *Yes, for this session* / *Always (saves an allow rule to permissions.json)* / *No*. `dangerous` tools never offer *Always*.
 - **Plugin defaults:** a plugin may ship default allow rules for low-impact tools (e.g. memory saves); user `deny` rules still win.
 
@@ -234,12 +234,18 @@ An interface turns user I/O into kernel calls. All interfaces share the same ker
 - **M4 — Daemon** (`ivy daemon`): runs scheduled jobs and sends results as macOS notifications or files. The CLI can talk to it to see job output.
 - **Later (maybe)** — Chat-app bot (Telegram/Slack) for phone access; local web UI.
 
-### 5.8 Tracing & Debugging
+### 5.8 Tracing & Verbose View
 
 Part of the kernel from M0, so problems can be debugged from day one.
 
 - Every API call is written to `~/.ivy/traces/<session>/<time>-<n>.json`: the exact request body, the raw response, latency, and `usage` (input, output, cache read/write tokens). Since each request holds the whole history, traces grow quickly: `[trace] retention_days` (default 7) prunes old session folders on startup, and `[trace] enabled = false` turns tracing off.
-- `ivy --debug` prints a compact live view: each loop step, tool calls with inputs/outputs, tokens, cache hit rate, cost.
+- **Verbose view:** `ivy -v` starts with it on; `/verbose` toggles it at runtime (the status bar shows `verbose`). It adds, dimmed, to the transcript:
+  - before each model call: model, effort (configured → sent), context rendering (system/block), betas, message and tool counts, `max_tokens`;
+  - after each call: stop reason, tokens incl. cache read/write, estimated cost, latency, the serving model if it differs (fallback, or a proxy reporting its own model), and the trace file;
+  - the turn's `<context>` block (otherwise hidden), full tool input, plugin and kernel logs (which never go to stderr in the TUI), and the capability explanation for the model on `/verbose` and on `/model`.
+- **`/status`** (any time, verbose or not): provider and endpoint, the current model's capabilities and why, system prompt parts with sizes, plugins (and disabled ones), session, trace, config and cache paths.
+  - Deliberately not included: showing the model's thinking (`thinking.display`), since that changes the request; observing should not change what is being observed.
+  - One-shot `ivy -v "..."` prints the same request/step/context lines to stderr.
 - `/trace` in the CLI shows the last turn's full request as the model saw it (system prompt, tools, context layers), so prompt and context changes can be checked directly.
 - `ivy replay <trace>` re-sends a recorded request, optionally with a changed system prompt, model or effort, to compare outputs. This is the starting point for evals (M2+).
 
@@ -439,7 +445,7 @@ Each milestone ends with a few days of real use and an update to this doc.
 - Streaming chat with the model, multi-turn, JSONL sessions (`/new`, `/resume`).
 - Agent loop with the `core` plugin (`now` tool) to prove tool calling end-to-end.
 - Token usage & cost shown per turn.
-- Tracing v1: raw request/response files + `--debug` live view (§5.8).
+- Tracing v1: raw request/response files + `--verbose` live view (§5.8).
 - **Done when:** I can chat with Ivy in the terminal and resume yesterday's session.
 - **Status: done (2026-10-16).** Shipped beyond the plan: Ink TUI (see §5.7), `/usage`, `bun run build` single binary, CI.
 - **Deferred:** `/trace` and `ivy replay` (§5.8) → M2 with evals; server-side compaction for long sessions → when sessions get long; large-paste placeholders and a custom Markdown renderer → backlog; progress updates while thinking (`thinking.display: "updates"`) → M1.
@@ -526,4 +532,5 @@ Goal: Ivy starts remembering. Built in this order; each step is shippable on its
 | 2026-10-16 | Compatibility first, Anthropic features as progressive enhancements (principle 7, G7) | The user switches between many models through a compatible proxy; Claude-only would lose that |
 | 2026-10-16 | Capabilities from the Models API + learned-on-400 + defaults for older models, instead of hard-coded model lists | New models work without code changes; endpoints that reject a feature degrade automatically |
 | 2026-10-16 | Refusal fallback on by default wherever supported (Anthropic's recommendation), with a notice naming both models; `refusal_fallback = false` opts out | Capabilities decide where it's safe; the user can still choose to see refusals |
+| 2026-10-16 | `/model` and `/effort` save the choice (`default_model`, `[generation] effort`), editing that one line of `config.toml` in place (validated, restored on failure) | The user wants the switch to stick; a line edit keeps comments and layout |
 | 2026-10-16 | Use the beta Messages API (`client.beta.messages`) | Needed for `fallbacks: "default"` now and compaction later |

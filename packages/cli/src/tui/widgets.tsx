@@ -26,12 +26,20 @@ export function StatusBar(props: {
   sessionId: string;
   /** Session token totals, e.g. "12.3k in / 1.2k out". */
   tokens: string;
+  verbose?: boolean;
   hint?: string;
 }) {
   return (
     <Box justifyContent="space-between">
       <Text dimColor>
-        {[props.provider, props.model, props.effort, props.sessionId, props.tokens]
+        {[
+          props.provider,
+          props.model,
+          props.effort,
+          props.sessionId,
+          props.tokens,
+          props.verbose ? "verbose" : "",
+        ]
           .filter(Boolean)
           .join(" · ")}
       </Text>
@@ -110,6 +118,7 @@ export function ToolLine({
   isError,
   expanded = false,
   expandable = false,
+  showInput = false,
 }: {
   name: string;
   input: unknown;
@@ -118,6 +127,8 @@ export function ToolLine({
   expanded?: boolean;
   /** Show the Ctrl+O hint (only the latest turn can be expanded). */
   expandable?: boolean;
+  /** Verbose view: the full input, pretty-printed, under the header line. */
+  showInput?: boolean;
 }) {
   const lines = result === undefined ? [] : formatResult(result);
   const limit = expanded ? TOOL_EXPANDED_MAX_LINES : TOOL_PREVIEW_LINES;
@@ -130,6 +141,9 @@ export function ToolLine({
         <Text bold>{name}</Text>
         <Text dimColor> {JSON.stringify(input)}</Text>
       </Text>
+      {showInput && JSON.stringify(input) !== "{}" && (
+        <Text dimColor>{JSON.stringify(input, null, 2).replace(/^/gm, "    ")}</Text>
+      )}
       {shown.map((line, i) => (
         // biome-ignore lint/suspicious/noArrayIndexKey: static, never reordered
         <Text key={i} dimColor={!isError} color={isError ? "red" : undefined} wrap="truncate-end">
@@ -151,11 +165,13 @@ export function ItemView({
   width,
   expandedTurn = null,
   latestTurn,
+  verbose = false,
 }: {
   item: Item;
   width: number;
   expandedTurn?: number | null;
   latestTurn?: number;
+  verbose?: boolean;
 }) {
   switch (item.kind) {
     case "user":
@@ -175,7 +191,12 @@ export function ItemView({
       const latest = item.turn !== undefined && item.turn === latestTurn;
       return (
         <Box marginTop={1}>
-          <ToolLine {...item} expanded={latest && expandedTurn === item.turn} expandable={latest} />
+          <ToolLine
+            {...item}
+            expanded={latest && expandedTurn === item.turn}
+            expandable={latest}
+            showInput={verbose}
+          />
         </Box>
       );
     }

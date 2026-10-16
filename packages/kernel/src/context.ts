@@ -20,20 +20,37 @@ export function buildSystemPrompt(
   plugins: PluginHost,
   interfaceInstructions = "",
 ): string {
-  const sections = [CORE.trim()];
+  return systemPromptParts(paths, plugins, interfaceInstructions)
+    .map((p) => p.text)
+    .join("\n\n");
+}
+
+/** The system prompt's sections, in order, with names (for the verbose view). */
+export function systemPromptParts(
+  paths: Paths,
+  plugins: PluginHost,
+  interfaceInstructions = "",
+): Array<{ name: string; text: string }> {
+  const parts = [{ name: "core.md", text: CORE.trim() }];
 
   const soul = readOptional(paths.soul);
-  if (soul) sections.push(soul);
+  if (soul) parts.push({ name: "SOUL.md", text: soul });
 
   const user = readOptional(paths.user);
-  if (user) sections.push(`# About the user\n${user}`);
+  if (user) parts.push({ name: "USER.md", text: `# About the user\n${user}` });
 
-  if (interfaceInstructions.trim()) sections.push(`# Interface\n${interfaceInstructions.trim()}`);
+  if (interfaceInstructions.trim()) {
+    parts.push({ name: "interface", text: `# Interface\n${interfaceInstructions.trim()}` });
+  }
 
   const instructions = plugins.instructions();
-  if (instructions.length > 0) sections.push(`# Plugin instructions\n${instructions.join("\n\n")}`);
-
-  return sections.join("\n\n");
+  if (instructions.length > 0) {
+    parts.push({
+      name: "plugin instructions",
+      text: `# Plugin instructions\n${instructions.join("\n\n")}`,
+    });
+  }
+  return parts;
 }
 
 function readOptional(file: string): string {
