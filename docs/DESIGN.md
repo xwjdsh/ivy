@@ -354,7 +354,7 @@ The data root is `$IVY_HOME`, default `~/.ivy`. During development `bun run ivy`
 
 | Plugin | Milestone | Summary | Key tools |
 |---|---|---|---|
-| `core` | M0 / M1 | Current time (tool + per-turn context), date arithmetic | `now`, `date_calc` |
+| `core` | M0 / M1 | Current time in every turn's context; date arithmetic | `date_calc` |
 | `memory` | M1 | Long-term preferences, facts, todos and notes as markdown files; relevant ones injected each turn (§8.1) | `save`, `search`, `list`, `update`, `delete` |
 | `fs` + `shell` | M2 | Read/edit files and run commands in allowed directories — the coding/work helper | `read`, `write`, `edit`, `glob`, `grep`, `run` |
 | `mcp` bridge | M2 | Wraps configured MCP servers as plugins | (from servers) |
@@ -456,7 +456,8 @@ Goal: Ivy starts remembering. Built in this order; each step is shippable on its
    *Done when:* a test plugin's context reaches the model, its command shows in the `/` list, and disabling it removes both.
    *Status: done.* (Plugin command output is shown in the TUI; plugin loggers stay silent there, since stderr would corrupt the screen.)
 2. **core plugin:** per-turn current time in context; `date_calc` tool (difference between dates, add/subtract days/weeks/months, weekday of a date, timezone conversion).
-   *Done when:* "what's the date next Wednesday?" is answered in one model call without calling `now`.
+   *Done when:* date questions are answered correctly, using the current time from the context. (Originally "in one model call without a tool", but whether a model double-checks with `date_calc` is model style, not something to tune per model.)
+   *Status: done.* Checked with `qoder/qfmodel` via the proxy: "下周三是几号" → 2026-10-21, using "today is Friday 10-16" from the context; that model verified with `date_calc` once (two parallel calls in one step). Context line: `Now: 2026-10-16 Friday 18:28 (Asia/Tokyo, UTC+09:00)` (minute precision; the M0 `now` tool was removed as redundant, since models don't know the time but the context now tells them). `date_calc` ops: `weekday`, `diff` (calendar days, DST-safe), `add` (days…years, months clamp to month end; hours/minutes), `convert` (IANA timezones). "YYYY-MM-DD" is a local date, not UTC midnight.
 3. **Permission rules:** `[permissions]` allow/deny globs, `permissions.json` learned rules, *Always* in the dialog, plugin default rules (§5.5).
    *Done when:* a tool allowed with *Always* isn't asked about after a restart, and a `deny` rule beats every allow.
 4. **memory plugin** (§8.1): files, keyword search incl. CJK, tools, instructions, per-turn context, `/remember`, `/memory`.
