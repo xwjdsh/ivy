@@ -146,7 +146,7 @@ Both live in the data dir and are optional; a missing file is simply left out (w
 ### 5.4 Session Store
 
 - One JSONL file per session in `~/.ivy/sessions/YYYY-MM-DD-<id>.jsonl`. Each line is a full API message plus metadata (timestamp, plugin, token usage).
-- Commands: resume the last session, list sessions, start a new one.
+- Commands: `ivy -c` continues the most recently active session; `/resume` (or `ivy -r`) opens a picker of recent sessions (last active, first prompt, turn count); `/resume <id>` / `ivy -r <id>` jump directly; `/new` starts a new one. No separate list command.
 - Usage (tokens, cache hits, cost estimate) is recorded per turn so we can see what Ivy costs.
 
 ### 5.5 Permission Gate
@@ -185,7 +185,11 @@ Loads, configures and runs plugins; see §6 for the plugin contract. Responsibil
 
 An interface turns user I/O into kernel calls. All interfaces share the same kernel API, so adding one does not touch plugins.
 
-- **M0 — CLI/TUI** (`ivy`): interactive chat, streaming output, permission prompts, slash commands (`/new`, `/resume`, `/plugins`, `/memory`, plugin-defined commands). Also one-shot mode: `ivy "summarize my inbox"`.
+- **M0 — TUI** (`ivy`, built with Ink): streamed answers rendered as Markdown, spinner with phase and elapsed time, one-line tool calls with folded results, multi-line input (Shift/Option+Enter or trailing `\`) with persistent history and `/` command completion, permission dialog (once / for this session / deny), status bar (model, effort, session, cost). Esc or Ctrl-C interrupts; Ctrl-C twice or Ctrl-D quits. The real terminal cursor follows the input caret so IME composition (e.g. Chinese) appears in place.
+  - Finished paragraphs move into Ink's `<Static>` (printed once, kept in scrollback); only the growing tail re-renders. The live area is capped below the terminal height (older lines shown as "… N more lines above"), because once Ink's dynamic output is taller than the screen it redraws everything on each update and flickers.
+  - Redraw (`refresh`): clear Ink's frame and the terminal, then remount `<Static>` with a new key so history reprints. Used by `/new`, `/clear`, `/resume`, Ctrl+L, Ctrl+O and (debounced 100 ms) terminal width changes. Approach borrowed from Gemini CLI.
+  - Tool results show 3 lines; Ctrl+O expands the latest turn's tool output (capped at 500 lines) and collapses it again.
+  - One-shot mode (`ivy "question"`) stays plain text for scripts and pipes.
 - **M4 — Daemon** (`ivy daemon`): runs scheduled jobs and sends results as macOS notifications or files. The CLI can talk to it to see job output.
 - **Later (maybe)** — Chat-app bot (Telegram/Slack) for phone access; local web UI.
 
@@ -329,7 +333,7 @@ ivy/
 | LLM | `@anthropic-ai/sdk`, Claude Opus 5.5 | Best tool use; one provider keeps things simple |
 | Schemas | Zod | Tool inputs, config validation, JSON Schema generation |
 | MCP | `@modelcontextprotocol/sdk` | MCP bridge plugin |
-| TUI | To decide in M0 (Ink vs. plain readline + ANSI) | Start minimal |
+| TUI | Ink 8 + marked-terminal | Mature (used by Claude Code, Gemini CLI); `<Static>` for scrollback |
 | Config | TOML | Easy to hand-edit |
 | Tests | `bun test` | Built in |
 | Lint/format | Biome | One fast tool |
@@ -379,10 +383,11 @@ Each milestone ends with a few days of real use and an update to this doc.
 - Automatic memory extraction and periodic memory cleanup.
 - Usage dashboard; per-plugin effort/model tuning.
 - Subagents for fan-out research tasks.
+- TUI: collapse large pastes into `[Pasted text: N lines]` placeholders; own Markdown renderer (lowlight code highlighting, width-aware tables) if marked-terminal falls short.
 
 ## 12. Open Questions
 
-1. **TUI library:** Ink (React-style, richer) or a minimal readline UI? → decide in M0.
+1. ~~**TUI library**~~ → Ink (decided in M0).
 2. **Memory format:** one file per memory vs. a few topic files? Auto-extraction on by default or opt-in? → decide in M1.
 3. **Email/calendar:** MCP servers vs. direct Google API plugins (OAuth handling, offline access for the daemon)? → decide in M3.
 4. **Notifications:** macOS notifications only, or also push to phone? → decide in M4.
@@ -404,4 +409,5 @@ Each milestone ends with a few days of real use and an update to this doc.
 | 2026-10-16 | Dev data in `./.ivy` | Easy to inspect and wipe during development |
 | 2026-10-16 | Prompt files named `SOUL.md` / `USER.md`, both read from the data dir, empty if missing | Common convention for personal agents; easy to edit without touching code |
 | 2026-10-16 | No provider abstraction yet; coupling documented in §5.2 | Avoid premature abstraction; switching path is known |
+| 2026-10-16 | Ink TUI for interactive mode; plain text for one-shot | Rich UI where it helps, script-friendly output elsewhere |
 | 2026-10-16 | Use the beta Messages API (`client.beta.messages`) | Needed for `fallbacks: "default"` now and compaction later |
