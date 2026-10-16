@@ -31,6 +31,8 @@ export class Session {
 
   /** Meta record not yet written: the file is created lazily on the first append. */
   private pendingMeta: SessionRecord | null = null;
+  /** The file ends in a partial line (crash mid-write); start the next write on a new line. */
+  private needsNewline = false;
 
   private constructor(
     readonly id: string,
@@ -49,9 +51,12 @@ export class Session {
     const file = join(dir, `${id}.jsonl`);
     if (!existsSync(file)) throw new Error(`Session not found: ${id}`);
     const session = new Session(id, file);
-    for (const record of readRecords(file)) {
-      if (record.type === "message") session.messages.push(record.message);
-    }
+    const content = readFileSync(file, "utf8");
+    session.needsNewline = content.length > 0 && !content.endsWith("\n");
+    const messages = parseRecords(content).flatMap((r) =>
+      r.type === "message" ? [r.message] : [],
+    );
+    session.messages.push(...withoutDanglingToolUse(messages));
     return session;
   }
 
@@ -86,33 +91,62 @@ export class Session {
       .slice(0, limit);
   }
 
+  /** Messages passed together are written in one call, so a tool call and its results land together. */
   append(...messages: MessageParam[]): void {
-    for (const message of messages) {
-      this.messages.push(message);
-      this.write({ type: "message", ts: new Date().toISOString(), message });
-    }
+    const ts = new Date().toISOString();
+    this.messages.push(...messages);
+    this.write(...messages.map((message): SessionRecord => ({ type: "message", ts, message })));
   }
 
   recordUsage(usage: Anthropic.Beta.BetaUsage, costUsd: number): void {
     this.write({ type: "usage", ts: new Date().toISOString(), usage, costUsd });
   }
 
-  private write(record: SessionRecord): void {
+  private write(...records: SessionRecord[]): void {
     if (this.pendingMeta) {
-      const meta = this.pendingMeta;
+      records.unshift(this.pendingMeta);
       this.pendingMeta = null;
       mkdirSync(dirname(this.file), { recursive: true });
-      this.write(meta);
     }
-    appendFileSync(this.file, `${JSON.stringify(record)}\n`);
+    const prefix = this.needsNewline ? "\n" : "";
+    this.needsNewline = false;
+    appendFileSync(this.file, prefix + records.map((r) => `${JSON.stringify(r)}\n`).join(""));
   }
 }
 
 export function readRecords(file: string): SessionRecord[] {
-  return readFileSync(file, "utf8")
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => JSON.parse(line) as SessionRecord);
+  return parseRecords(readFileSync(file, "utf8"));
+}
+
+/** Parse JSONL, skipping lines that aren't valid JSON (e.g. a write cut off by a crash). */
+function parseRecords(content: string): SessionRecord[] {
+  return content.split("\n").flatMap((line) => {
+    if (!line.trim()) return [];
+    try {
+      return [JSON.parse(line) as SessionRecord];
+    } catch {
+      return [];
+    }
+  });
+}
+
+/**
+ * Drop assistant messages whose tool calls never got results (a crash between
+ * the two writes, or a skipped corrupt line). The API rejects such histories.
+ */
+function withoutDanglingToolUse(messages: MessageParam[]): MessageParam[] {
+  return messages.filter((m, i) => {
+    if (m.role !== "assistant" || typeof m.content === "string") return true;
+    const ids = m.content.flatMap((b) => (b.type === "tool_use" ? [b.id] : []));
+    if (ids.length === 0) return true;
+    const next = messages[i + 1];
+    const answered = new Set(
+      next?.role === "user" && typeof next.content !== "string"
+        ? next.content.flatMap((b) => (b.type === "tool_result" ? [b.tool_use_id] : []))
+        : [],
+    );
+    return ids.every((id) => answered.has(id));
+  });
 }
 
 function textOf(message: MessageParam): string {

@@ -1,9 +1,11 @@
+import { join } from "node:path";
 import type { IvyPlugin } from "@ivy/plugin-api";
 import { Agent, type ToolCallRequest } from "./agent.ts";
 import { type Config, loadConfig, type Paths, resolvePaths } from "./config.ts";
 import { buildSystemPrompt } from "./context.ts";
 import { AnthropicModelClient, type ModelClient } from "./model.ts";
 import { PluginHost } from "./plugins.ts";
+import { pruneTraces, Tracer } from "./trace.ts";
 
 export * from "./agent.ts";
 export * from "./config.ts";
@@ -29,12 +31,15 @@ export interface Ivy {
   config: Config;
   paths: Paths;
   systemPrompt: string;
+  /** Tracer for a session, or undefined when tracing is off. */
+  tracer(sessionId: string): Tracer | undefined;
 }
 
 /** Wire up the kernel: config, plugins, system prompt and agent. */
 export async function createIvy(opts: IvyOptions): Promise<Ivy> {
   const paths = opts.paths ?? resolvePaths();
   const config = loadConfig(paths);
+  pruneTraces(paths.traces, config.trace.retention_days);
   const plugins = new PluginHost(paths.data, config.plugins);
   for (const plugin of opts.plugins) await plugins.register(plugin);
 
@@ -46,7 +51,9 @@ export async function createIvy(opts: IvyOptions): Promise<Ivy> {
     systemPrompt,
     confirm: opts.confirm,
   });
-  return { agent, plugins, config, paths, systemPrompt };
+  const tracer = (sessionId: string) =>
+    config.trace.enabled ? new Tracer(join(paths.traces, sessionId)) : undefined;
+  return { agent, plugins, config, paths, systemPrompt, tracer };
 }
 
 function defaultModel(config: Config, paths: Paths): ModelClient {

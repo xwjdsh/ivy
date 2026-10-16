@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { join } from "node:path";
 import { parseArgs } from "node:util";
-import { createIvy, Session, setLogLevel, Tracer } from "@ivy/kernel";
+import { createIvy, Session, setLogLevel } from "@ivy/kernel";
 import core from "@ivy/plugin-core";
 import { render } from "ink";
 import { createElement } from "react";
@@ -89,8 +89,7 @@ async function main(): Promise<number> {
 
   try {
     if (!interactive) {
-      const tracer = new Tracer(join(ivy.paths.traces, session.id));
-      const result = await runPlain(ivy, session, tracer, prompt, debug);
+      const result = await runPlain(ivy, session, ivy.tracer(session.id), prompt, debug);
       return result.stopReason === "error" ? 1 : 0;
     }
     const history = new InputHistory(join(ivy.paths.home, "input_history.jsonl"));

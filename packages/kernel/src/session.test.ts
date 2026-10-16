@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { appendFileSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Session } from "./session.ts";
@@ -37,4 +37,31 @@ test("an unused session leaves no file behind", () => {
   const dir = mkdtempSync(join(tmpdir(), "ivy-sessions-"));
   Session.create(dir, "m");
   expect(Session.list(dir)).toEqual([]);
+});
+
+test("a corrupt or cut-off line doesn't break loading, listing or later writes", () => {
+  const dir = mkdtempSync(join(tmpdir(), "ivy-sessions-"));
+  const s = Session.create(dir, "m");
+  s.append({ role: "user", content: "hello" }, { role: "assistant", content: "hi" });
+  appendFileSync(s.file, '{"type":"message","ts":"x","message":{"role":"us'); // crash mid-write
+
+  expect(Session.list(dir)[0]).toMatchObject({ id: s.id, turns: 1 });
+  const loaded = Session.load(dir, s.id);
+  expect(loaded.messages).toHaveLength(2);
+
+  loaded.append({ role: "user", content: "again" });
+  expect(Session.load(dir, s.id).messages.at(-1)).toEqual({ role: "user", content: "again" });
+  expect(readFileSync(s.file, "utf8").endsWith("\n")).toBe(true);
+});
+
+test("a tool call without its results is dropped on load", () => {
+  const dir = mkdtempSync(join(tmpdir(), "ivy-sessions-"));
+  const s = Session.create(dir, "m");
+  s.append({ role: "user", content: "what time is it" });
+  // Simulate a crash after the assistant's tool call was written but before its results.
+  s.append({
+    role: "assistant",
+    content: [{ type: "tool_use", id: "tu_1", name: "core__now", input: {} }],
+  });
+  expect(Session.load(dir, s.id).messages).toEqual([{ role: "user", content: "what time is it" }]);
 });

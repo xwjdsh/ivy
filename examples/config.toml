@@ -10,3 +10,7 @@ fallbacks = true           # server-side refusal fallback
 
 [agent]
 max_steps = 25             # model calls per turn
+
+[trace]
+enabled = true             # save every request/response under traces/ (shown with -d)
+retention_days = 7         # delete older trace folders on startup; 0 = keep forever

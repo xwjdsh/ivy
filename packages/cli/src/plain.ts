@@ -27,7 +27,7 @@ export async function confirmPlain(call: ToolCallRequest): Promise<boolean> {
 export async function runPlain(
   ivy: Ivy,
   session: Session,
-  tracer: Tracer,
+  tracer: Tracer | undefined,
   prompt: string,
   debug: boolean,
 ): Promise<TurnResult> {

@@ -5,7 +5,6 @@ import {
   type SessionSummary,
   summarizeUsage,
   type ToolCallRequest,
-  Tracer,
   type TurnResult,
 } from "@ivy/kernel";
 import { Box, Static, Text, useApp, useInput, useWindowSize } from "ink";
@@ -13,7 +12,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { COMMANDS, matchCommands } from "../commands.ts";
 import type { InputHistory } from "../history.ts";
 import { renderMarkdown, splitFinished } from "../markdown.ts";
-import { compact, usageReport } from "../usage-report.ts";
+import { addTokens, formatTokens, type TokenCount, usageReport } from "../usage-report.ts";
 import { Input } from "./input.tsx";
 import { historyItems, type Item, itemId } from "./items.ts";
 import { SessionPicker } from "./session-picker.tsx";
@@ -88,16 +87,21 @@ export function App({
   const width = Math.max(20, columns - 1);
 
   const sessionRef = useRef(initialSession);
-  const tracerRef = useRef(new Tracer(`${ivy.paths.traces}/${initialSession.id}`));
+  const tracerRef = useRef(ivy.tracer(initialSession.id));
   const [sessionId, setSessionId] = useState(initialSession.id);
 
   // Token counts: input includes cache reads/writes, i.e. the full prompt sent each call.
-  const sessionTokens = (id: string) => {
+  const NO_TOKENS: TokenCount = { in: 0, cached: 0, out: 0 };
+  const sessionTokens = (id: string): TokenCount => {
     const u = summarizeUsage(ivy.paths.sessions, { sessionId: id });
-    return { in: u.inputTokens + u.cacheReadTokens + u.cacheWriteTokens, out: u.outputTokens };
+    return {
+      in: u.inputTokens + u.cacheReadTokens + u.cacheWriteTokens,
+      cached: u.cacheReadTokens,
+      out: u.outputTokens,
+    };
   };
   const [tokens, setTokens] = useState(() => sessionTokens(initialSession.id));
-  const turnTokens = useRef({ in: 0, out: 0 });
+  const turnTokens = useRef(NO_TOKENS);
 
   const header = (): Item => ({
     id: itemId(),
@@ -199,13 +203,14 @@ export function App({
         break;
       case "step": {
         const u = e.usage;
-        const stepIn =
-          u.input_tokens + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0);
-        turnTokens.current = {
-          in: turnTokens.current.in + stepIn,
-          out: turnTokens.current.out + u.output_tokens,
+        const cached = u.cache_read_input_tokens ?? 0;
+        const step: TokenCount = {
+          in: u.input_tokens + cached + (u.cache_creation_input_tokens ?? 0),
+          cached,
+          out: u.output_tokens,
         };
-        setTokens((t) => ({ in: t.in + stepIn, out: t.out + u.output_tokens }));
+        turnTokens.current = addTokens(turnTokens.current, step);
+        setTokens((t) => addTokens(t, step));
         if (debug) {
           const u = e.usage;
           push({
@@ -224,7 +229,7 @@ export function App({
   };
 
   const runTurn = async (text: string) => {
-    turnTokens.current = { in: 0, out: 0 };
+    turnTokens.current = NO_TOKENS;
     turnRef.current += 1;
     setExpandedTurn(null);
     push({ id: itemId(), kind: "user", text });
@@ -253,7 +258,7 @@ export function App({
     push({
       id: itemId(),
       kind: "turn_end",
-      summary: `${result.steps} step(s) · ${((Date.now() - startedAt) / 1000).toFixed(1)}s · ${compact(turnTokens.current.in)} in / ${compact(turnTokens.current.out)} out tokens`,
+      summary: `${result.steps} step(s) · ${((Date.now() - startedAt) / 1000).toFixed(1)}s · ${formatTokens(turnTokens.current)} tokens`,
       note,
       noteTone: result.stopReason === "error" ? "error" : "warn",
     });
@@ -261,7 +266,7 @@ export function App({
 
   const switchSession = (next: Session) => {
     sessionRef.current = next;
-    tracerRef.current = new Tracer(`${ivy.paths.traces}/${next.id}`);
+    tracerRef.current = ivy.tracer(next.id);
     allowedTools.current.clear();
     setSessionId(next.id);
     setTokens(sessionTokens(next.id));
@@ -436,7 +441,7 @@ export function App({
         model={ivy.config.model.name}
         effort={ivy.config.model.effort}
         sessionId={sessionId}
-        tokens={`${compact(tokens.in)} in / ${compact(tokens.out)} out`}
+        tokens={formatTokens(tokens)}
         hint={busy ? "esc to interrupt" : exitArmed ? "Press Ctrl-C again to exit" : undefined}
       />
     </Box>

@@ -9,6 +9,25 @@ export function compact(n: number): string {
   return `${(n / 1_000_000).toFixed(1)}M`;
 }
 
+/** Prompt tokens sent (incl. cache reads/writes), the cached part of them, and output tokens. */
+export interface TokenCount {
+  in: number;
+  cached: number;
+  out: number;
+}
+
+export const addTokens = (a: TokenCount, b: TokenCount): TokenCount => ({
+  in: a.in + b.in,
+  cached: a.cached + b.cached,
+  out: a.out + b.out,
+});
+
+/** "3.5k in (3.4k cached) / 32 out" */
+export function formatTokens(t: TokenCount): string {
+  const cached = t.cached > 0 ? ` (${compact(t.cached)} cached)` : "";
+  return `${compact(t.in)} in${cached} / ${compact(t.out)} out`;
+}
+
 function row(label: string, t: UsageTotals, showSessions: boolean): string {
   const parts = [
     `${t.calls} calls`.padEnd(10),

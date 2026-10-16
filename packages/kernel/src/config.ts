@@ -24,6 +24,14 @@ const ConfigSchema = z.object({
       max_steps: z.number().int().positive().default(25),
     })
     .prefault({}),
+  trace: z
+    .object({
+      /** Write every model request/response to traces/ (see trace.ts). */
+      enabled: z.boolean().default(true),
+      /** Delete trace folders older than this on startup; 0 keeps them forever. */
+      retention_days: z.number().int().min(0).default(7),
+    })
+    .prefault({}),
   plugins: z.record(z.string(), z.record(z.string(), z.unknown())).default({}),
 });
 

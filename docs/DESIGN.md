@@ -1,6 +1,6 @@
 # Ivy — Design Document
 
-> Status: **Draft v0.1** (M0 skeleton in progress) · Last updated: 2026-10-16
+> Status: **Draft v0.1** (M0 done; next: M1) · Last updated: 2026-10-16
 > This is a living document. Every milestone starts by updating it and ends by recording what changed in the [Decision Log](#13-decision-log).
 
 ---
@@ -148,6 +148,7 @@ Naming follows the common `SOUL.md` / `USER.md` convention of personal agents:
 ### 5.4 Session Store
 
 - One JSONL file per session in `~/.ivy/sessions/YYYY-MM-DD-<id>.jsonl`. Each line is a full API message plus metadata (timestamp, plugin, token usage).
+- Crash-tolerant: unparseable lines (a write cut off mid-line) are skipped, the next write starts on a fresh line, and an assistant tool call whose results were never written is dropped on load so the history stays a valid request. A tool call and its results are written in a single append.
 - Commands: `ivy -c` continues the most recently active session; `/resume` (or `ivy -r`) opens a picker of recent sessions (last active, first prompt, turn count); `/resume <id>` / `ivy -r <id>` jump directly; `/new` starts a new one. No separate list command.
 - Usage (tokens, cache hits, cost estimate) is recorded per turn so we can see what Ivy costs.
 
@@ -199,7 +200,7 @@ An interface turns user I/O into kernel calls. All interfaces share the same ker
 
 Part of the kernel from M0, so problems can be debugged from day one.
 
-- Every API call is written to `~/.ivy/traces/<session>/<turn>-<step>.json`: the exact request body, the raw response, latency, and `usage` (input, output, cache read/write tokens).
+- Every API call is written to `~/.ivy/traces/<session>/<time>-<n>.json`: the exact request body, the raw response, latency, and `usage` (input, output, cache read/write tokens). Since each request holds the whole history, traces grow quickly: `[trace] retention_days` (default 7) prunes old session folders on startup, and `[trace] enabled = false` turns tracing off.
 - `ivy --debug` prints a compact live view: each loop step, tool calls with inputs/outputs, tokens, cache hit rate, cost.
 - `/trace` in the CLI shows the last turn's full request as Claude saw it (system prompt, tools, context layers), so prompt and context changes can be checked directly.
 - `ivy replay <trace>` re-sends a recorded request, optionally with a changed system prompt, model or effort, to compare outputs. This is the starting point for evals (M2+).
@@ -353,6 +354,8 @@ Each milestone ends with a few days of real use and an update to this doc.
 - Token usage & cost shown per turn.
 - Tracing v1: raw request/response files + `--debug` live view (§5.8).
 - **Done when:** I can chat with Ivy in the terminal and resume yesterday's session.
+- **Status: done (2026-10-16).** Shipped beyond the plan: Ink TUI (see §5.7), `/usage`, `bun run build` single binary, CI.
+- **Deferred:** `/trace` and `ivy replay` (§5.8) → M2 with evals; server-side compaction for long sessions → when sessions get long; large-paste placeholders and a custom Markdown renderer → backlog; progress updates while thinking (`thinking.display: "updates"`) → M1.
 
 ### M1 — Memory
 - Plugin host v1 (load built-in plugins, tools/instructions/contextFor/commands).
