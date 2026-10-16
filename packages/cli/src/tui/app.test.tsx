@@ -68,6 +68,20 @@ const writeTool = definePlugin({
 });
 
 const tick = (ms = 30) => new Promise((r) => setTimeout(r, ms));
+
+/** Retry an assertion until it passes (or time runs out), instead of guessing a fixed wait. */
+async function eventually(check: () => void, timeoutMs = 1000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try {
+      check();
+      return;
+    } catch (err) {
+      if (Date.now() > deadline) throw err;
+      await tick(10);
+    }
+  }
+}
 const ENTER = "\r";
 const CTRL_C = "\x03";
 const CTRL_J = "\n";
@@ -144,16 +158,14 @@ test("risky tool asks once; 'for this session' skips later prompts", async () =>
   ]);
   await type("save it");
   await type(ENTER);
-  expect(frame()).toContain("Allow t__save");
+  await eventually(() => expect(frame()).toContain("Allow t__save"));
   await type("a");
-  await tick(50);
+  await eventually(() => expect(frame()).toContain("done one"));
   expect(frame()).toContain("saved");
-  expect(frame()).toContain("done one");
 
   await type("again");
   await type(ENTER);
-  await tick(50);
-  expect(frame()).toContain("done two");
+  await eventually(() => expect(frame()).toContain("done two"));
   expect(frame().match(/Allow t__save/g)?.length ?? 0).toBe(0);
   expect(model.requests).toHaveLength(4);
 });
@@ -522,8 +534,9 @@ test("/verbose toggles details: request/step lines, the hidden context, full too
   await tick(50);
   const f = frame();
   expect(f).toContain("context:\n<context>\n## notes\nNote: the user likes tea.");
-  expect(f).toContain("→ step 1 · 2 msgs · 2 tools · context system"); // prompt + system context message
-  expect(f).toContain("← step 2 · end_turn");
+  expect(f).toContain("step 1 · 2 msgs · context system · tool_use"); // prompt + system context message
+  expect(f).toMatch(/step 2 · \d+ msgs · context system · end_turn/);
+  expect(f).not.toContain("→ step");
   expect(f).toContain('"verbose": true');
 
   await type("/verbose");

@@ -1,6 +1,14 @@
 import { createInterface } from "node:readline/promises";
-import type { AgentEvent, Ivy, Session, ToolCallRequest, Tracer, TurnResult } from "@ivy/kernel";
-import { formatRequest, formatStep } from "./verbose-format.ts";
+import type {
+  AgentEvent,
+  Ivy,
+  RequestInfo,
+  Session,
+  ToolCallRequest,
+  Tracer,
+  TurnResult,
+} from "@ivy/kernel";
+import { formatCall } from "./verbose-format.ts";
 
 const c = {
   dim: (s: string) => `\x1b[2m${s}\x1b[0m`,
@@ -45,7 +53,7 @@ export async function runPlain(
   const onSigint = () => controller.abort();
   process.on("SIGINT", onSigint);
 
-  let requestedModel: string | undefined;
+  let lastRequest: RequestInfo | undefined;
   const render = (e: AgentEvent) => {
     switch (e.type) {
       case "text":
@@ -71,16 +79,12 @@ export async function runPlain(
         }
         break;
       case "request":
-        requestedModel = e.info.model;
-        if (verbose) {
-          newline();
-          process.stderr.write(c.dim(`${formatRequest(e.step, e.info)}\n`));
-        }
+        lastRequest = e.info;
         break;
       case "step":
         if (verbose) {
           newline();
-          process.stderr.write(c.dim(`${formatStep(e, requestedModel)}\n`));
+          process.stderr.write(c.dim(`${formatCall(e, lastRequest)}\n`));
         }
         break;
     }

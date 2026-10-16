@@ -3,6 +3,7 @@ import {
   EFFORT_LEVELS,
   type Effort,
   type Ivy,
+  type RequestInfo,
   Session,
   type SessionSummary,
   saveDefaultModel,
@@ -19,7 +20,7 @@ import { availableCommands, type CommandInfo, matchCommands } from "../commands.
 import type { InputHistory } from "../history.ts";
 import { renderMarkdown, splitFinished } from "../markdown.ts";
 import { addTokens, formatTokens, type TokenCount, usageReport } from "../usage-report.ts";
-import { formatRequest, formatStep, statusReport } from "../verbose-format.ts";
+import { formatCall, statusReport } from "../verbose-format.ts";
 import { Input } from "./input.tsx";
 import { historyItems, type Item, itemId } from "./items.ts";
 import { Picker } from "./picker.tsx";
@@ -101,7 +102,7 @@ export function App({
   // capability decisions and plugin logs. A ref so a turn in flight sees toggles at once.
   const [verboseOn, setVerboseOn] = useState(verbose);
   const verboseRef = useRef(verbose);
-  const requestedModel = useRef<string | undefined>(undefined);
+  const lastRequest = useRef<RequestInfo | undefined>(undefined);
   const tracerRef = useRef(ivy.tracer(initialSession.id));
   const [sessionId, setSessionId] = useState(initialSession.id);
 
@@ -242,7 +243,7 @@ export function App({
         turnTokens.current = addTokens(turnTokens.current, step);
         setTokens((t) => addTokens(t, step));
         if (verboseRef.current) {
-          push({ id: itemId(), kind: "info", text: formatStep(e, requestedModel.current) });
+          push({ id: itemId(), kind: "info", text: formatCall(e, lastRequest.current) });
         }
         break;
       }
@@ -250,10 +251,7 @@ export function App({
         if (verboseRef.current) push({ id: itemId(), kind: "info", text: `context:\n${e.text}` });
         break;
       case "request":
-        requestedModel.current = e.info.model;
-        if (verboseRef.current) {
-          push({ id: itemId(), kind: "info", text: formatRequest(e.step, e.info) });
-        }
+        lastRequest.current = e.info; // shown with the call's result, in one line
         break;
     }
   };

@@ -1,28 +1,27 @@
 import type { AgentEvent, Ivy, RequestInfo } from "@ivy/kernel";
+import { compact } from "./usage-report.ts";
 
 type StepEvent = Extract<AgentEvent, { type: "step" }>;
 
 /**
- * "→ step 1 · 5 msgs · 1 tools · context block". Only what changes per step; model and
- * effort are in the status bar, capability details in /status.
+ * One line per model call, printed when it returns. Only what changes per call; static
+ * state (model, effort, tools, capabilities) is in the status bar and /status.
+ *
+ * "step 1 · 5 msgs · context block · end_turn · in 50 out 20 · cache read 3.2k write 120 · 1.5s"
  */
-export function formatRequest(step: number, info: RequestInfo): string {
-  const parts = [`→ step ${step}`, `${info.messages} msgs`, `${info.tools} tools`];
-  if (info.hasContext) parts.push(`context ${info.contextMode}`);
-  return parts.join(" · ");
-}
-
-/** "← step 1 · end_turn · in 120 out 30 · cache read 0 write 0 · 1.3s" (+ trace path) */
-export function formatStep(e: StepEvent, requestedModel?: string): string {
+export function formatCall(e: StepEvent, request?: RequestInfo): string {
   const u = e.usage;
-  const parts = [
-    `← step ${e.step}`,
-    e.stopReason ?? "?",
-    `in ${u.input_tokens} out ${u.output_tokens}`,
-    `cache read ${u.cache_read_input_tokens ?? 0} write ${u.cache_creation_input_tokens ?? 0}`,
-    `${(e.latencyMs / 1000).toFixed(1)}s`,
-  ];
-  if (requestedModel && !sameModel(requestedModel, e.model)) parts.push(`served by ${e.model}`);
+  const read = u.cache_read_input_tokens ?? 0;
+  const write = u.cache_creation_input_tokens ?? 0;
+  const parts = [`step ${e.step}`];
+  if (request) {
+    parts.push(`${request.messages} msgs`);
+    if (request.hasContext) parts.push(`context ${request.contextMode}`);
+  }
+  parts.push(e.stopReason ?? "?", `in ${compact(u.input_tokens)} out ${compact(u.output_tokens)}`);
+  if (read > 0 || write > 0) parts.push(`cache read ${compact(read)} write ${compact(write)}`);
+  parts.push(`${(e.latencyMs / 1000).toFixed(1)}s`);
+  if (request && !sameModel(request.model, e.model)) parts.push(`served by ${e.model}`);
   return parts.join(" · ") + (e.traceFile ? `\n  trace: ${e.traceFile}` : "");
 }
 
