@@ -1,0 +1,12 @@
+# Only this file is used; ANTHROPIC_* environment variables are ignored.
+
+[model]
+api_key = ""               # required
+base_url = "https://api.anthropic.com"
+name = "claude-opus-5-5"
+effort = "medium"          # low | medium | high | xhigh | max
+max_tokens = 64000
+fallbacks = true           # server-side refusal fallback
+
+[agent]
+max_steps = 25             # model calls per turn

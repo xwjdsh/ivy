@@ -1,0 +1,407 @@
+# Ivy — Design Document
+
+> Status: **Draft v0.1** (M0 skeleton in progress) · Last updated: 2026-10-16
+> This is a living document. Every milestone starts by updating it and ends by recording what changed in the [Decision Log](#13-decision-log).
+
+---
+
+## 1. Overview
+
+Ivy is a **personal AI agent** for one user. It runs locally, talks through the terminal first, and over time learns the user's habits and tools for daily life and work.
+
+The core idea is a **small, stable kernel plus plugins**. The kernel only knows how to:
+
+1. hold a conversation with Claude,
+2. run tools in a loop,
+3. load plugins and route their tools, commands, context and jobs,
+4. persist sessions and plugin data, and
+5. ask the user before risky actions.
+
+Everything users care about (memory, email, calendar, coding help, news digests, ...) is a **plugin**. Adding a new habit or workflow should mean writing a plugin, not changing the core.
+
+## 2. Goals & Non-Goals
+
+### Goals
+
+- **G1 — Useful daily.** Within the first few milestones Ivy should replace some real daily routine (notes, triaging email, a morning brief).
+- **G2 — Plugin-first.** Every capability is a plugin with the same API. Built-in plugins get no special access.
+- **G3 — Local & owned.** All state lives in plain files under `~/.ivy/` that are easy to read, grep, back up and version.
+- **G4 — Safe by default.** Reading is cheap; writing, sending, deleting and shell commands need explicit permission rules or a confirmation.
+- **G5 — Iterable.** Small milestones, each one shippable and used before the next one starts.
+- **G6 — Cheap to run.** Prompt caching, sensible effort levels, and no wasted tokens.
+
+### Non-Goals (for now)
+
+- Multi-user, accounts, or hosting for others.
+- Supporting LLM providers other than Claude.
+- A GUI. (A chat-app bot or local web UI may come later as more *interfaces*, see §5.7.)
+- A general-purpose agent framework for other people. Ivy is tuned for one person.
+
+## 3. Guiding Principles
+
+1. **Kernel stays boring.** If a feature can be a plugin, it is a plugin.
+2. **Files over databases.** Markdown/JSON/JSONL first; SQLite only where indexing or querying really needs it.
+3. **Append-only history.** Conversation transcripts are never rewritten. (This also keeps prompt caching and Claude's preserved thinking working correctly.)
+4. **Explicit over magic.** Ivy should be able to tell the user which plugin, tool and memory produced an answer.
+5. **Confirm before effects.** Any outward-facing or hard-to-reverse action is shown to the user before it runs, unless a permission rule says otherwise.
+6. **Dogfood every milestone.** A milestone is only done once it has been used in real life for a few days.
+7. **Everything is observable.** Every request, response, tool call, token count and cache hit can be inspected after the fact. If we can't see why Ivy did something, we can't fix it.
+
+## 4. Architecture
+
+```
+                ┌──────────────────────────────────────────────┐
+                │                  Interfaces                  │
+                │   CLI/TUI (M0)   ·   Daemon (M4)   ·   Bot?  │
+                └───────────────────────┬──────────────────────┘
+                                        │ events / messages
+┌───────────────────────────────────────▼───────────────────────────────────────┐
+│                                   Ivy Kernel                                   │
+│                                                                               │
+│  ┌──────────────┐   ┌────────────────┐   ┌─────────────────┐   ┌────────────┐ │
+│  │ Session      │   │ Agent Loop     │   │ Context Builder │   │ Permission │ │
+│  │ Store        │◄─►│ (tool-use loop)│◄─►│ (system prompt, │   │ Gate       │ │
+│  │ (JSONL)      │   │                │   │  plugin context)│   │            │ │
+│  └──────────────┘   └───────┬────────┘   └────────▲────────┘   └─────▲──────┘ │
+│                             │                     │                  │        │
+│                     ┌───────▼────────┐   ┌────────┴──────────────────┴──────┐ │
+│                     │ Model Client   │   │           Plugin Host            │ │
+│                     │ (Anthropic SDK)│   │ registry · lifecycle · storage   │ │
+│                     └───────┬────────┘   │ scheduler · MCP bridge           │ │
+│                             │            └────────┬─────────────────────────┘ │
+└─────────────────────────────┼─────────────────────┼───────────────────────────┘
+                              │                     │
+                        Claude API        ┌─────────┴──────────┬──────────────┐
+                                          │                    │              │
+                                   Native plugins        MCP servers     Config &
+                                   (TS modules)          (stdio/http)    data dirs
+```
+
+### Request flow (one user turn)
+
+1. The interface sends the user's message to the **Agent Loop** with a session id.
+2. The **Context Builder** assembles the request: the frozen system prompt, the tool list from all enabled plugins, the session history, and any per-turn context from plugins (e.g. relevant memories, today's date).
+3. The **Model Client** streams the request to Claude.
+4. If Claude calls tools, the loop sends each call through the **Permission Gate**, then to the owning plugin, and appends all results in a single message.
+5. Steps 3–4 repeat until Claude ends the turn (or a step/budget limit is hit).
+6. Every message is appended to the session's JSONL transcript. Plugins get an `afterTurn` hook (e.g. for memory extraction).
+
+## 5. Kernel Components
+
+### 5.1 Agent Loop
+
+- A **manual tool-use loop** that we own (not the SDK's beta Tool Runner). The loop is small, and owning it gives us permission checks, plugin hooks, interruption (Ctrl-C), and step limits in one place.
+- Streaming by default; text and tool progress go to the interface as they arrive.
+- Parallel tool calls run concurrently; all `tool_result` blocks return in **one** user message. Failed tools return `is_error: true` instead of throwing.
+- Limits: `maxSteps` per turn (default 25) and an optional task budget.
+- Before running any tool, check `stop_reason` (`max_tokens`, `refusal`) and validate the tool input against its schema.
+
+### 5.2 Model Client
+
+- `@anthropic-ai/sdk`, wrapped in a thin module so the rest of the code never touches raw API shapes.
+- Default model **`claude-opus-5-5`**, adaptive thinking, `effort` set explicitly per route (e.g. `medium` for chat, `high` for coding tasks, `low` for background jobs like memory extraction or summaries). Configurable per plugin/job.
+- Server-side refusal fallback enabled (`fallbacks: "default"`).
+- **Prompt caching:** tools and system prompt are kept byte-stable (plugins sorted by id, no timestamps), with a cache breakpoint after them. Volatile context (date/time, retrieved memories) goes into the message stream as a mid-conversation system message, never into the top-level system prompt.
+- **Long sessions:** use server-side compaction (beta) when a session grows large, and keep the returned compaction blocks in history.
+- Credentials and endpoint: only `api_key` and `base_url` in `config.toml`. `ANTHROPIC_*` environment variables and `ant` profiles are deliberately ignored, so there is one source of truth.
+
+#### Provider coupling
+
+Ivy is Claude-only (see Non-Goals), but the coupling is kept in known places so switching later is a bounded job.
+
+| Anthropic-specific | Where | Impact on another provider |
+|---|---|---|
+| Message format (content blocks, `tool_use`/`tool_result`, thinking blocks) | Whole kernel; session JSONL | Needs translation; old sessions stay in this format |
+| Refusal fallback (`fallbacks: "default"` + beta header) | `Agent.buildRequest` | Unknown param, likely 400 |
+| `output_config.effort` | `Agent.buildRequest` | Unknown or named differently |
+| Top-level `cache_control` | `Agent.buildRequest` | Ignored or rejected |
+| `eager_input_streaming` on tools | `PluginHost.apiTools` | Ignored or rejected |
+| Price table | `model.ts` | Cost shows `?` |
+| Planned: compaction, server tools (web search), mid-conversation system messages | — | Not available elsewhere |
+
+Other Claude models only need `model.name` (note: Haiku supports neither `effort` nor fallbacks).
+
+Plan if another provider is ever needed:
+1. **Anthropic-compatible endpoint first.** Many providers expose one; `base_url` already points at it. Add a config switch for each Anthropic-only request param (effort, fallbacks, caching, eager streaming) so they can be turned off. Small change.
+2. **Adapter otherwise.** Keep the Anthropic message format as Ivy's internal format and translate per provider inside a `ModelClient` implementation. The agent loop only depends on `ModelClient`, so the change stays in `model.ts`.
+
+### 5.3 Context Builder
+
+Builds each request from layers, ordered from most stable to least stable (for caching):
+
+| Layer | Source | Changes |
+|---|---|---|
+| Tools | All enabled plugins, sorted | When plugins change |
+| System prompt | `~/.ivy/SOUL.md` (who Ivy is) + `~/.ivy/USER.md` (who the user is) + each plugin's static `instructions` | Rarely |
+| History | Session transcript | Append-only |
+| Turn context | Plugins' `contextFor(turn)` (e.g. relevant memories, calendar for today) | Every turn |
+
+Naming follows the common `SOUL.md` / `USER.md` convention of personal agents:
+
+- `SOUL.md`: who Ivy is: personality, tone, values, boundaries.
+- `USER.md`: who the user is and how they like things done.
+
+Both live in the data dir and are optional; a missing file is simply left out (with nothing at all, the request has no system prompt). Templates are in `examples/`. Later, Ivy may be allowed to edit `SOUL.md` itself, with confirmation and history.
+
+### 5.4 Session Store
+
+- One JSONL file per session in `~/.ivy/sessions/YYYY-MM-DD-<id>.jsonl`. Each line is a full API message plus metadata (timestamp, plugin, token usage).
+- Commands: resume the last session, list sessions, start a new one.
+- Usage (tokens, cache hits, cost estimate) is recorded per turn so we can see what Ivy costs.
+
+### 5.5 Permission Gate
+
+Every tool declares a **risk level**:
+
+| Risk | Examples | Default |
+|---|---|---|
+| `read` | search memory, read a file, list emails | allow |
+| `write` | save a note, edit a local file, create a draft | ask (allowable by rule) |
+| `external` | send an email, post a message, accept an invite | always ask |
+| `dangerous` | shell commands, deleting data | always ask, show full command |
+
+Rules live in `~/.ivy/config.toml`, e.g.:
+
+```toml
+[permissions]
+allow = ["memory__*", "fs__read", "shell__run(git status*)"]
+deny  = ["shell(rm -rf*)"]
+```
+
+The interface shows the tool, its input, and options: *allow once / always for this session / always (save rule) / deny*.
+
+### 5.6 Plugin Host
+
+Loads, configures and runs plugins; see §6 for the plugin contract. Responsibilities:
+
+- Discovery: built-in plugins in `plugins/`, user plugins in `~/.ivy/plugins/`.
+- Enable/disable and per-plugin config from `config.toml`.
+- Namespacing: tool names are `<plugin>__<tool>` to avoid collisions (API tool names allow only `[a-zA-Z0-9_-]`, no dots).
+- Per-plugin storage directory and secrets access.
+- Scheduler for plugin jobs (cron syntax), active once the daemon exists (M4).
+- **MCP bridge:** any MCP server listed in config is wrapped as a plugin automatically, so existing MCP servers (Gmail, Calendar, GitHub, ...) are usable with no new code.
+
+### 5.7 Interfaces
+
+An interface turns user I/O into kernel calls. All interfaces share the same kernel API, so adding one does not touch plugins.
+
+- **M0 — CLI/TUI** (`ivy`): interactive chat, streaming output, permission prompts, slash commands (`/new`, `/resume`, `/plugins`, `/memory`, plugin-defined commands). Also one-shot mode: `ivy "summarize my inbox"`.
+- **M4 — Daemon** (`ivy daemon`): runs scheduled jobs and sends results as macOS notifications or files. The CLI can talk to it to see job output.
+- **Later (maybe)** — Chat-app bot (Telegram/Slack) for phone access; local web UI.
+
+### 5.8 Tracing & Debugging
+
+Part of the kernel from M0, so problems can be debugged from day one.
+
+- Every API call is written to `~/.ivy/traces/<session>/<turn>-<step>.json`: the exact request body, the raw response, latency, and `usage` (input, output, cache read/write tokens).
+- `ivy --debug` prints a compact live view: each loop step, tool calls with inputs/outputs, tokens, cache hit rate, cost.
+- `/trace` in the CLI shows the last turn's full request as Claude saw it (system prompt, tools, context layers), so prompt and context changes can be checked directly.
+- `ivy replay <trace>` re-sends a recorded request, optionally with a changed system prompt, model or effort, to compare outputs. This is the starting point for evals (M2+).
+
+## 6. Plugin System
+
+### 6.1 What a plugin can contribute
+
+| Contribution | Purpose | Example |
+|---|---|---|
+| `tools` | Functions Claude can call | `memory__search`, `gmail__list_threads` |
+| `instructions` | Static text added to the system prompt | "Use memory.save when the user states a preference" |
+| `contextFor(turn)` | Dynamic text added per turn | Top 5 memories relevant to the message |
+| `commands` | Slash commands for the user | `/today`, `/remember <text>` |
+| `jobs` | Scheduled tasks (daemon) | Morning brief at 08:30 on weekdays |
+| `hooks` | Lifecycle callbacks | `onSessionStart`, `afterTurn`, `beforeToolCall` |
+
+### 6.2 Plugin contract (sketch)
+
+```ts
+// packages/plugin-api — the only thing a plugin imports from Ivy
+import type { z } from "zod";
+
+export interface IvyPlugin {
+  id: string;                 // "memory", "gmail", ...
+  version: string;
+  description: string;
+  configSchema?: z.ZodType;   // validated from config.toml [plugins.<id>]
+
+  setup(ctx: PluginContext): Promise<void> | void;
+  teardown?(): Promise<void> | void;
+
+  tools?: ToolDef[];
+  instructions?: string;
+  contextFor?(turn: TurnInfo): Promise<string | null>;
+  commands?: CommandDef[];
+  jobs?: JobDef[];
+  hooks?: Partial<PluginHooks>;
+}
+
+export interface ToolDef<I = unknown> {
+  name: string;               // exposed to Claude as "<pluginId>__<name>"
+  description: string;
+  input: z.ZodType<I>;        // converted to JSON Schema; validated before run
+  risk: "read" | "write" | "external" | "dangerous";
+  run(input: I, ctx: ToolContext): Promise<ToolResult>;
+}
+
+export interface PluginContext {
+  config: unknown;            // parsed with configSchema
+  storage: PluginStorage;     // ~/.ivy/data/<pluginId>/ (files + optional SQLite)
+  secrets: SecretStore;       // macOS Keychain-backed
+  log: Logger;
+  llm: LlmClient;             // for plugins that need their own model calls (e.g. summarizing)
+  kernel: KernelApi;          // send notifications, call other plugins' tools, etc.
+}
+
+export interface JobDef {
+  id: string;
+  schedule: string;           // cron, e.g. "30 8 * * 1-5"
+  run(ctx: JobContext): Promise<void>;
+}
+```
+
+A plugin is a folder with an `index.ts` that default-exports an `IvyPlugin`. The contract will be versioned (`apiVersion`) once M2 is done.
+
+### 6.3 Trust model
+
+- Plugins run **in-process** with full user permissions. Only install plugins you have read or written. (Process isolation is out of scope for now; MCP servers already run as separate processes.)
+- The Permission Gate still applies to every tool call, including MCP tools.
+- Tool *results* from outside sources (emails, web pages, RSS) are untrusted data. The `SOUL.md` template tells Claude not to follow instructions found inside them, and `external`/`dangerous` tools always require confirmation, which limits prompt-injection damage.
+
+## 7. Data & Storage Layout
+
+```
+~/.ivy/
+├── config.toml          # global config, enabled plugins, permissions, model settings
+├── SOUL.md              # who Ivy is (optional, loaded into system prompt)
+├── USER.md              # who the user is (optional, loaded into system prompt)
+├── sessions/            # append-only JSONL transcripts
+├── data/<pluginId>/     # per-plugin storage
+│   └── memory/          #   e.g. memory plugin: one markdown file per memory + index.sqlite
+├── plugins/             # user-installed plugins
+├── traces/              # raw API requests/responses per session (see §5.8)
+└── logs/                # kernel & daemon logs
+```
+
+The Anthropic API key may live in `config.toml` (plain text). Other secrets (OAuth tokens, plugin API keys) go into the macOS Keychain. If `~/.ivy` is backed up with git, exclude `config.toml` or keep the key out of it.
+
+The data root is `$IVY_HOME`, default `~/.ivy`. During development `bun run ivy` sets it to `./.ivy` in the repo (git-ignored), so all dev data is local and easy to wipe.
+
+## 8. Planned Plugins
+
+| Plugin | Milestone | Summary | Key tools |
+|---|---|---|---|
+| `core` | M0 | Time, date, basic system info | `now` |
+| `memory` | M1 | Long-term facts, preferences, notes, todos as markdown files; keyword search (SQLite FTS5); auto-extraction after turns (opt-in) | `save`, `search`, `update`, `delete`, `list_todos` |
+| `fs` + `shell` | M2 | Read/edit files and run commands in allowed directories — the coding/work helper | `read`, `write`, `edit`, `glob`, `grep`, `run` |
+| `mcp` bridge | M2 | Wraps configured MCP servers as plugins | (from servers) |
+| `gmail` / `calendar` | M3 | Triage, summarize, draft replies, today's agenda — via MCP servers or Google APIs | `search`, `read_thread`, `draft`, `agenda` |
+| `web` | M3 | Web search & fetch (Claude server tools) | `search`, `fetch` |
+| `digest` | M4 | Scheduled brief from RSS / GitHub / email / calendar | job `morning-brief` |
+
+## 9. Project Layout
+
+Bun workspace monorepo:
+
+```
+ivy/
+├── docs/
+│   ├── DESIGN.md            # this file
+│   └── adr/                 # one file per significant decision (optional)
+├── evals/                   # eval cases and runner (from M2)
+├── packages/
+│   ├── kernel/              # loop, model client, context, sessions, permissions, plugin host
+│   ├── plugin-api/          # public types for plugin authors
+│   └── cli/                 # `ivy` command (TUI + one-shot)
+├── plugins/
+│   ├── core/
+│   ├── memory/
+│   └── ...
+├── package.json
+├── tsconfig.json
+└── bun.lock
+```
+
+## 10. Tech Stack
+
+| Concern | Choice | Why |
+|---|---|---|
+| Runtime | Bun | Fast startup for a CLI, built-in TS, test runner, SQLite (`bun:sqlite`), can compile to a single binary |
+| Language | TypeScript (strict) | Types for the plugin contract |
+| LLM | `@anthropic-ai/sdk`, Claude Opus 5.5 | Best tool use; one provider keeps things simple |
+| Schemas | Zod | Tool inputs, config validation, JSON Schema generation |
+| MCP | `@modelcontextprotocol/sdk` | MCP bridge plugin |
+| TUI | To decide in M0 (Ink vs. plain readline + ANSI) | Start minimal |
+| Config | TOML | Easy to hand-edit |
+| Tests | `bun test` | Built in |
+| Lint/format | Biome | One fast tool |
+
+**Alternative considered:** building on the Claude Agent SDK (Claude Code as a library). It gives file/shell tools and a loop for free, but it is coding-centric and makes the plugin model, context layering and permission UX harder to own. We build our own small kernel and may borrow ideas from it.
+
+## 11. Roadmap
+
+Each milestone ends with a few days of real use and an update to this doc.
+
+### M0 — Hello, Ivy (walking skeleton)
+- Bun workspace, `ivy` CLI, config loading, API auth.
+- Streaming chat with Claude, multi-turn, JSONL sessions (`/new`, `/resume`).
+- Agent loop with the `core` plugin (`now` tool) to prove tool calling end-to-end.
+- Token usage & cost shown per turn.
+- Tracing v1: raw request/response files + `--debug` live view (§5.8).
+- **Done when:** I can chat with Ivy in the terminal and resume yesterday's session.
+
+### M1 — Memory
+- Plugin host v1 (load built-in plugins, tools/instructions/contextFor/commands).
+- `USER.md` in the system prompt.
+- `memory` plugin: save/search/update/delete, `/remember`, relevant memories injected per turn.
+- Permission Gate v1 (read/write/external/dangerous + prompts).
+- **Done when:** Ivy remembers facts and todos across sessions and uses them without being asked.
+
+### M2 — Work helper
+- `fs` + `shell` plugins with directory allowlist and permission rules.
+- MCP bridge plugin.
+- Plugin API frozen as `apiVersion: 1`; user plugins from `~/.ivy/plugins/`.
+- Evals v1: a small set of real cases (from traces) for memory and tool use, runnable with `bun run eval`, so prompt/model changes can be measured instead of guessed.
+- **Done when:** I use Ivy for at least one real work task per day.
+
+### M3 — Email & Calendar
+- Gmail + Calendar (MCP first; native plugin only if MCP is not good enough).
+- `/inbox` triage summary, draft replies (never auto-send), `/today` agenda.
+- `web` plugin.
+- **Done when:** morning inbox triage happens in Ivy.
+
+### M4 — Daemon & Digest
+- `ivy daemon` (launchd service), scheduler, macOS notifications.
+- `digest` plugin: morning brief combining calendar, inbox, todos, feeds.
+- **Done when:** a useful brief is waiting every weekday morning.
+
+### M5+ — Ideas backlog
+- Chat-app interface for phone access.
+- Semantic (embedding) search for memory.
+- Automatic memory extraction and periodic memory cleanup.
+- Usage dashboard; per-plugin effort/model tuning.
+- Subagents for fan-out research tasks.
+
+## 12. Open Questions
+
+1. **TUI library:** Ink (React-style, richer) or a minimal readline UI? → decide in M0.
+2. **Memory format:** one file per memory vs. a few topic files? Auto-extraction on by default or opt-in? → decide in M1.
+3. **Email/calendar:** MCP servers vs. direct Google API plugins (OAuth handling, offline access for the daemon)? → decide in M3.
+4. **Notifications:** macOS notifications only, or also push to phone? → decide in M4.
+5. **Language of conversation:** Ivy's code and docs are English; should Ivy reply in the language I write in (Chinese/English)? Default: yes, mirror the user.
+
+## 13. Decision Log
+
+| Date | Decision | Reason |
+|---|---|---|
+| 2026-10-16 | TypeScript + Bun | Fast CLI startup, built-in SQLite & tests, good SDK/MCP support |
+| 2026-10-16 | Terminal CLI is the first interface | Closest to daily dev workflow; other interfaces later |
+| 2026-10-16 | Claude only, default `claude-opus-5-5` | Simplicity; best tool use |
+| 2026-10-16 | All capabilities are plugins | Kernel stays small; habits change by adding plugins |
+| 2026-10-16 | Own tool-use loop, not Agent SDK | Full control over plugins, permissions, context |
+| 2026-10-16 | Project content in English | User preference |
+| 2026-10-16 | Claude writes the code, user reviews it | User's choice; small, reviewable changes |
+| 2026-10-16 | Tool names `<plugin>__<tool>` | API tool names cannot contain dots |
+| 2026-10-16 | API key and base URL only from `config.toml` | One source of truth; env vars ignored; user's choice |
+| 2026-10-16 | Dev data in `./.ivy` | Easy to inspect and wipe during development |
+| 2026-10-16 | Prompt files named `SOUL.md` / `USER.md`, both read from the data dir, empty if missing | Common convention for personal agents; easy to edit without touching code |
+| 2026-10-16 | No provider abstraction yet; coupling documented in §5.2 | Avoid premature abstraction; switching path is known |
+| 2026-10-16 | Use the beta Messages API (`client.beta.messages`) | Needed for `fallbacks: "default"` now and compaction later |

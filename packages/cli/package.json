@@ -1,0 +1,13 @@
+{
+  "name": "@ivy/cli",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "ivy": "src/main.ts"
+  },
+  "dependencies": {
+    "@ivy/kernel": "workspace:*",
+    "@ivy/plugin-core": "workspace:*"
+  }
+}
