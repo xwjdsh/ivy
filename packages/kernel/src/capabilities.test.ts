@@ -6,7 +6,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { Capabilities, rejectedFeature } from "./capabilities.ts";
 
 const OFFICIAL = "https://api.anthropic.com";
-const PROXY = "http://127.0.0.1:3425";
+const PROXY = "http://127.0.0.1:8080";
 const settings = { effort: "xhigh" as const, refusalFallback: true };
 const tempFile = () => join(mkdtempSync(join(tmpdir(), "ivy-caps-")), "cache", "models.json");
 const caps = (endpoint = OFFICIAL, file = tempFile()) =>
@@ -37,7 +37,7 @@ test("compatible endpoints get only the basics (compatibility first)", () => {
     fallbacks: false,
     systemMessages: false,
   });
-  expect(caps(PROXY).for("qoder/qfmodel")).toMatchObject({
+  expect(caps(PROXY).for("vendor/model-a")).toMatchObject({
     fallbacks: false,
     systemMessages: false,
   });
@@ -135,7 +135,7 @@ test("explain says why each feature is on or off", () => {
   expect(lines).toContain(
     "system messages for context: off: rejected by this endpoint earlier (learned)",
   );
-  expect(caps(PROXY).explain("qoder/x").join("\n")).toContain(
+  expect(caps(PROXY).explain("vendor/x").join("\n")).toContain(
     "refusal fallback: off: compatible endpoint",
   );
 });

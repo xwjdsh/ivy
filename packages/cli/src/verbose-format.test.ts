@@ -55,9 +55,9 @@ test("served by: a real switch is shown, a proxy dropping the routing prefix is 
   expect(formatCall(step({ model: "claude-opus-4-8" }), request)).toContain(
     "served by claude-opus-4-8",
   );
-  const proxied = { ...request, model: "qoder/qfmodel" };
-  expect(formatCall(step({ model: "qfmodel" }), proxied)).not.toContain("served by");
-  expect(formatCall(step({ model: "qfmodel" }), { ...request, model: "qoder/other" })).toContain(
-    "served by qfmodel",
+  const proxied = { ...request, model: "vendor/model-a" };
+  expect(formatCall(step({ model: "model-a" }), proxied)).not.toContain("served by");
+  expect(formatCall(step({ model: "model-a" }), { ...request, model: "vendor/other" })).toContain(
+    "served by model-a",
   );
 });

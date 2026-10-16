@@ -256,7 +256,7 @@ describe("Agent.runTurn", () => {
     contextFor: (t) => `user said: ${t.userText}`,
   });
   const CTX = "<context>\n## clock\nuser said: what time is it\n</context>";
-  const PROXY = 'default_model = "claude-opus-5-5"\nbase_url = "http://127.0.0.1:3425"\n';
+  const PROXY = 'default_model = "claude-opus-5-5"\nbase_url = "http://127.0.0.1:8080"\n';
 
   test("context is stored apart from what the user typed", async () => {
     const model = new FakeModel([reply("end_turn", [text("ok")])]);

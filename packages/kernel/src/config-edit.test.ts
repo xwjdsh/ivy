@@ -7,26 +7,26 @@ import { saveDefaultModel, saveEffort, withValue } from "./config-edit.ts";
 
 const CONFIG = `# my notes
 [agent]
-provider = "magpie"
+provider = "my-proxy"
 
 [providers.anthropic]
 default_model = "claude-opus-5-5"
 
-[providers.magpie]
-base_url = "http://127.0.0.1:3425"
-default_model = "qoder/qfmodel"   # required; used at startup
-models = ["qoder/qfmodel", "qoder/dfmodel"]
+[providers.my-proxy]
+base_url = "http://127.0.0.1:8080"
+default_model = "vendor/model-a"   # required; used at startup
+models = ["vendor/model-a", "vendor/model-b"]
 
 [generation]
 effort = "medium"
 `;
 
 test("replaces only the value in the right section, keeping comments and layout", () => {
-  const out = withValue(CONFIG, ["providers", "magpie"], "default_model", "qoder/dfmodel");
+  const out = withValue(CONFIG, ["providers", "my-proxy"], "default_model", "vendor/model-b");
   expect(out).toBe(
     CONFIG.replace(
-      'default_model = "qoder/qfmodel"   # required',
-      'default_model = "qoder/dfmodel"   # required',
+      'default_model = "vendor/model-a"   # required',
+      'default_model = "vendor/model-b"   # required',
     ),
   );
   expect(out).toContain('[providers.anthropic]\ndefault_model = "claude-opus-5-5"');
@@ -54,8 +54,8 @@ test("an unknown provider is an error", () => {
 test("saveDefaultModel writes, validates and returns the new config", () => {
   const paths = resolvePaths(mkdtempSync(join(tmpdir(), "ivy-edit-")));
   writeFileSync(paths.config, CONFIG);
-  const config = saveDefaultModel(paths, "magpie", "qoder/dfmodel");
-  expect(config.activeProvider.default_model).toBe("qoder/dfmodel");
+  const config = saveDefaultModel(paths, "my-proxy", "vendor/model-b");
+  expect(config.activeProvider.default_model).toBe("vendor/model-b");
   expect(readFileSync(paths.config, "utf8")).toContain("# my notes");
 });
 
@@ -63,7 +63,7 @@ test("if the result doesn't validate, the file is restored", () => {
   const paths = resolvePaths(mkdtempSync(join(tmpdir(), "ivy-edit-")));
   const broken = `${CONFIG}\n[generation]\nefort = "x"\n`; // already invalid
   writeFileSync(paths.config, broken);
-  expect(() => saveDefaultModel(paths, "magpie", "qoder/dfmodel")).toThrow(
+  expect(() => saveDefaultModel(paths, "my-proxy", "vendor/model-b")).toThrow(
     "Could not save default_model",
   );
   expect(readFileSync(paths.config, "utf8")).toBe(broken);

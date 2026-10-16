@@ -11,3 +11,7 @@ bun run build          # single binary at dist/ivy (prompts are embedded)
 ```
 
 In dev, all data (config, `SOUL.md`, `USER.md`, sessions, traces) lives in `./.ivy/`; delete it to start fresh.
+
+## License
+
+MIT, see [LICENSE](LICENSE).

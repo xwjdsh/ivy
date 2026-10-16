@@ -26,7 +26,7 @@ export function formatCall(e: StepEvent, request?: RequestInfo): string {
 }
 
 /**
- * Proxies often report a model without its routing prefix ("qoder/qfmodel" → "qfmodel");
+ * Proxies often report a model without its routing prefix ("vendor/model-a" → "model-a");
  * that is the same model, not a switch.
  */
 function sameModel(requested: string, served: string): boolean {
