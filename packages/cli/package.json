@@ -8,6 +8,18 @@
   },
   "dependencies": {
     "@ivy/kernel": "workspace:*",
-    "@ivy/plugin-core": "workspace:*"
+    "@ivy/plugin-core": "workspace:*",
+    "ink": "^8.0.0",
+    "marked": "^18.1.1",
+    "marked-terminal": "^7.3.0",
+    "react": "^19.3.1",
+    "string-width": "^8.3.0"
+  },
+  "devDependencies": {
+    "@ivy/plugin-api": "workspace:*",
+    "@types/marked-terminal": "^6.1.1",
+    "@types/react": "^19.3.0",
+    "ink-testing-library": "^4.0.0",
+    "zod": "^4.6.7"
   }
 }

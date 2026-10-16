@@ -4,6 +4,7 @@
     "module": "Preserve",
     "moduleResolution": "bundler",
     "lib": ["ESNext"],
+    "jsx": "react-jsx",
     "types": ["bun"],
     "strict": true,
     "noUncheckedIndexedAccess": true,
@@ -13,6 +14,6 @@
     "noEmit": true,
     "skipLibCheck": true
   },
-  "include": ["packages/*/src/**/*.ts", "plugins/*/**/*.ts"],
+  "include": ["packages/*/src/**/*.ts", "packages/*/src/**/*.tsx", "plugins/*/**/*.ts"],
   "exclude": ["**/node_modules"]
 }
