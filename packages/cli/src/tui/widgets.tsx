@@ -111,6 +111,10 @@ function formatResult(result: string): string[] {
   return trimmed.split("\n");
 }
 
+/**
+ * A tool call. Normally one line (status, name, short input) plus the first line of an
+ * error; the result itself is shown with Ctrl+O (`expanded`) or in the verbose view.
+ */
 export function ToolLine({
   name,
   input,
@@ -118,30 +122,43 @@ export function ToolLine({
   isError,
   expanded = false,
   expandable = false,
-  showInput = false,
+  verbose = false,
 }: {
   name: string;
   input: unknown;
+  /** Undefined while the tool is still running. */
   result?: string;
   isError?: boolean;
   expanded?: boolean;
   /** Show the Ctrl+O hint (only the latest turn can be expanded). */
   expandable?: boolean;
-  /** Verbose view: the full input, pretty-printed, under the header line. */
-  showInput?: boolean;
+  /** Verbose view: full input and a preview of the result. */
+  verbose?: boolean;
 }) {
-  const lines = result === undefined ? [] : formatResult(result);
-  const limit = expanded ? TOOL_EXPANDED_MAX_LINES : TOOL_PREVIEW_LINES;
-  const shown = lines.slice(0, limit);
-  const hidden = lines.length - shown.length;
+  const running = result === undefined;
+  const lines = running ? [] : formatResult(result);
+  const showResult = expanded || verbose;
+  const shown = showResult
+    ? lines.slice(0, expanded ? TOOL_EXPANDED_MAX_LINES : TOOL_PREVIEW_LINES)
+    : isError
+      ? lines.slice(0, 1)
+      : [];
+  const hidden = showResult ? lines.length - shown.length : 0;
+  const args = JSON.stringify(input);
   return (
     <Box flexDirection="column">
       <Text wrap="truncate-end">
-        <Text color={result === undefined ? "magenta" : isError ? "red" : "green"}>⏺ </Text>
+        {running ? (
+          <Text color="magenta">⏺ </Text>
+        ) : isError ? (
+          <Text color="red">✗ </Text>
+        ) : (
+          <Text color="green">✓ </Text>
+        )}
         <Text bold>{name}</Text>
-        <Text dimColor> {JSON.stringify(input)}</Text>
+        {args !== "{}" && <Text dimColor> {args}</Text>}
       </Text>
-      {showInput && JSON.stringify(input) !== "{}" && (
+      {verbose && args !== "{}" && (
         <Text dimColor>{JSON.stringify(input, null, 2).replace(/^/gm, "    ")}</Text>
       )}
       {shown.map((line, i) => (
@@ -195,7 +212,7 @@ export function ItemView({
             {...item}
             expanded={latest && expandedTurn === item.turn}
             expandable={latest}
-            showInput={verbose}
+            verbose={verbose}
           />
         </Box>
       );

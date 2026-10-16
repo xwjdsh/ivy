@@ -161,7 +161,7 @@ test("risky tool asks once; 'for this session' skips later prompts", async () =>
   await eventually(() => expect(frame()).toContain("Allow t__save"));
   await type("a");
   await eventually(() => expect(frame()).toContain("done one"));
-  expect(frame()).toContain("saved");
+  expect(frame()).toContain("✓ t__save");
 
   await type("again");
   await type(ENTER);
@@ -255,22 +255,33 @@ test("Ctrl-C clears typed text instead of arming exit", async () => {
   expect(frame()).not.toContain("Press Ctrl-C again");
 });
 
-test("tool output is collapsed with a hint; Ctrl+O expands and redraws", async () => {
+test("tool calls are one line; Ctrl+O shows the output and redraws", async () => {
   const { type, frame, screen } = await start([
     { stop: "tool_use", content: [toolUse("a", "t__lines")] },
     { stop: "end_turn", content: [text("done")] },
   ]);
   await type("show lines");
   await type(ENTER);
-  await tick(50);
-  expect(frame()).toContain("l3");
-  expect(frame()).not.toContain("l6");
-  expect(frame()).toContain("+3 lines (ctrl+o to expand)");
+  await eventually(() => expect(frame()).toContain("done"));
+  expect(frame()).toContain("✓ t__lines");
+  expect(frame()).not.toContain("l1");
   const clears = screen.clears;
   await type(CTRL_O);
-  await tick(50);
+  await eventually(() => expect(frame()).toContain("l6"));
   expect(screen.clears).toBe(clears + 1);
-  expect(frame()).toContain("l6");
+});
+
+test("a failed tool shows ✗ and the first line of the error", async () => {
+  const { type, frame } = await start([
+    { stop: "tool_use", content: [toolUse("a", "t__save")] },
+    { stop: "end_turn", content: [text("ok")] },
+  ]);
+  await type("save it");
+  await type(ENTER);
+  await eventually(() => expect(frame()).toContain("Allow t__save"));
+  await type("n");
+  await eventually(() => expect(frame()).toContain("✗ t__save"));
+  expect(frame()).toContain("⎿ The user denied this tool call.");
 });
 
 test("/resume clears the screen and redraws that session's history", async () => {
@@ -538,6 +549,8 @@ test("/verbose toggles details: request/step lines, the hidden context, full too
   expect(f).toMatch(/step 2 · \d+ msgs · context system · end_turn/);
   expect(f).not.toContain("→ step");
   expect(f).toContain('"verbose": true');
+  expect(f).toContain("⎿ l1"); // verbose previews the result
+  expect(f).toContain("+3 lines (ctrl+o to expand)");
 
   await type("/verbose");
   await type(ENTER);
