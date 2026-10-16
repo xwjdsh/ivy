@@ -1,13 +1,15 @@
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type Anthropic from "@anthropic-ai/sdk";
+import { promptText } from "./turn-context.ts";
 
 type MessageParam = Anthropic.Beta.BetaMessageParam;
 
 /** One line of a session JSONL file. */
 export type SessionRecord =
   | { type: "meta"; id: string; createdAt: string; model: string }
-  | { type: "message"; ts: string; message: MessageParam }
+  /** `context`: the turn's plugin context, kept apart from what the user typed (see turn-context.ts). */
+  | { type: "message"; ts: string; message: MessageParam; context?: string }
   | { type: "usage"; ts: string; usage: Anthropic.Beta.BetaUsage; costUsd: number };
 
 export interface SessionSummary {
@@ -28,6 +30,8 @@ export interface SessionSummary {
  */
 export class Session {
   readonly messages: MessageParam[] = [];
+  /** Plugin context attached to user prompts, keyed by message object. */
+  private readonly contexts = new Map<MessageParam, string>();
 
   /** Meta record not yet written: the file is created lazily on the first append. */
   private pendingMeta: SessionRecord | null = null;
@@ -53,9 +57,11 @@ export class Session {
     const session = new Session(id, file);
     const content = readFileSync(file, "utf8");
     session.needsNewline = content.length > 0 && !content.endsWith("\n");
-    const messages = parseRecords(content).flatMap((r) =>
-      r.type === "message" ? [r.message] : [],
-    );
+    const messages = parseRecords(content).flatMap((r) => {
+      if (r.type !== "message") return [];
+      if (r.context) session.contexts.set(r.message, r.context);
+      return [r.message];
+    });
     session.messages.push(...withoutDanglingToolUse(messages));
     return session;
   }
@@ -69,13 +75,10 @@ export class Session {
         const file = join(dir, f);
         const records = readRecords(file);
         const meta = records.find((r) => r.type === "meta");
-        const prompts = records.filter(
-          (r) =>
-            r.type === "message" &&
-            r.message.role === "user" &&
-            typeof r.message.content === "string",
-        );
-        const first = prompts[0];
+        const prompts = records.flatMap((r) => {
+          const text = r.type === "message" ? promptText(r.message) : null;
+          return text === null ? [] : [text];
+        });
         const last = records.at(-1);
         const createdAt = meta?.type === "meta" ? meta.createdAt : "";
         return {
@@ -84,7 +87,7 @@ export class Session {
           createdAt,
           updatedAt: last && last.type !== "meta" ? last.ts : createdAt,
           turns: prompts.length,
-          preview: first?.type === "message" ? textOf(first.message).slice(0, 80) : "",
+          preview: (prompts[0] ?? "").slice(0, 80),
         };
       })
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
@@ -92,6 +95,23 @@ export class Session {
   }
 
   /** Messages passed together are written in one call, so a tool call and its results land together. */
+  /** Append what the user typed, with this turn's plugin context (if any) stored alongside. */
+  appendPrompt(text: string, context: string): void {
+    const message: MessageParam = { role: "user", content: text };
+    this.messages.push(message);
+    if (context) this.contexts.set(message, context);
+    this.write({
+      type: "message",
+      ts: new Date().toISOString(),
+      message,
+      ...(context && { context }),
+    });
+  }
+
+  contextOf(message: MessageParam): string | undefined {
+    return this.contexts.get(message);
+  }
+
   append(...messages: MessageParam[]): void {
     const ts = new Date().toISOString();
     this.messages.push(...messages);
@@ -147,12 +167,4 @@ function withoutDanglingToolUse(messages: MessageParam[]): MessageParam[] {
     );
     return ids.every((id) => answered.has(id));
   });
-}
-
-function textOf(message: MessageParam): string {
-  if (typeof message.content === "string") return message.content;
-  return message.content
-    .map((b) => (b.type === "text" ? b.text : ""))
-    .join(" ")
-    .trim();
 }

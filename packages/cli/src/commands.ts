@@ -14,9 +14,23 @@ export const COMMANDS: CommandInfo[] = [
   { name: "/exit", description: "Quit" },
 ];
 
-/** Commands that make sense for this setup: /model only when there is something to switch to. */
-export function availableCommands(modelCount: number): CommandInfo[] {
-  return COMMANDS.filter((c) => c.name !== "/model" || modelCount > 1);
+/**
+ * Commands that make sense for this setup: built-ins (/model only when there is something
+ * to switch to), then plugin commands, kept before /help and /exit.
+ */
+export function availableCommands(modelCount: number, plugin: CommandInfo[] = []): CommandInfo[] {
+  const builtIn = COMMANDS.filter((c) => c.name !== "/model" || modelCount > 1);
+  const tail = builtIn.filter((c) => c.name === "/help" || c.name === "/exit");
+  return [...builtIn.filter((c) => !tail.includes(c)), ...plugin, ...tail];
+}
+
+/** Plugin commands may not reuse a built-in name. */
+export function assertNoCommandClash(pluginCommands: CommandInfo[]): void {
+  for (const c of pluginCommands) {
+    if (COMMANDS.some((b) => b.name === c.name)) {
+      throw new Error(`Plugin command ${c.name} clashes with a built-in command`);
+    }
+  }
 }
 
 /** Commands matching what the user has typed so far (only while typing the command word). */

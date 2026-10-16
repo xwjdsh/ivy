@@ -10,7 +10,7 @@ import {
   resolvePaths,
   Session,
 } from "@ivy/kernel";
-import { definePlugin, defineTool } from "@ivy/plugin-api";
+import { definePlugin, defineTool, type IvyPlugin } from "@ivy/plugin-api";
 import { render } from "ink-testing-library";
 import { z } from "zod";
 import { InputHistory } from "../history.ts";
@@ -85,12 +85,12 @@ beforeEach(() => {
 });
 afterEach(() => cleanup?.());
 
-async function start(script: Step[], configToml?: string) {
+async function start(script: Step[], configToml?: string, extraPlugins: IvyPlugin[] = []) {
   if (configToml) writeFileSync(join(home, "config.toml"), configToml);
   const model = new FakeModel(script);
   const bridge: ConfirmBridge = { confirm: async () => false };
   const ivy = await createIvy({
-    plugins: [writeTool],
+    plugins: [writeTool, ...extraPlugins],
     model,
     paths: resolvePaths(home),
     confirm: (call) => bridge.confirm(call),
@@ -398,4 +398,69 @@ test("with a single model, /model is hidden and explains why when typed", async 
   await type("/model x");
   await type(ENTER);
   expect(frame()).toContain("Only one model is configured (my/model)");
+});
+
+const notes = definePlugin({
+  id: "notes",
+  version: "0",
+  description: "",
+  contextFor: () => "Note: the user likes tea.",
+  commands: [
+    {
+      name: "/note",
+      args: "<text>",
+      description: "Save a note",
+      run: (args) => `Saved: ${args}`,
+    },
+  ],
+});
+
+test("plugin command shows in the / list and runs; its output is shown", async () => {
+  const { type, frame } = await start([], undefined, [notes]);
+  await type("/no");
+  expect(frame()).toContain("/note <text> — Save a note");
+  await type("\x15"); // Ctrl+U
+  await type("/note buy milk");
+  await type(ENTER);
+  await tick(20);
+  expect(frame()).toContain("Saved: buy milk");
+});
+
+test("plugin context reaches the model but isn't shown, live or after /resume", async () => {
+  const { type, frame, model, session } = await start(
+    [{ stop: "end_turn", content: [text("Tea it is.")] }],
+    undefined,
+    [notes],
+  );
+  await type("what should I drink?");
+  await type(ENTER);
+  await tick(50);
+  const sent = JSON.stringify(model.requests[0]?.messages);
+  expect(sent).toContain("<context>");
+  expect(sent).toContain("the user likes tea");
+  expect(frame()).toContain("> what should I drink?");
+  expect(frame()).not.toContain("<context>");
+
+  await type("/new");
+  await type(ENTER);
+  await type(`/resume ${session.id}`);
+  await type(ENTER);
+  await tick(50);
+  expect(frame()).toContain("> what should I drink?");
+  expect(frame()).not.toContain("likes tea");
+});
+
+test("a disabled plugin contributes no command and no context", async () => {
+  const { type, frame, model } = await start(
+    [{ stop: "end_turn", content: [text("ok")] }],
+    '[providers.anthropic]\napi_key = "k"\ndefault_model = "claude-opus-5-5"\n[plugins.notes]\nenabled = false\n',
+    [notes],
+  );
+  await type("/");
+  expect(frame()).not.toContain("/note");
+  await type("\x15");
+  await type("hi");
+  await type(ENTER);
+  await tick(50);
+  expect(JSON.stringify(model.requests[0]?.messages)).not.toContain("<context>");
 });

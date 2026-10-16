@@ -30,22 +30,57 @@ export interface Logger {
 }
 
 export interface PluginContext {
-  /** Raw `[plugins.<id>]` table from config.toml (validated by the plugin itself). */
-  config: Record<string, unknown>;
+  /**
+   * The plugin's `[plugins.<id>]` table from config.toml, parsed with `configSchema`
+   * (without the host's own `enabled` key). `{}` when the plugin has no schema.
+   */
+  config: unknown;
   /** Private data directory: ~/.ivy/data/<pluginId>/ (created on demand). */
   dataDir: string;
   log: Logger;
+}
+
+/** What a plugin knows about the turn it is adding context to. */
+export interface TurnInfo {
+  sessionId: string;
+  /** The new user message, e.g. to find relevant memories. */
+  userText: string;
+  now: Date;
+}
+
+export interface CommandContext {
+  sessionId: string;
+  log: Logger;
+}
+
+/** A slash command the user can run directly, without the model. */
+export interface CommandDef {
+  /** e.g. "/remember". Lowercase letters, digits and dashes. */
+  name: string;
+  /** Shown in the / list: "<text>" for a required argument, "[query]" for an optional one. */
+  args?: string;
+  description: string;
+  /** Returned text is shown to the user. */
+  run(args: string, ctx: CommandContext): Promise<string | undefined> | string | undefined;
 }
 
 export interface IvyPlugin {
   id: string;
   version: string;
   description: string;
+  /** Validates `[plugins.<id>]` in config.toml. Without it, the table must be empty. */
+  configSchema?: z.ZodType;
   setup?(ctx: PluginContext): Promise<void> | void;
   teardown?(): Promise<void> | void;
   tools?: ToolDef[];
   /** Static text appended to the system prompt. Must be deterministic (prompt caching). */
   instructions?: string;
+  /**
+   * Text to add to this turn's `<context>` block (e.g. the time, relevant memories),
+   * or null for nothing. Capped in size and time by the host; errors are skipped.
+   */
+  contextFor?(turn: TurnInfo): Promise<string | null> | string | null;
+  commands?: CommandDef[];
 }
 
 /** Identity helper that keeps the input type of `run` inferred from the zod schema. */

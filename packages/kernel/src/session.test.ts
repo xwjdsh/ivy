@@ -65,3 +65,18 @@ test("a tool call without its results is dropped on load", () => {
   });
   expect(Session.load(dir, s.id).messages).toEqual([{ role: "user", content: "what time is it" }]);
 });
+
+test("listing ignores the <context> block when counting turns and building the preview", () => {
+  const dir = mkdtempSync(join(tmpdir(), "ivy-sessions-"));
+  const s = Session.create(dir, "m");
+  s.append({
+    role: "user",
+    content: [
+      { type: "text", text: "<context>\n## core\nNow: ...\n</context>" },
+      { type: "text", text: "real question" },
+    ],
+  });
+  s.append({ role: "assistant", content: "answer" });
+  s.append({ role: "user", content: [{ type: "tool_result", tool_use_id: "x", content: "r" }] });
+  expect(Session.list(dir)[0]).toMatchObject({ preview: "real question", turns: 1 });
+});

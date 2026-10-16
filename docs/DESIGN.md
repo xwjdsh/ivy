@@ -29,11 +29,12 @@ Everything users care about (memory, email, calendar, coding help, news digests,
 - **G4 — Safe by default.** Reading is cheap; writing, sending, deleting and shell commands need explicit permission rules or a confirmation.
 - **G5 — Iterable.** Small milestones, each one shippable and used before the next one starts.
 - **G6 — Cheap to run.** Prompt caching, sensible effort levels, and no wasted tokens.
+- **G7 — Model freedom.** Switch models or providers at any time, mid-session included, without losing features that matter. Ivy works the same on Claude via Anthropic's API and on other models behind an Anthropic-compatible endpoint.
 
 ### Non-Goals (for now)
 
 - Multi-user, accounts, or hosting for others.
-- Supporting APIs other than the Anthropic Messages API. Within it, any model works: Claude on Anthropic's API, or any model behind an Anthropic-compatible endpoint (e.g. a local proxy).
+- Speaking APIs other than the Anthropic Messages API, for now. Within it, any model works: Claude on Anthropic's API, or any model behind an Anthropic-compatible endpoint (e.g. a local proxy). An OpenAI-format adapter can be added in `ModelClient` when an endpoint needs it (§5.2).
 - A GUI. (A chat-app bot or local web UI may come later as more *interfaces*, see §5.7.)
 - A general-purpose agent framework for other people. Ivy is tuned for one person.
 
@@ -45,7 +46,8 @@ Everything users care about (memory, email, calendar, coding help, news digests,
 4. **Explicit over magic.** Ivy should be able to tell the user which plugin, tool and memory produced an answer.
 5. **Confirm before effects.** Any outward-facing or hard-to-reverse action is shown to the user before it runs, unless a permission rule says otherwise.
 6. **Dogfood every milestone.** A milestone is only done once it has been used in real life for a few days.
-7. **Everything is observable.** Every request, response, tool call, token count and cache hit can be inspected after the fact. If we can't see why Ivy did something, we can't fix it.
+7. **Compatibility first, enhance progressively.** Core features rely only on what every Anthropic-compatible endpoint offers: messages, tool calls, streaming, a system prompt. Anthropic-only features (prompt caching, effort, refusal fallback, `clear_at` system messages, compaction, server tools, ...) are enhancements: switched on per request where the provider and model support them, with a fallback everywhere else. No Ivy feature may *require* one. Capability checks live in one place (`modelCapabilities`, `isOfficialAnthropicApi`, `Agent.contextMode`).
+8. **Everything is observable.** Every request, response, tool call, token count and cache hit can be inspected after the fact. If we can't see why Ivy did something, we can't fix it.
 
 ## 4. Architecture
 
@@ -148,7 +150,7 @@ Naming follows the common `SOUL.md` / `USER.md` convention of personal agents:
 
 #### Turn context
 
-Each user turn, the kernel asks every enabled plugin for `contextFor(turn)` and puts the non-empty answers, in plugin-id order, into one text block **before** the user's text in the same user message:
+Each user turn, the kernel asks every enabled plugin for `contextFor(turn)` and joins the non-empty answers, in plugin-id order, into one block:
 
 ```
 <context>
@@ -160,8 +162,12 @@ Now: 2026-10-16 Fri 14:57 (Asia/Tokyo, UTC+09:00)
 </context>
 ```
 
-- **Why not a mid-conversation system message:** that is a newer Claude-only API feature; compatible endpoints and other models may reject it. A text block in the user message works everywhere.
-- **History:** the block is stored in the session like the rest of the message (append-only), so a resumed or replayed session shows the model exactly what it saw. The prompt cache is unaffected because the block comes after all earlier history.
+- **Stored apart:** the session records the context next to the user's message (a `context` field on its record), not inside it. How it is shown to the model is decided per request.
+- **Two renderings** (`renderMessages`, chosen per request by provider and model):
+  - **system** — Anthropic's own API (`api.anthropic.com`) with a model that supports mid-conversation system messages (Opus 5.5/5/4.8, Sonnet 5.5, Fable, Mythos): a `role: "system"` message with `clear_at: "next_user_message"` (beta `mid-conversation-system-clear-at-2026-08-21`) right after the prompt, and a fresh copy after each tool result of that turn, since a tool result also counts as a user message. Operator-level trust (can't be spoofed by user or tool text), and once the turn is over the copies cost no input tokens. Earlier copies are never removed (removing one would be a history edit).
+  - **block** — everything else (proxies, other models): a `<context>` text block before the user's text in the same message. Works on every Anthropic-compatible endpoint; old blocks stay in history and keep costing (cached) tokens.
+  - A system message must be followed by an assistant turn or be last, so an interrupted turn (user message right after user message) gets none.
+- **Deterministic:** the same history and mode always render to the same bytes and grow append-only within a turn, so the prompt cache and thinking blocks stay valid. Switching models may switch modes; that already costs a cache miss, since caches are per model.
 - **Display:** the TUI, session previews and turn counts skip the `<context>` block; `-d` traces show it.
 - **Trust:** `core.md` tells the model the block is supplied by Ivy as reference data, not written by the user.
 - **Limits:** each plugin's context is capped (2,000 characters) and gets a short time budget (1 s); a plugin that fails or times out is skipped and logged, so a turn never fails because of context.
@@ -437,6 +443,7 @@ Goal: Ivy starts remembering. Built in this order; each step is shippable on its
 
 1. **Plugin host v1:** `contextFor` → `<context>` block (§5.3), plugin slash commands, `[plugins.<id>] enabled` and per-plugin config validation.
    *Done when:* a test plugin's context reaches the model, its command shows in the `/` list, and disabling it removes both.
+   *Status: done.* (Plugin command output is shown in the TUI; plugin loggers stay silent there, since stderr would corrupt the screen.)
 2. **core plugin:** per-turn current time in context; `date_calc` tool (difference between dates, add/subtract days/weeks/months, weekday of a date, timezone conversion).
    *Done when:* "what's the date next Wednesday?" is answered in one model call without calling `now`.
 3. **Permission rules:** `[permissions]` allow/deny globs, `permissions.json` learned rules, *Always* in the dialog, plugin default rules (§5.5).
@@ -453,7 +460,7 @@ Goal: Ivy starts remembering. Built in this order; each step is shippable on its
 - `fs` + `shell` plugins with directory allowlist and permission rules.
 - MCP bridge plugin.
 - Plugin API frozen as `apiVersion: 1`; user plugins from `~/.ivy/plugins/`.
-- Evals v1: a small set of real cases (from traces) for memory and tool use, runnable with `bun run eval`, so prompt/model changes can be measured instead of guessed.
+- Evals v1: a small set of real cases (from traces) for memory and tool use, runnable with `bun run eval` against any configured model, so prompt and model changes can be measured instead of guessed, and models can be compared before switching (G7).
 - **Done when:** I use Ivy for at least one real work task per day.
 
 ### M3 — Email & Calendar
@@ -472,6 +479,7 @@ Goal: Ivy starts remembering. Built in this order; each step is shippable on its
 - Semantic (embedding) search for memory.
 - Automatic memory extraction (opt-in) and periodic memory cleanup.
 - Memory search on SQLite FTS or embeddings if the keyword scan gets slow or misses too much.
+- Endpoint capabilities are detected from `base_url` (`api.anthropic.com` = official). Add a per-provider override (e.g. `api = "auto" | "official" | "compatible"`) once a gateway or cloud platform that proxies the official API gets misdetected.
 - Usage dashboard; per-plugin effort/model tuning.
 - Subagents for fan-out research tasks.
 - TUI: collapse large pastes into `[Pasted text: N lines]` placeholders; own Markdown renderer (lowlight code highlighting, width-aware tables) if marked-terminal falls short.
@@ -504,8 +512,10 @@ Goal: Ivy starts remembering. Built in this order; each step is shippable on its
 | 2026-10-16 | No provider abstraction yet; coupling documented in §5.2 | Avoid premature abstraction; switching path is known |
 | 2026-10-16 | Ink TUI for interactive mode; plain text for one-shot | Rich UI where it helps, script-friendly output elsewhere |
 | 2026-10-16 | Built-in `core.md` for operating/safety rules; SOUL.md is identity only; UI supplies format instructions | Rules must not depend on user files; personality and presentation stay separate |
-| 2026-10-16 | Per-turn context as a `<context>` block in the user message, not a mid-conversation system message | Works on every Anthropic-compatible endpoint and model; stored in history for faithful replay |
+| 2026-10-16 | ~~Per-turn context as a `<context>` block in the user message~~ (superseded below) | Works on every Anthropic-compatible endpoint and model |
+| 2026-10-16 | Per-turn context stored apart from the prompt; rendered as `clear_at` system messages on Anthropic's API with supported models, `<context>` blocks elsewhere | Use the official API's newer features without breaking compatible endpoints |
 | 2026-10-16 | Memory: markdown file per memory, in-memory keyword scoring with CJK bigrams, no SQLite in v1 | Human-editable source of truth; Chinese works without a segmenter; small data |
 | 2026-10-16 | Memories written by the model via tools (+ `/remember`); auto-extraction later, opt-in | Fewer junk memories; no extra model call per turn |
 | 2026-10-16 | Learned permission rules go to `permissions.json`, not `config.toml` | Never rewrite the user's hand-edited config |
+| 2026-10-16 | Compatibility first, Anthropic features as progressive enhancements (principle 7, G7) | The user switches between many models through a compatible proxy; Claude-only would lose that |
 | 2026-10-16 | Use the beta Messages API (`client.beta.messages`) | Needed for `fallbacks: "default"` now and compaction later |

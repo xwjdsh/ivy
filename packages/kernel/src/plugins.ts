@@ -1,13 +1,31 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type Anthropic from "@anthropic-ai/sdk";
-import type { IvyPlugin, RiskLevel, ToolContext, ToolDef } from "@ivy/plugin-api";
+import type {
+  CommandDef,
+  IvyPlugin,
+  RiskLevel,
+  ToolContext,
+  ToolDef,
+  TurnInfo,
+} from "@ivy/plugin-api";
 import { z } from "zod";
 import { createLogger } from "./log.ts";
+import { contextBlock } from "./turn-context.ts";
 
 /** Separator between plugin id and tool name. Dots are not allowed in API tool names. */
 const SEP = "__";
 const NAME_RE = /^[a-zA-Z0-9_-]+$/;
+const COMMAND_RE = /^\/[a-z][a-z0-9-]*$/;
+
+/** Per-plugin limits for contextFor, so one plugin can't bloat or stall a turn. */
+export const CONTEXT_MAX_CHARS = 2000;
+export const CONTEXT_TIMEOUT_MS = 1000;
+
+export interface RegisteredCommand {
+  pluginId: string;
+  def: CommandDef;
+}
 
 export interface RegisteredTool {
   fullName: string;
@@ -23,6 +41,9 @@ export interface ToolOutcome {
 export class PluginHost {
   private readonly plugins = new Map<string, IvyPlugin>();
   private readonly tools = new Map<string, RegisteredTool>();
+  private readonly commandMap = new Map<string, RegisteredCommand>();
+  /** Plugins turned off with `[plugins.<id>] enabled = false`. */
+  readonly disabled: string[] = [];
 
   constructor(
     private readonly dataRoot: string,
@@ -35,6 +56,16 @@ export class PluginHost {
     }
     if (this.plugins.has(plugin.id)) throw new Error(`Duplicate plugin "${plugin.id}"`);
 
+    const { enabled = true, ...settings } = this.configs[plugin.id] ?? {};
+    if (typeof enabled !== "boolean") {
+      throw new Error(`Invalid [plugins.${plugin.id}]: enabled must be true or false`);
+    }
+    if (!enabled) {
+      this.disabled.push(plugin.id);
+      return;
+    }
+    const config = parsePluginConfig(plugin, settings);
+
     for (const def of plugin.tools ?? []) {
       const fullName = `${plugin.id}${SEP}${def.name}`;
       if (!NAME_RE.test(def.name) || fullName.length > 64) {
@@ -43,10 +74,23 @@ export class PluginHost {
       this.tools.set(fullName, { fullName, pluginId: plugin.id, def });
     }
 
+    for (const def of plugin.commands ?? []) {
+      if (!COMMAND_RE.test(def.name)) {
+        throw new Error(`Invalid command name "${def.name}" in plugin "${plugin.id}"`);
+      }
+      const existing = this.commandMap.get(def.name);
+      if (existing) {
+        throw new Error(
+          `Command ${def.name} is defined by both "${existing.pluginId}" and "${plugin.id}"`,
+        );
+      }
+      this.commandMap.set(def.name, { pluginId: plugin.id, def });
+    }
+
     const dataDir = join(this.dataRoot, plugin.id);
     mkdirSync(dataDir, { recursive: true });
     await plugin.setup?.({
-      config: this.configs[plugin.id] ?? {},
+      config,
       dataDir,
       log: createLogger(plugin.id),
     });
@@ -59,6 +103,41 @@ export class PluginHost {
 
   list(): IvyPlugin[] {
     return [...this.plugins.values()];
+  }
+
+  /** Slash commands contributed by plugins, sorted by name. */
+  commands(): RegisteredCommand[] {
+    return [...this.commandMap.values()].sort((a, b) => a.def.name.localeCompare(b.def.name));
+  }
+
+  getCommand(name: string): RegisteredCommand | undefined {
+    return this.commandMap.get(name);
+  }
+
+  /**
+   * Build this turn's `<context>` block from every plugin's contextFor, in plugin-id order.
+   * Each is capped in size and time; a failing or slow plugin is skipped, never the turn.
+   */
+  async turnContext(turn: TurnInfo): Promise<string> {
+    const providers = this.list()
+      .filter((p) => p.contextFor)
+      .sort((a, b) => a.id.localeCompare(b.id));
+    const results = await Promise.all(
+      providers.map(async (p) => {
+        const log = createLogger(p.id);
+        try {
+          const text = await withTimeout(
+            Promise.resolve(p.contextFor?.(turn) ?? null),
+            CONTEXT_TIMEOUT_MS,
+          );
+          return text?.trim() ? { id: p.id, text: cap(text.trim(), CONTEXT_MAX_CHARS) } : null;
+        } catch (err) {
+          log.warn("contextFor skipped", errorMessage(err));
+          return null;
+        }
+      }),
+    );
+    return contextBlock(results.filter((r) => r !== null));
   }
 
   getTool(fullName: string): RegisteredTool | undefined {
@@ -106,6 +185,35 @@ export class PluginHost {
       return { content: `Tool failed: ${errorMessage(err)}`, isError: true };
     }
   }
+}
+
+function parsePluginConfig(plugin: IvyPlugin, settings: Record<string, unknown>): unknown {
+  if (!plugin.configSchema) {
+    const keys = Object.keys(settings);
+    if (keys.length > 0) {
+      throw new Error(
+        `Invalid [plugins.${plugin.id}]: this plugin has no settings (got ${keys.join(", ")})`,
+      );
+    }
+    return {};
+  }
+  const parsed = plugin.configSchema.safeParse(settings);
+  if (!parsed.success) {
+    throw new Error(`Invalid [plugins.${plugin.id}]:\n${z.prettifyError(parsed.error)}`);
+  }
+  return parsed.data;
+}
+
+function cap(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`timed out after ${ms}ms`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
 function toInputSchema(schema: z.ZodType): Anthropic.Beta.BetaTool.InputSchema {

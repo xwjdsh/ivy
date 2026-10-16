@@ -14,6 +14,7 @@ export * from "./model.ts";
 export * from "./plugins.ts";
 export * from "./session.ts";
 export * from "./trace.ts";
+export * from "./turn-context.ts";
 export * from "./usage.ts";
 
 export interface IvyOptions {

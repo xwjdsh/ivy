@@ -46,15 +46,44 @@ const FALLBACK_MODELS = new Set([
   "claude-sonnet-5-5",
 ]);
 
+/** Models that accept mid-conversation `role: "system"` messages (and `clear_at`). */
+const SYSTEM_MESSAGE_MODELS = new Set([
+  "claude-opus-5-5",
+  "claude-opus-5",
+  "claude-opus-4-8",
+  "claude-sonnet-5-5",
+  "claude-fable-5-1",
+  "claude-fable-5",
+  "claude-mythos-5-1",
+  "claude-mythos-5",
+]);
+
+export interface ModelCapabilities {
+  effort: boolean;
+  fallbacks: boolean;
+  /** Mid-conversation system messages with `clear_at` (used for per-turn context). */
+  systemMessages: boolean;
+}
+
 /**
  * Request features not every model accepts; sending them to the wrong model is a 400.
- * Unknown models are assumed to support effort but not the refusal fallback.
+ * Unknown models are assumed to support effort and nothing newer.
  */
-export function modelCapabilities(model: string): { effort: boolean; fallbacks: boolean } {
+export function modelCapabilities(model: string): ModelCapabilities {
   return {
     effort: !model.startsWith("claude-haiku"),
     fallbacks: FALLBACK_MODELS.has(model),
+    systemMessages: SYSTEM_MESSAGE_MODELS.has(model),
   };
+}
+
+/** Anthropic's own API. Compatible endpoints (proxies) may not support its newest features. */
+export function isOfficialAnthropicApi(baseUrl: string): boolean {
+  try {
+    return new URL(baseUrl).hostname === "api.anthropic.com";
+  } catch {
+    return false;
+  }
 }
 
 // USD per million tokens. Cache writes use the 5-minute TTL rate (1.25x input).

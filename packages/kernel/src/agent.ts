@@ -4,6 +4,7 @@ import type { Config } from "./config.ts";
 import { createLogger } from "./log.ts";
 import {
   estimateCost,
+  isOfficialAnthropicApi,
   type ModelClient,
   type ModelMessage,
   type ModelRequest,
@@ -12,6 +13,7 @@ import {
 import { errorMessage, type PluginHost } from "./plugins.ts";
 import type { Session } from "./session.ts";
 import type { Tracer } from "./trace.ts";
+import { CONTEXT_SYSTEM_BETA, type ContextMode, renderMessages } from "./turn-context.ts";
 
 type ToolUseBlock = Anthropic.Beta.BetaToolUseBlock;
 type ToolResultBlock = Anthropic.Beta.BetaToolResultBlockParam;
@@ -96,7 +98,12 @@ export class Agent {
    */
   async runTurn(session: Session, userText: string, turn: TurnOptions): Promise<TurnResult> {
     const { config } = this.opts;
-    session.append({ role: "user", content: userText });
+    const context = await this.opts.plugins.turnContext({
+      sessionId: session.id,
+      userText,
+      now: new Date(),
+    });
+    session.appendPrompt(userText, context);
 
     let costUsd = 0;
     let parseRetries = 0;
@@ -191,18 +198,27 @@ export class Agent {
       model: this.modelName,
       max_tokens: config.generation.max_tokens,
       tools: plugins.apiTools(),
-      messages: [...session.messages],
+      messages: renderMessages(session.messages, (m) => session.contextOf(m), this.contextMode()),
       // Automatic caching: caches the longest stable prefix, which moves forward each turn.
       cache_control: { type: "ephemeral" },
     };
     if (caps.effort) request.output_config = { effort: config.generation.effort };
     // The API rejects empty text blocks, so an empty prompt means no system field.
     if (systemPrompt) request.system = [{ type: "text", text: systemPrompt }];
+    const betas: string[] = [];
     if (config.activeProvider.refusal_fallback && caps.fallbacks) {
-      request.betas = ["server-side-fallback-2026-07-01"];
+      betas.push("server-side-fallback-2026-07-01");
       request.fallbacks = "default";
     }
+    if (request.messages.some((m) => m.role === "system")) betas.push(CONTEXT_SYSTEM_BETA);
+    if (betas.length > 0) request.betas = betas;
     return request;
+  }
+
+  /** System messages on Anthropic's own API with a model that supports them; text blocks elsewhere. */
+  contextMode(): ContextMode {
+    const official = isOfficialAnthropicApi(this.opts.config.activeProvider.base_url);
+    return official && modelCapabilities(this.modelName).systemMessages ? "system" : "block";
   }
 
   /** Ask permission sequentially (prompts can't overlap), then run approved tools in parallel. */

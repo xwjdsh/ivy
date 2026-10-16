@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Anthropic from "@anthropic-ai/sdk";
-import { definePlugin, defineTool, type RiskLevel } from "@ivy/plugin-api";
+import { definePlugin, defineTool, type IvyPlugin, type RiskLevel } from "@ivy/plugin-api";
 import { z } from "zod";
 import { Agent, type AgentEvent, type ToolCallRequest } from "./agent.ts";
 import { loadConfig, resolvePaths } from "./config.ts";
@@ -79,11 +79,14 @@ describe("Agent.runTurn", () => {
     risk: RiskLevel = "read",
     confirm: (c: ToolCallRequest) => Promise<boolean> = async () => true,
     systemPrompt = "sys",
+    extraPlugins: IvyPlugin[] = [],
+    providerToml = 'default_model = "claude-opus-5-5"\n',
   ) {
     const paths = resolvePaths(dir);
-    writeFileSync(paths.config, '[providers.anthropic]\ndefault_model = "claude-opus-5-5"\n');
+    writeFileSync(paths.config, `[providers.anthropic]\n${providerToml}`);
     const plugins = new PluginHost(paths.data, {});
     await plugins.register(testPlugin(risk));
+    for (const p of extraPlugins) await plugins.register(p);
     return new Agent({ config: loadConfig(paths), model, plugins, systemPrompt, confirm });
   }
 
@@ -230,6 +233,75 @@ describe("Agent.runTurn", () => {
       output_config: { effort: "medium" },
       fallbacks: "default",
     });
+  });
+
+  const clock = definePlugin({
+    id: "clock",
+    version: "0",
+    description: "",
+    contextFor: (t) => `user said: ${t.userText}`,
+  });
+  const CTX = "<context>\n## clock\nuser said: what time is it\n</context>";
+  const PROXY = 'default_model = "claude-opus-5-5"\nbase_url = "http://127.0.0.1:3425"\n';
+
+  test("context is stored apart from what the user typed", async () => {
+    const model = new FakeModel([reply("end_turn", [text("ok")])]);
+    await run(await makeAgent(model, "read", undefined, "sys", [clock]), "what time is it");
+    expect(session.messages[0]).toEqual({ role: "user", content: "what time is it" });
+    expect(session.contextOf(session.messages[0] as never)).toBe(CTX);
+    const reloaded = Session.load(join(dir, "sessions"), session.id);
+    expect(reloaded.contextOf(reloaded.messages[0] as never)).toBe(CTX);
+  });
+
+  test("official API + supported model: context goes in a clear_at system message", async () => {
+    const model = new FakeModel([reply("end_turn", [text("ok")])]);
+    await run(await makeAgent(model, "read", undefined, "sys", [clock]), "what time is it");
+    expect(model.requests[0]?.messages).toEqual([
+      { role: "user", content: "what time is it" },
+      { role: "system", content: CTX, clear_at: "next_user_message" },
+    ]);
+    expect(model.requests[0]?.betas).toContain("mid-conversation-system-clear-at-2026-08-21");
+  });
+
+  test("system mode re-sends the context after each tool result of the turn", async () => {
+    const model = new FakeModel([
+      reply("tool_use", [toolUse("tu_1", "t__echo", { msg: "x" })]),
+      reply("end_turn", [text("done")]),
+    ]);
+    await run(await makeAgent(model, "read", undefined, "sys", [clock]), "what time is it");
+    const roles = model.requests[1]?.messages.map((m) => m.role);
+    expect(roles).toEqual(["user", "system", "assistant", "user", "system"]);
+    // The first request's messages are an unchanged prefix of the second's (cache-friendly).
+    expect(model.requests[1]?.messages.slice(0, 2)).toEqual(model.requests[0]?.messages as never);
+  });
+
+  test("a proxy or an older model gets a <context> text block instead", async () => {
+    for (const providerToml of [PROXY, 'default_model = "claude-haiku-4-5"\n']) {
+      session = Session.create(join(dir, "sessions"), "m");
+      const model = new FakeModel([reply("end_turn", [text("ok")])]);
+      await run(
+        await makeAgent(model, "read", undefined, "sys", [clock], providerToml),
+        "what time is it",
+      );
+      expect(model.requests[0]?.messages).toEqual([
+        {
+          role: "user",
+          content: [
+            { type: "text", text: CTX },
+            { type: "text", text: "what time is it" },
+          ],
+        },
+      ]);
+      expect(model.requests[0]?.betas ?? []).not.toContain(
+        "mid-conversation-system-clear-at-2026-08-21",
+      );
+    }
+  });
+
+  test("without any plugin context the user message stays a plain string", async () => {
+    const model = new FakeModel([reply("end_turn", [text("ok")])]);
+    await run(await makeAgent(model), "hi");
+    expect(session.messages[0]).toEqual({ role: "user", content: "hi" });
   });
 
   test("request uses caching, effort and fallbacks from config", async () => {

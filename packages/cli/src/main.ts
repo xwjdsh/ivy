@@ -5,6 +5,7 @@ import { createIvy, Session, setLogLevel } from "@ivy/kernel";
 import core from "@ivy/plugin-core";
 import { render } from "ink";
 import { createElement } from "react";
+import { assertNoCommandClash } from "./commands.ts";
 import { InputHistory } from "./history.ts";
 import { confirmPlain, runPlain } from "./plain.ts";
 import { App, type ConfirmBridge, type Screen } from "./tui/app.tsx";
@@ -72,6 +73,7 @@ async function main(): Promise<number> {
     confirm: (call) => bridge.confirm(call),
     interfaceInstructions: interactive ? TUI_INSTRUCTIONS : PLAIN_INSTRUCTIONS,
   });
+  assertNoCommandClash(ivy.plugins.commands().map(({ def }) => def));
   const { sessions } = ivy.paths;
 
   let session: Session;

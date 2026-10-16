@@ -1,4 +1,4 @@
-import type { Session } from "@ivy/kernel";
+import { promptText, type Session } from "@ivy/kernel";
 
 /** Something printed to the transcript. Once printed, items never change. */
 export type Item =
@@ -36,21 +36,19 @@ export function historyItems(messages: Session["messages"]): Item[] {
 
   const items: Item[] = [];
   for (const m of messages) {
+    if (m.role === "user") {
+      // Only what the user typed: no <context> block, no tool results.
+      const text = promptText(m);
+      if (text?.trim()) items.push({ id: itemId(), kind: "user", text });
+      continue;
+    }
     if (typeof m.content === "string") {
-      items.push(
-        m.role === "user"
-          ? { id: itemId(), kind: "user", text: m.content }
-          : { id: itemId(), kind: "assistant", markdown: m.content },
-      );
+      items.push({ id: itemId(), kind: "assistant", markdown: m.content });
       continue;
     }
     for (const b of m.content) {
       if (b.type === "text" && b.text.trim()) {
-        items.push(
-          m.role === "user"
-            ? { id: itemId(), kind: "user", text: b.text }
-            : { id: itemId(), kind: "assistant", markdown: b.text },
-        );
+        items.push({ id: itemId(), kind: "assistant", markdown: b.text });
       } else if (b.type === "tool_use") {
         const result = results.get(b.id) ?? { content: "(no result)", isError: true };
         items.push({

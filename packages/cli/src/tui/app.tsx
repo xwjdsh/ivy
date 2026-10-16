@@ -297,7 +297,12 @@ export function App({
   const [picker, setPicker] = useState<SessionSummary[] | null>(null);
 
   const models = ivy.config.activeProvider.models;
-  const commands = availableCommands(models.length);
+  const commands = availableCommands(
+    models.length,
+    ivy.plugins
+      .commands()
+      .map(({ def }) => ({ name: def.name, args: def.args, description: def.description })),
+  );
 
   // Model for this run only; /model switches it without touching config.toml.
   const [model, setModel] = useState(ivy.agent.model);
@@ -363,8 +368,31 @@ export function App({
         if (args[0]) resumeSession(args[0]);
         else openPicker();
         return;
-      default:
-        info(`Unknown command ${cmd}. Try /help.`, "error");
+      default: {
+        const command = cmd ? ivy.plugins.getCommand(cmd) : undefined;
+        if (!command) {
+          info(`Unknown command ${cmd}. Try /help.`, "error");
+          return;
+        }
+        const argText = line
+          .trim()
+          .slice(cmd?.length ?? 0)
+          .trim();
+        Promise.resolve()
+          .then(() =>
+            command.def.run(argText, {
+              sessionId: sessionRef.current.id,
+              log: { debug() {}, info() {}, warn() {}, error() {} },
+            }),
+          )
+          .then(
+            (out) => {
+              if (out) info(out);
+            },
+            (err) =>
+              info(`${cmd} failed: ${err instanceof Error ? err.message : String(err)}`, "error"),
+          );
+      }
     }
   };
 
