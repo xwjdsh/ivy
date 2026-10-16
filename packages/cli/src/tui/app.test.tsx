@@ -514,15 +514,15 @@ test("/verbose toggles details: request/step lines, the hidden context, full too
   );
   await type("/verbose");
   await type(ENTER);
-  expect(frame()).toContain("Verbose on.");
-  expect(frame()).toContain("refusal fallback: on");
+  expect(frame()).toContain("Verbose on. /status shows the current state.");
+  expect(frame()).not.toContain("refusal fallback"); // capability details live in /status
   expect(frame()).toMatch(/· verbose$/m);
   await type("show lines");
   await type(ENTER);
   await tick(50);
   const f = frame();
   expect(f).toContain("context:\n<context>\n## notes\nNote: the user likes tea.");
-  expect(f).toContain("→ step 1 · claude-opus-5-5 · effort medium · context system");
+  expect(f).toContain("→ step 1 · 2 msgs · 2 tools · context system"); // prompt + system context message
   expect(f).toContain("← step 2 · end_turn");
   expect(f).toContain('"verbose": true');
 

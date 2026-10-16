@@ -52,6 +52,8 @@ export interface RequestInfo {
   messages: number;
   tools: number;
   maxTokens: number;
+  /** Whether this turn carries plugin context. */
+  hasContext: boolean;
 }
 
 export interface ToolCallRequest {
@@ -126,7 +128,7 @@ export class Agent {
 
     for (let step = 1; step <= config.agent.max_steps; step++) {
       const request = this.buildRequest(session);
-      turn.onEvent({ type: "request", step, info: this.describe(request) });
+      turn.onEvent({ type: "request", step, info: this.describe(request, context !== "") });
       const startedAt = new Date();
       let message: ModelMessage;
 
@@ -257,7 +259,7 @@ export class Agent {
     return request;
   }
 
-  private describe(request: ModelRequest): RequestInfo {
+  private describe(request: ModelRequest, hasContext: boolean): RequestInfo {
     return {
       model: request.model,
       effort: {
@@ -269,6 +271,7 @@ export class Agent {
       messages: request.messages.length,
       tools: request.tools?.length ?? 0,
       maxTokens: request.max_tokens,
+      hasContext,
     };
   }
 

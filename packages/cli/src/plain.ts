@@ -97,8 +97,7 @@ export async function runPlain(
       process.stderr.write(c.red(`[error] ${result.error ?? ""}\n`));
     else if (result.stopReason !== "end_turn")
       process.stderr.write(c.yellow(`[${result.stopReason}]\n`));
-    if (verbose)
-      process.stderr.write(c.dim(`$${result.costUsd.toFixed(4)} · ${result.steps} step(s)\n`));
+    if (verbose) process.stderr.write(c.dim(`${result.steps} step(s)\n`));
     return result;
   } finally {
     process.off("SIGINT", onSigint);

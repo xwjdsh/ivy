@@ -2,28 +2,17 @@ import type { AgentEvent, Ivy, RequestInfo } from "@ivy/kernel";
 
 type StepEvent = Extract<AgentEvent, { type: "step" }>;
 
-/** "→ step 1 · qoder/qfmodel · effort high→high · context block · 5 msgs · 1 tools · max 64000" */
+/**
+ * "→ step 1 · 5 msgs · 1 tools · context block". Only what changes per step; model and
+ * effort are in the status bar, capability details in /status.
+ */
 export function formatRequest(step: number, info: RequestInfo): string {
-  const effort =
-    info.effort.sent === undefined
-      ? `effort ${info.effort.configured} (not sent)`
-      : info.effort.sent === info.effort.configured
-        ? `effort ${info.effort.sent}`
-        : `effort ${info.effort.configured}→${info.effort.sent}`;
-  const parts = [
-    `→ step ${step}`,
-    info.model,
-    effort,
-    `context ${info.contextMode}`,
-    `${info.messages} msgs`,
-    `${info.tools} tools`,
-    `max_tokens ${info.maxTokens}`,
-  ];
-  if (info.betas.length > 0) parts.push(`betas ${info.betas.join(",")}`);
+  const parts = [`→ step ${step}`, `${info.messages} msgs`, `${info.tools} tools`];
+  if (info.hasContext) parts.push(`context ${info.contextMode}`);
   return parts.join(" · ");
 }
 
-/** "← step 1 · end_turn · in 120 out 30 · cache read 0 write 0 · $0.0012 · 1.3s" (+ trace path) */
+/** "← step 1 · end_turn · in 120 out 30 · cache read 0 write 0 · 1.3s" (+ trace path) */
 export function formatStep(e: StepEvent, requestedModel?: string): string {
   const u = e.usage;
   const parts = [
@@ -31,11 +20,20 @@ export function formatStep(e: StepEvent, requestedModel?: string): string {
     e.stopReason ?? "?",
     `in ${u.input_tokens} out ${u.output_tokens}`,
     `cache read ${u.cache_read_input_tokens ?? 0} write ${u.cache_creation_input_tokens ?? 0}`,
-    e.costUsd === null ? "$?" : `$${e.costUsd.toFixed(4)}`,
     `${(e.latencyMs / 1000).toFixed(1)}s`,
   ];
-  if (requestedModel && e.model !== requestedModel) parts.push(`served by ${e.model}`);
+  if (requestedModel && !sameModel(requestedModel, e.model)) parts.push(`served by ${e.model}`);
   return parts.join(" · ") + (e.traceFile ? `\n  trace: ${e.traceFile}` : "");
+}
+
+/**
+ * Proxies often report a model without its routing prefix ("qoder/qfmodel" → "qfmodel");
+ * that is the same model, not a switch.
+ */
+function sameModel(requested: string, served: string): boolean {
+  return (
+    requested === served || requested.endsWith(`/${served}`) || served.endsWith(`/${requested}`)
+  );
 }
 
 /** `/status`: where things are and why the current model behaves as it does. */

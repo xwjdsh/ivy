@@ -9,14 +9,13 @@ const info = {
   messages: 3,
   tools: 2,
   maxTokens: 64000,
+  hasContext: false,
 };
 
-test("request line shows the effort adjustment, context mode and betas", () => {
-  expect(formatRequest(1, info)).toBe(
-    "→ step 1 · claude-opus-5-5 · effort xhigh→high · context system · 3 msgs · 2 tools · max_tokens 64000 · betas server-side-fallback-2026-07-01",
-  );
-  expect(formatRequest(2, { ...info, effort: { configured: "high" }, betas: [] })).toContain(
-    "effort high (not sent)",
+test("request line: step, message and tool counts, and context only when there is some", () => {
+  expect(formatRequest(1, info)).toBe("→ step 1 · 3 msgs · 2 tools");
+  expect(formatRequest(2, { ...info, hasContext: true })).toBe(
+    "→ step 2 · 3 msgs · 2 tools · context system",
   );
 });
 
@@ -37,6 +36,20 @@ test("step line shows stop reason, tokens, cost, time, fallback model and trace"
     traceFile: "/t/1.json",
   } as never;
   expect(formatStep(step, "claude-opus-5-5")).toBe(
-    "← step 1 · end_turn · in 10 out 5 · cache read 100 write 0 · $0.0012 · 1.3s · served by claude-opus-4-8\n  trace: /t/1.json",
+    "← step 1 · end_turn · in 10 out 5 · cache read 100 write 0 · 1.3s · served by claude-opus-4-8\n  trace: /t/1.json",
   );
+});
+
+test("a proxy dropping the routing prefix is not reported as a different model", () => {
+  const step = {
+    type: "step" as const,
+    step: 1,
+    model: "qfmodel",
+    stopReason: "end_turn",
+    usage: { input_tokens: 1, output_tokens: 1 },
+    costUsd: null,
+    latencyMs: 0,
+  } as never;
+  expect(formatStep(step, "qoder/qfmodel")).not.toContain("served by");
+  expect(formatStep(step, "qoder/other")).toContain("served by qfmodel");
 });

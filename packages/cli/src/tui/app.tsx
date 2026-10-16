@@ -366,9 +366,6 @@ export function App({
     if (name === model) return;
     ivy.agent.setModel(name);
     setModel(name);
-    if (verboseRef.current) {
-      push({ id: itemId(), kind: "info", text: ivy.capabilities.explain(name).join("\n") });
-    }
     try {
       saveDefaultModel(ivy.paths, ivy.config.activeProvider.name, name);
       push({ id: itemId(), kind: "info", text: `Model: ${name} (saved to config.toml)` });
@@ -438,11 +435,7 @@ export function App({
         const on = !verboseRef.current;
         verboseRef.current = on;
         setVerboseOn(on);
-        info(
-          on
-            ? `Verbose on. /status shows the current state.\n${ivy.capabilities.explain(model).join("\n")}`
-            : "Verbose off.",
-        );
+        info(on ? "Verbose on. /status shows the current state." : "Verbose off.");
         return;
       }
       case "/usage":
