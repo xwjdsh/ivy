@@ -14,7 +14,7 @@ export interface ToolContext {
 }
 
 export interface ToolDef<S extends z.ZodType = z.ZodType> {
-  /** Local name; exposed to Claude as `<pluginId>__<name>`. Must match [a-zA-Z0-9_-]. */
+  /** Local name; exposed to the model as `<pluginId>__<name>`. Must match [a-zA-Z0-9_-]. */
   name: string;
   description: string;
   input: S;

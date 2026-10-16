@@ -1,6 +1,7 @@
 import {
   type AgentEvent,
   type Ivy,
+  modelCapabilities,
   Session,
   type SessionSummary,
   summarizeUsage,
@@ -9,12 +10,13 @@ import {
 } from "@ivy/kernel";
 import { Box, Static, Text, useApp, useInput, useWindowSize } from "ink";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { COMMANDS, matchCommands } from "../commands.ts";
+import { availableCommands, type CommandInfo, matchCommands } from "../commands.ts";
 import type { InputHistory } from "../history.ts";
 import { renderMarkdown, splitFinished } from "../markdown.ts";
 import { addTokens, formatTokens, type TokenCount, usageReport } from "../usage-report.ts";
 import { Input } from "./input.tsx";
 import { historyItems, type Item, itemId } from "./items.ts";
+import { Picker } from "./picker.tsx";
 import { SessionPicker } from "./session-picker.tsx";
 import {
   ItemView,
@@ -62,16 +64,17 @@ const STOP_NOTES: Partial<Record<TurnResult["stopReason"], string>> = {
   max_tokens: "Response hit max_tokens",
 };
 
-const HELP = [
-  "Commands:",
-  ...COMMANDS.map((c) => `  ${`${c.name} ${c.args ?? ""}`.padEnd(18)}${c.description}`),
-  "Keys:",
-  "  Enter             send · Shift/Option+Enter, Ctrl+J or \\ then Enter: new line",
-  "  ↑ / ↓, Ctrl+P/N   history; in the / list: move the selection (Enter/Tab picks)",
-  "  Ctrl+O            expand / collapse the last turn's tool output",
-  "  Ctrl+L            redraw the screen",
-  "  Esc / Ctrl-C      interrupt · Ctrl-C clears the input · Ctrl-C twice or Ctrl-D: quit",
-].join("\n");
+const helpText = (commands: CommandInfo[]) =>
+  [
+    "Commands:",
+    ...commands.map((c) => `  ${`${c.name} ${c.args ?? ""}`.padEnd(18)}${c.description}`),
+    "Keys:",
+    "  Enter             send · Shift/Option+Enter, Ctrl+J or \\ then Enter: new line",
+    "  ↑ / ↓, Ctrl+P/N   history; in the / list: move the selection (Enter/Tab picks)",
+    "  Ctrl+O            expand / collapse the last turn's tool output",
+    "  Ctrl+L            redraw the screen",
+    "  Esc / Ctrl-C      interrupt · Ctrl-C clears the input · Ctrl-C twice or Ctrl-D: quit",
+  ].join("\n");
 
 export function App({
   ivy,
@@ -292,6 +295,19 @@ export function App({
   };
 
   const [picker, setPicker] = useState<SessionSummary[] | null>(null);
+
+  const models = ivy.config.activeProvider.models;
+  const commands = availableCommands(models.length);
+
+  // Model for this run only; /model switches it without touching config.toml.
+  const [model, setModel] = useState(ivy.agent.model);
+  const [modelPickerOpen, setModelPickerOpen] = useState(false);
+  const switchModel = (name: string) => {
+    if (name === model) return;
+    ivy.agent.setModel(name);
+    setModel(name);
+    push({ id: itemId(), kind: "info", text: `Model: ${name} (this run only)` });
+  };
   const openPicker = () => {
     const others = Session.list(ivy.paths.sessions).filter((s) => s.id !== sessionRef.current.id);
     if (others.length > 0) setPicker(others);
@@ -312,14 +328,33 @@ export function App({
         exit();
         return;
       case "/help":
-        info(HELP);
+        info(helpText(commands));
         return;
+      case "/model": {
+        const name = args[0];
+        if (models.length < 2) {
+          info(
+            `Only one model is configured (${model}). Add more to \`models\` under [providers.${ivy.config.activeProvider.name}] to switch.`,
+            "warn",
+          );
+        } else if (!name) {
+          setModelPickerOpen(true);
+        } else if (ivy.config.activeProvider.models.includes(name)) {
+          switchModel(name);
+        } else {
+          info(
+            `Unknown model ${name}. Available: ${ivy.config.activeProvider.models.join(", ")}`,
+            "error",
+          );
+        }
+        return;
+      }
       case "/usage":
         info(usageReport(ivy.paths.sessions, sessionRef.current.id));
         return;
       case "/new":
       case "/clear": {
-        const next = Session.create(ivy.paths.sessions, ivy.config.model.name);
+        const next = Session.create(ivy.paths.sessions, ivy.agent.model);
         switchSession(next);
         refresh([header(), { id: itemId(), kind: "info", text: `New session ${next.id}` }]);
         return;
@@ -356,6 +391,7 @@ export function App({
     if (key.ctrl && input === "c") {
       if (busy) return interrupt();
       if (picker) return setPicker(null);
+      if (modelPickerOpen) return setModelPickerOpen(false);
       if (inputValue !== "") return; // the input box clears itself
       if (Date.now() - exitArmedAt < EXIT_CONFIRM_MS) return exit();
       setExitArmedAt(Date.now());
@@ -370,7 +406,7 @@ export function App({
     }
   });
 
-  const completions = matchCommands(inputValue);
+  const completions = matchCommands(inputValue, commands);
 
   // Keep the live area shorter than the screen: once Ink's dynamic output is taller
   // than the terminal it has to redraw everything on every update, which flickers.
@@ -379,6 +415,7 @@ export function App({
     pendingTools.length * 2 +
     (permission ? 8 : 0) +
     (picker ? picker.length + 4 : 0) +
+    (modelPickerOpen ? ivy.config.activeProvider.models.length + 4 : 0) +
     completions.length;
   const maxLiveLines = Math.max(3, rows - reserved);
   let liveLines = streaming.trim() === "" ? [] : renderMarkdown(streaming, width).split("\n");
@@ -418,6 +455,20 @@ export function App({
         </Box>
       )}
       {permission && <PermissionPrompt call={permission.call} onChoose={answerPermission} />}
+      {modelPickerOpen && (
+        <Picker
+          title={`Switch model on ${ivy.config.activeProvider.name} (this run only)`}
+          items={ivy.config.activeProvider.models}
+          itemKey={(name) => name}
+          initialIndex={Math.max(0, ivy.config.activeProvider.models.indexOf(model))}
+          renderItem={(name) => (name === model ? `${name}  (current)` : name)}
+          onPick={(name) => {
+            setModelPickerOpen(false);
+            switchModel(name);
+          }}
+          onCancel={() => setModelPickerOpen(false)}
+        />
+      )}
       {picker && (
         <SessionPicker
           sessions={picker}
@@ -431,15 +482,17 @@ export function App({
       )}
       <Input
         history={history.entries}
-        active={!permission && !picker}
+        commands={commands}
+        active={!permission && !picker && !modelPickerOpen}
         busy={busy}
         width={width}
         onSubmit={onSubmit}
         onChange={setInputValue}
       />
       <StatusBar
-        model={ivy.config.model.name}
-        effort={ivy.config.model.effort}
+        provider={ivy.config.activeProvider.name}
+        model={model}
+        effort={modelCapabilities(model).effort ? ivy.config.generation.effort : undefined}
         sessionId={sessionId}
         tokens={formatTokens(tokens)}
         hint={busy ? "esc to interrupt" : exitArmed ? "Press Ctrl-C again to exit" : undefined}

@@ -1,16 +1,30 @@
+# Copy to .ivy/config.toml (dev) or ~/.ivy/config.toml.
 # Only this file is used; ANTHROPIC_* environment variables are ignored.
-
-[model]
-api_key = ""               # required
-base_url = "https://api.anthropic.com"
-name = "claude-opus-5-5"
-effort = "medium"          # low | medium | high | xhigh | max
-max_tokens = 64000
-fallbacks = true           # server-side refusal fallback
+# Unknown keys are an error, so typos don't go unnoticed.
 
 [agent]
-max_steps = 25             # model calls per turn
+provider = "anthropic"            # which [providers.*] to use
+max_steps = 25                    # model calls per turn
+
+[providers.anthropic]
+type = "anthropic"                # API kind; only "anthropic" for now
+api_key = ""                      # required
+base_url = "https://api.anthropic.com"
+default_model = "claude-opus-5-5" # required; used at startup
+models = ["claude-sonnet-5-5", "claude-haiku-4-5"]  # optional; other models /model can switch to
+refusal_fallback = true           # server-side refusal fallback; proxies may not support it
+
+# A second provider, e.g. a proxy. Switch with `provider = "proxy"` under [agent].
+# [providers.proxy]
+# api_key = "..."
+# default_model = "claude-sonnet-5-5"
+# base_url = "https://my-proxy.example.com"
+# refusal_fallback = false
+
+[generation]
+effort = "medium"                 # low | medium | high | xhigh | max
+max_tokens = 64000
 
 [trace]
-enabled = true             # save every request/response under traces/ (shown with -d)
-retention_days = 7         # delete older trace folders on startup; 0 = keep forever
+enabled = true                    # save every request/response under traces/ (shown with -d)
+retention_days = 7                # delete older trace folders on startup; 0 = keep forever

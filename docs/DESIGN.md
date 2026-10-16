@@ -11,7 +11,7 @@ Ivy is a **personal AI agent** for one user. It runs locally, talks through the 
 
 The core idea is a **small, stable kernel plus plugins**. The kernel only knows how to:
 
-1. hold a conversation with Claude,
+1. hold a conversation with a model over the Anthropic Messages API,
 2. run tools in a loop,
 3. load plugins and route their tools, commands, context and jobs,
 4. persist sessions and plugin data, and
@@ -33,7 +33,7 @@ Everything users care about (memory, email, calendar, coding help, news digests,
 ### Non-Goals (for now)
 
 - Multi-user, accounts, or hosting for others.
-- Supporting LLM providers other than Claude.
+- Supporting APIs other than the Anthropic Messages API. Within it, any model works: Claude on Anthropic's API, or any model behind an Anthropic-compatible endpoint (e.g. a local proxy).
 - A GUI. (A chat-app bot or local web UI may come later as more *interfaces*, see §5.7.)
 - A general-purpose agent framework for other people. Ivy is tuned for one person.
 
@@ -41,7 +41,7 @@ Everything users care about (memory, email, calendar, coding help, news digests,
 
 1. **Kernel stays boring.** If a feature can be a plugin, it is a plugin.
 2. **Files over databases.** Markdown/JSON/JSONL first; SQLite only where indexing or querying really needs it.
-3. **Append-only history.** Conversation transcripts are never rewritten. (This also keeps prompt caching and Claude's preserved thinking working correctly.)
+3. **Append-only history.** Conversation transcripts are never rewritten. (This also keeps prompt caching and preserved thinking working correctly.)
 4. **Explicit over magic.** Ivy should be able to tell the user which plugin, tool and memory produced an answer.
 5. **Confirm before effects.** Any outward-facing or hard-to-reverse action is shown to the user before it runs, unless a permission rule says otherwise.
 6. **Dogfood every milestone.** A milestone is only done once it has been used in real life for a few days.
@@ -71,7 +71,7 @@ Everything users care about (memory, email, calendar, coding help, news digests,
 │                             │            └────────┬─────────────────────────┘ │
 └─────────────────────────────┼─────────────────────┼───────────────────────────┘
                               │                     │
-                        Claude API        ┌─────────┴──────────┬──────────────┐
+                      Messages API        ┌─────────┴──────────┬──────────────┐
                                           │                    │              │
                                    Native plugins        MCP servers     Config &
                                    (TS modules)          (stdio/http)    data dirs
@@ -81,9 +81,9 @@ Everything users care about (memory, email, calendar, coding help, news digests,
 
 1. The interface sends the user's message to the **Agent Loop** with a session id.
 2. The **Context Builder** assembles the request: the frozen system prompt, the tool list from all enabled plugins, the session history, and any per-turn context from plugins (e.g. relevant memories, today's date).
-3. The **Model Client** streams the request to Claude.
-4. If Claude calls tools, the loop sends each call through the **Permission Gate**, then to the owning plugin, and appends all results in a single message.
-5. Steps 3–4 repeat until Claude ends the turn (or a step/budget limit is hit).
+3. The **Model Client** streams the request to the model.
+4. If the model calls tools, the loop sends each call through the **Permission Gate**, then to the owning plugin, and appends all results in a single message.
+5. Steps 3–4 repeat until the model ends the turn (or a step/budget limit is hit).
 6. Every message is appended to the session's JSONL transcript. Plugins get an `afterTurn` hook (e.g. for memory extraction).
 
 ## 5. Kernel Components
@@ -99,15 +99,18 @@ Everything users care about (memory, email, calendar, coding help, news digests,
 ### 5.2 Model Client
 
 - `@anthropic-ai/sdk`, wrapped in a thin module so the rest of the code never touches raw API shapes.
-- Default model **`claude-opus-5-5`**, adaptive thinking, `effort` set explicitly per route (e.g. `medium` for chat, `high` for coding tasks, `low` for background jobs like memory extraction or summaries). Configurable per plugin/job.
-- Server-side refusal fallback enabled (`fallbacks: "default"`).
+- Speaks the Anthropic Messages API to whatever `[providers.*]` endpoint is active. With Anthropic's own API the default model is **`claude-opus-5-5`**, with adaptive thinking and `effort` set explicitly per route (e.g. `medium` for chat, `high` for coding tasks, `low` for background jobs like memory extraction or summaries). Configurable per plugin/job.
+- Server-side refusal fallback (`fallbacks: "default"`) is on for Anthropic's API; set `refusal_fallback = false` for proxies and other models.
+- **Compatible endpoints vary.** Effort, adaptive thinking, prompt caching, refusal fallback, compaction and server tools are Anthropic API features; a compatible endpoint or a non-Claude model may ignore or reject them. Each gets a per-provider switch when a real endpoint needs it (today: `refusal_fallback`; `modelCapabilities` also drops params known models reject).
 - **Prompt caching:** tools and system prompt are kept byte-stable (plugins sorted by id, no timestamps), with a cache breakpoint after them. Volatile context (date/time, retrieved memories) goes into the message stream as a mid-conversation system message, never into the top-level system prompt.
+- **Switching models:** the active provider's `models` lists what `/model` offers (a picker, or `/model <name>`); the switch lasts for the current run only. Requests only carry params the model accepts (`modelCapabilities`): Haiku gets no `effort` and no refusal fallback, which would be a 400. The prompt cache is per model, so the first call after a switch misses it.
 - **Long sessions:** use server-side compaction (beta) when a session grows large, and keep the returned compaction blocks in history.
-- Credentials and endpoint: only `api_key` and `base_url` in `config.toml`. `ANTHROPIC_*` environment variables and `ant` profiles are deliberately ignored, so there is one source of truth.
+- **Providers:** `config.toml` can define several `[providers.<name>]` (each with `type`, `api_key`, `base_url`, a required `default_model` used at startup, optional `models` that `/model` can also switch to, and `refusal_fallback`), and `[agent] provider = "<name>"` picks the active one. Only `type = "anthropic"` exists today; another API kind would add a value here plus a `ModelClient`. Generation settings (`effort`, `max_tokens`) live in `[generation]`, independent of the provider.
+- Credentials and endpoint come only from `config.toml`. `ANTHROPIC_*` environment variables and `ant` profiles are deliberately ignored, so there is one source of truth. Config is strict: unknown keys are errors.
 
 #### Provider coupling
 
-Ivy is Claude-only (see Non-Goals), but the coupling is kept in known places so switching later is a bounded job.
+Ivy speaks only the Anthropic Messages API (see Non-Goals): Claude directly, or any model behind an Anthropic-compatible endpoint. The coupling to that API is kept in known places, so adding another API kind later is a bounded job.
 
 | Anthropic-specific | Where | Impact on another provider |
 |---|---|---|
@@ -119,10 +122,10 @@ Ivy is Claude-only (see Non-Goals), but the coupling is kept in known places so 
 | Price table | `model.ts` | Cost shows `?` |
 | Planned: compaction, server tools (web search), mid-conversation system messages | — | Not available elsewhere |
 
-Other Claude models only need `model.name` (note: Haiku supports neither `effort` nor fallbacks).
+Other models on the same provider only need `/model`, or a different `default_model` (note: Claude Haiku supports neither `effort` nor fallbacks).
 
-Plan if another provider is ever needed:
-1. **Anthropic-compatible endpoint first.** Many providers expose one; `base_url` already points at it. Add a config switch for each Anthropic-only request param (effort, fallbacks, caching, eager streaming) so they can be turned off. Small change.
+Plan if another API kind (e.g. OpenAI's) is ever needed:
+1. **Anthropic-compatible endpoint first.** Many providers expose one; add it as another `[providers.*]` entry with its `base_url`. Add a config switch for each Anthropic-only request param (effort, fallbacks, caching, eager streaming) so they can be turned off. Small change.
 2. **Adapter otherwise.** Keep the Anthropic message format as Ivy's internal format and translate per provider inside a `ModelClient` implementation. The agent loop only depends on `ModelClient`, so the change stays in `model.ts`.
 
 ### 5.3 Context Builder
@@ -202,7 +205,7 @@ Part of the kernel from M0, so problems can be debugged from day one.
 
 - Every API call is written to `~/.ivy/traces/<session>/<time>-<n>.json`: the exact request body, the raw response, latency, and `usage` (input, output, cache read/write tokens). Since each request holds the whole history, traces grow quickly: `[trace] retention_days` (default 7) prunes old session folders on startup, and `[trace] enabled = false` turns tracing off.
 - `ivy --debug` prints a compact live view: each loop step, tool calls with inputs/outputs, tokens, cache hit rate, cost.
-- `/trace` in the CLI shows the last turn's full request as Claude saw it (system prompt, tools, context layers), so prompt and context changes can be checked directly.
+- `/trace` in the CLI shows the last turn's full request as the model saw it (system prompt, tools, context layers), so prompt and context changes can be checked directly.
 - `ivy replay <trace>` re-sends a recorded request, optionally with a changed system prompt, model or effort, to compare outputs. This is the starting point for evals (M2+).
 
 ## 6. Plugin System
@@ -211,7 +214,7 @@ Part of the kernel from M0, so problems can be debugged from day one.
 
 | Contribution | Purpose | Example |
 |---|---|---|
-| `tools` | Functions Claude can call | `memory__search`, `gmail__list_threads` |
+| `tools` | Functions the model can call | `memory__search`, `gmail__list_threads` |
 | `instructions` | Static text added to the system prompt | "Use memory.save when the user states a preference" |
 | `contextFor(turn)` | Dynamic text added per turn | Top 5 memories relevant to the message |
 | `commands` | Slash commands for the user | `/today`, `/remember <text>` |
@@ -242,7 +245,7 @@ export interface IvyPlugin {
 }
 
 export interface ToolDef<I = unknown> {
-  name: string;               // exposed to Claude as "<pluginId>__<name>"
+  name: string;               // exposed to the model as "<pluginId>__<name>"
   description: string;
   input: z.ZodType<I>;        // converted to JSON Schema; validated before run
   risk: "read" | "write" | "external" | "dangerous";
@@ -271,7 +274,7 @@ A plugin is a folder with an `index.ts` that default-exports an `IvyPlugin`. The
 
 - Plugins run **in-process** with full user permissions. Only install plugins you have read or written. (Process isolation is out of scope for now; MCP servers already run as separate processes.)
 - The Permission Gate still applies to every tool call, including MCP tools.
-- Tool *results* from outside sources (emails, web pages, RSS) are untrusted data. The built-in `core.md` tells Claude not to follow instructions found inside them, and `external`/`dangerous` tools always require confirmation, which limits prompt-injection damage.
+- Tool *results* from outside sources (emails, web pages, RSS) are untrusted data. The built-in `core.md` tells the model not to follow instructions found inside them, and `external`/`dangerous` tools always require confirmation, which limits prompt-injection damage.
 
 ## 7. Data & Storage Layout
 
@@ -301,7 +304,7 @@ The data root is `$IVY_HOME`, default `~/.ivy`. During development `bun run ivy`
 | `fs` + `shell` | M2 | Read/edit files and run commands in allowed directories — the coding/work helper | `read`, `write`, `edit`, `glob`, `grep`, `run` |
 | `mcp` bridge | M2 | Wraps configured MCP servers as plugins | (from servers) |
 | `gmail` / `calendar` | M3 | Triage, summarize, draft replies, today's agenda — via MCP servers or Google APIs | `search`, `read_thread`, `draft`, `agenda` |
-| `web` | M3 | Web search & fetch (Claude server tools) | `search`, `fetch` |
+| `web` | M3 | Web search & fetch (Anthropic server tools on Anthropic's API; otherwise a client-side tool) | `search`, `fetch` |
 | `digest` | M4 | Scheduled brief from RSS / GitHub / email / calendar | job `morning-brief` |
 
 ## 9. Project Layout
@@ -333,7 +336,7 @@ ivy/
 |---|---|---|
 | Runtime | Bun | Fast startup for a CLI, built-in TS, test runner, SQLite (`bun:sqlite`), can compile to a single binary |
 | Language | TypeScript (strict) | Types for the plugin contract |
-| LLM | `@anthropic-ai/sdk`, Claude Opus 5.5 | Best tool use; one provider keeps things simple |
+| LLM API | Anthropic Messages API via `@anthropic-ai/sdk`; default model Claude Opus 5.5 | One wire format; works with Claude and any Anthropic-compatible endpoint |
 | Schemas | Zod | Tool inputs, config validation, JSON Schema generation |
 | MCP | `@modelcontextprotocol/sdk` | MCP bridge plugin |
 | TUI | Ink 8 + marked-terminal | Mature (used by Claude Code, Gemini CLI); `<Static>` for scrollback |
@@ -349,7 +352,7 @@ Each milestone ends with a few days of real use and an update to this doc.
 
 ### M0 — Hello, Ivy (walking skeleton)
 - Bun workspace, `ivy` CLI, config loading, API auth.
-- Streaming chat with Claude, multi-turn, JSONL sessions (`/new`, `/resume`).
+- Streaming chat with the model, multi-turn, JSONL sessions (`/new`, `/resume`).
 - Agent loop with the `core` plugin (`now` tool) to prove tool calling end-to-end.
 - Token usage & cost shown per turn.
 - Tracing v1: raw request/response files + `--debug` live view (§5.8).
@@ -404,13 +407,15 @@ Each milestone ends with a few days of real use and an update to this doc.
 |---|---|---|
 | 2026-10-16 | TypeScript + Bun | Fast CLI startup, built-in SQLite & tests, good SDK/MCP support |
 | 2026-10-16 | Terminal CLI is the first interface | Closest to daily dev workflow; other interfaces later |
-| 2026-10-16 | Claude only, default `claude-opus-5-5` | Simplicity; best tool use |
+| 2026-10-16 | ~~Claude only~~ (superseded below), default `claude-opus-5-5` | Simplicity; best tool use |
 | 2026-10-16 | All capabilities are plugins | Kernel stays small; habits change by adding plugins |
 | 2026-10-16 | Own tool-use loop, not Agent SDK | Full control over plugins, permissions, context |
 | 2026-10-16 | Project content in English | User preference |
 | 2026-10-16 | Claude writes the code, user reviews it | User's choice; small, reviewable changes |
 | 2026-10-16 | Tool names `<plugin>__<tool>` | API tool names cannot contain dots |
 | 2026-10-16 | API key and base URL only from `config.toml` | One source of truth; env vars ignored; user's choice |
+| 2026-10-16 | Scope is the Anthropic Messages API, not Claude: any model behind an Anthropic-compatible endpoint | The user runs a local proxy with a non-Claude model |
+| 2026-10-16 | Config: `[providers.*]` + `[agent] provider` selector, `[generation]`, strict keys | Room for proxies / other API kinds; typos and stale keys fail loudly |
 | 2026-10-16 | Dev data in `./.ivy` | Easy to inspect and wipe during development |
 | 2026-10-16 | Prompt files named `SOUL.md` / `USER.md`, both read from the data dir, empty if missing | Common convention for personal agents; easy to edit without touching code |
 | 2026-10-16 | No provider abstraction yet; coupling documented in §5.2 | Avoid premature abstraction; switching path is known |

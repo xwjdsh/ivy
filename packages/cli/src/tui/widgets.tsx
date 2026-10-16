@@ -18,8 +18,11 @@ export function Spinner({ label, startedAt }: { label: string; startedAt: number
 }
 
 export function StatusBar(props: {
+  /** Active provider name from [providers.<name>]. */
+  provider: string;
   model: string;
-  effort: string;
+  /** Omitted for models that don't take an effort setting. */
+  effort?: string;
   sessionId: string;
   /** Session token totals, e.g. "12.3k in / 1.2k out". */
   tokens: string;
@@ -28,7 +31,9 @@ export function StatusBar(props: {
   return (
     <Box justifyContent="space-between">
       <Text dimColor>
-        {props.model} · {props.effort} · {props.sessionId} · {props.tokens}
+        {[props.provider, props.model, props.effort, props.sessionId, props.tokens]
+          .filter(Boolean)
+          .join(" · ")}
       </Text>
       {props.hint && <Text dimColor>{props.hint}</Text>}
     </Box>

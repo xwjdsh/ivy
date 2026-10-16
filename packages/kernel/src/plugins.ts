@@ -88,7 +88,7 @@ export class PluginHost {
       .flatMap((p) => (p.instructions ? [`## Plugin: ${p.id}\n${p.instructions}`] : []));
   }
 
-  /** Validate input and run a tool. Never throws: failures become error results for Claude. */
+  /** Validate input and run a tool. Never throws: failures become error results for the model. */
   async call(fullName: string, input: unknown, ctx: ToolContext): Promise<ToolOutcome> {
     const tool = this.tools.get(fullName);
     if (!tool) return { content: `Unknown tool: ${fullName}`, isError: true };

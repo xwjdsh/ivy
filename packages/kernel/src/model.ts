@@ -39,6 +39,24 @@ export class AnthropicModelClient implements ModelClient {
   }
 }
 
+const FALLBACK_MODELS = new Set([
+  "claude-fable-5-1",
+  "claude-opus-5-5",
+  "claude-opus-5",
+  "claude-sonnet-5-5",
+]);
+
+/**
+ * Request features not every model accepts; sending them to the wrong model is a 400.
+ * Unknown models are assumed to support effort but not the refusal fallback.
+ */
+export function modelCapabilities(model: string): { effort: boolean; fallbacks: boolean } {
+  return {
+    effort: !model.startsWith("claude-haiku"),
+    fallbacks: FALLBACK_MODELS.has(model),
+  };
+}
+
 // USD per million tokens. Cache writes use the 5-minute TTL rate (1.25x input).
 const PRICING: Record<string, { input: number; output: number; cacheRead: number }> = {
   "claude-opus-5-5": { input: 4, output: 20, cacheRead: 0.2 },

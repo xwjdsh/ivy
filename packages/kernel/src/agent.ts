@@ -2,7 +2,13 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { RiskLevel } from "@ivy/plugin-api";
 import type { Config } from "./config.ts";
 import { createLogger } from "./log.ts";
-import { estimateCost, type ModelClient, type ModelMessage, type ModelRequest } from "./model.ts";
+import {
+  estimateCost,
+  type ModelClient,
+  type ModelMessage,
+  type ModelRequest,
+  modelCapabilities,
+} from "./model.ts";
 import { errorMessage, type PluginHost } from "./plugins.ts";
 import type { Session } from "./session.ts";
 import type { Tracer } from "./trace.ts";
@@ -65,10 +71,24 @@ const MAX_PARSE_RETRIES = 2;
 const log = createLogger("agent");
 
 export class Agent {
-  constructor(private readonly opts: AgentOptions) {}
+  /** Current model; starts as the provider's default_model and can be switched at runtime. */
+  private modelName: string;
+
+  constructor(private readonly opts: AgentOptions) {
+    this.modelName = opts.config.activeProvider.default_model;
+  }
+
+  get model(): string {
+    return this.modelName;
+  }
+
+  /** Switch models for later turns (not saved). The prompt cache is per model, so the next call misses it. */
+  setModel(name: string): void {
+    this.modelName = name;
+  }
 
   /**
-   * Run one user turn: call the model, execute tools, repeat until Claude ends the turn.
+   * Run one user turn: call the model, execute tools, repeat until the model ends the turn.
    *
    * History invariant: an assistant message containing tool_use blocks is only appended
    * together with its tool_result message, so the session is always a valid request,
@@ -166,18 +186,19 @@ export class Agent {
 
   private buildRequest(session: Session): ModelRequest {
     const { config, plugins, systemPrompt } = this.opts;
+    const caps = modelCapabilities(this.modelName);
     const request: ModelRequest = {
-      model: config.model.name,
-      max_tokens: config.model.max_tokens,
+      model: this.modelName,
+      max_tokens: config.generation.max_tokens,
       tools: plugins.apiTools(),
       messages: [...session.messages],
       // Automatic caching: caches the longest stable prefix, which moves forward each turn.
       cache_control: { type: "ephemeral" },
-      output_config: { effort: config.model.effort },
     };
+    if (caps.effort) request.output_config = { effort: config.generation.effort };
     // The API rejects empty text blocks, so an empty prompt means no system field.
     if (systemPrompt) request.system = [{ type: "text", text: systemPrompt }];
-    if (config.model.fallbacks) {
+    if (config.activeProvider.refusal_fallback && caps.fallbacks) {
       request.betas = ["server-side-fallback-2026-07-01"];
       request.fallbacks = "default";
     }

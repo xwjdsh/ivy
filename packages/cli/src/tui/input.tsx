@@ -1,6 +1,6 @@
 import { Box, type DOMElement, Text, useBoxMetrics, useCursor, useInput, usePaste } from "ink";
 import { useEffect, useRef, useState } from "react";
-import { matchCommands } from "../commands.ts";
+import { type CommandInfo, matchCommands } from "../commands.ts";
 import * as E from "./editor.ts";
 
 const PROMPT = "› ";
@@ -10,6 +10,8 @@ const INDENT = "  ";
 
 interface Props {
   history: string[];
+  /** Commands offered in the "/" list. */
+  commands: CommandInfo[];
   /** Receives keystrokes (false while a dialog has focus). */
   active: boolean;
   /** A turn is running: typing ahead is fine, submitting is not. */
@@ -19,7 +21,7 @@ interface Props {
   onChange(value: string): void;
 }
 
-export function Input({ history, active, busy, width, onSubmit, onChange }: Props) {
+export function Input({ history, commands, active, busy, width, onSubmit, onChange }: Props) {
   const [state, setState] = useState<E.EditorState>(E.empty);
   // Position in history while browsing with ↑/↓; null = editing a fresh draft.
   const [historyIndex, setHistoryIndex] = useState<number | null>(null);
@@ -49,7 +51,7 @@ export function Input({ history, active, busy, width, onSubmit, onChange }: Prop
 
   // Highlighted command in the "/" completion list. Tied to the text it was chosen for,
   // so editing the input resets the highlight to the first match.
-  const matches = matchCommands(state.value);
+  const matches = matchCommands(state.value, commands);
   const [selection, setSelection] = useState({ value: "", index: 0 });
   const selected =
     selection.value === state.value ? Math.min(selection.index, matches.length - 1) : 0;
@@ -82,7 +84,7 @@ export function Input({ history, active, busy, width, onSubmit, onChange }: Prop
   const submit = (current: E.EditorState) => {
     // Enter while the completion list is open picks the highlighted command:
     // commands with a required argument ("<id>") are filled in, others run right away.
-    const options = matchCommands(current.value);
+    const options = matchCommands(current.value, commands);
     const chosen = options[current.value === state.value ? selected : 0];
     if (chosen && chosen.name !== current.value) {
       if (chosen.args?.startsWith("<")) return complete(chosen.name);

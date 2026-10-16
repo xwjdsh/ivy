@@ -78,11 +78,15 @@ let cleanup: (() => void) | undefined;
 
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), "ivy-tui-"));
-  writeFileSync(join(home, "config.toml"), '[model]\napi_key = "test"\n');
+  writeFileSync(
+    join(home, "config.toml"),
+    '[providers.anthropic]\napi_key = "test"\ndefault_model = "claude-opus-5-5"\nmodels = ["claude-sonnet-5-5", "claude-haiku-4-5"]\n',
+  );
 });
 afterEach(() => cleanup?.());
 
-async function start(script: Step[]) {
+async function start(script: Step[], configToml?: string) {
+  if (configToml) writeFileSync(join(home, "config.toml"), configToml);
   const model = new FakeModel(script);
   const bridge: ConfirmBridge = { confirm: async () => false };
   const ivy = await createIvy({
@@ -127,7 +131,7 @@ test("sends a message and renders the streamed Markdown answer", async () => {
   expect(frame()).toContain("Hello there");
   expect(frame()).not.toContain("**");
   expect(frame()).toMatch(/1 step\(s\) · [\d.]+s · 10 in \/ 5 out tokens/);
-  expect(frame()).toContain("· 10 in / 5 out"); // status bar session total
+  expect(frame()).toMatch(/anthropic · claude-opus-5-5 · medium · .* · 10 in \/ 5 out/); // status bar
   expect(frame()).not.toContain("$");
 });
 
@@ -296,7 +300,8 @@ test("/ list: arrows and Ctrl+P/N move the selection; Tab fills it in", async ()
   expect(frame()).toContain("❯ /exit");
   await type(UP);
   await type(UP);
-  await type(UP); // /help → /usage → /resume
+  await type(UP);
+  await type(UP); // /help → /usage → /model → /resume
   expect(frame()).toContain("❯ /resume");
   await type(TAB); // fills in "/resume " to type an id
   expect(frame()).toContain("› /resume"); // trailing space is trimmed in the frame
@@ -347,4 +352,50 @@ test("/resume without an id opens a picker; Enter resumes, Esc cancels", async (
   expect(frame()).toContain(`Resumed ${older.id}`);
   expect(frame()).toContain("older answer");
   expect(frame()).not.toContain("Resume a session");
+});
+
+test("/model opens a picker; choosing switches the model for later turns", async () => {
+  const { type, frame, model } = await start([{ stop: "end_turn", content: [text("ok")] }]);
+  await type("/model");
+  await type(ENTER);
+  expect(frame()).toContain("Switch model on anthropic");
+  expect(frame()).toContain("❯ claude-opus-5-5  (current)");
+  await type(DOWN);
+  await type(ENTER);
+  expect(frame()).toContain("Model: claude-sonnet-5-5 (this run only)");
+  expect(frame()).toContain("claude-sonnet-5-5 · medium");
+  await type("hi");
+  await type(ENTER);
+  await tick(50);
+  expect(model.requests[0]?.model).toBe("claude-sonnet-5-5");
+});
+
+test("/model <name> switches directly; unknown names are rejected", async () => {
+  const { type, frame } = await start([]);
+  await type("/model claude-haiku-4-5");
+  await type(ENTER);
+  expect(frame()).toMatch(/claude-haiku-4-5 · \d{4}-/); // Haiku takes no effort setting
+  await type("/model gpt-4");
+  await type(ENTER);
+  expect(frame()).toContain(
+    "Unknown model gpt-4. Available: claude-opus-5-5, claude-sonnet-5-5, claude-haiku-4-5",
+  );
+});
+
+test("with a single model, /model is hidden and explains why when typed", async () => {
+  const { type, frame } = await start(
+    [],
+    '[providers.local]\napi_key = "k"\ndefault_model = "my/model"\n[agent]\nprovider = "local"\n',
+  );
+  await type("/");
+  expect(frame()).toContain("/usage");
+  expect(frame()).not.toContain("Switch model"); // the model name "my/model" itself contains "/model"
+  await type("\x15"); // Ctrl+U: clear the line
+  await type("/help");
+  await type(ENTER);
+  expect(frame()).toContain("Commands:");
+  expect(frame()).not.toContain("Switch model");
+  await type("/model x");
+  await type(ENTER);
+  expect(frame()).toContain("Only one model is configured (my/model)");
 });

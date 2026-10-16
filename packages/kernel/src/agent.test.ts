@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Anthropic from "@anthropic-ai/sdk";
@@ -81,6 +81,7 @@ describe("Agent.runTurn", () => {
     systemPrompt = "sys",
   ) {
     const paths = resolvePaths(dir);
+    writeFileSync(paths.config, '[providers.anthropic]\ndefault_model = "claude-opus-5-5"\n');
     const plugins = new PluginHost(paths.data, {});
     await plugins.register(testPlugin(risk));
     return new Agent({ config: loadConfig(paths), model, plugins, systemPrompt, confirm });
@@ -122,7 +123,7 @@ describe("Agent.runTurn", () => {
     expect(result).toMatchObject({ isError: true });
   });
 
-  test("risky tools ask for confirmation and denial is reported to Claude", async () => {
+  test("risky tools ask for confirmation and denial is reported to the model", async () => {
     const asked: ToolCallRequest[] = [];
     const model = new FakeModel([
       reply("tool_use", [toolUse("tu_1", "t__echo", { msg: "x" })]),
@@ -209,6 +210,26 @@ describe("Agent.runTurn", () => {
     const model = new FakeModel([reply("end_turn", [text("hi")])]);
     await run(await makeAgent(model, "read", undefined, ""), "hello");
     expect(model.requests[0]).not.toHaveProperty("system");
+  });
+
+  test("setModel switches later requests; params a model rejects are left out", async () => {
+    const model = new FakeModel([reply("end_turn", [text("a")]), reply("end_turn", [text("b")])]);
+    const agent = await makeAgent(model);
+    expect(agent.model).toBe("claude-opus-5-5");
+    agent.setModel("claude-haiku-4-5");
+    await run(agent, "one");
+    expect(model.requests[0]?.model).toBe("claude-haiku-4-5");
+    expect(model.requests[0]).not.toHaveProperty("output_config");
+    expect(model.requests[0]).not.toHaveProperty("fallbacks");
+    expect(model.requests[0]).not.toHaveProperty("betas");
+
+    agent.setModel("claude-sonnet-5-5");
+    await run(agent, "two");
+    expect(model.requests[1]).toMatchObject({
+      model: "claude-sonnet-5-5",
+      output_config: { effort: "medium" },
+      fallbacks: "default",
+    });
   });
 
   test("request uses caching, effort and fallbacks from config", async () => {

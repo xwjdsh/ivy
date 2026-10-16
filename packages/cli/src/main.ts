@@ -80,11 +80,9 @@ async function main(): Promise<number> {
     session = Session.load(sessions, values.resume);
   } else if (values.continue) {
     const last = Session.list(sessions, 1)[0];
-    session = last
-      ? Session.load(sessions, last.id)
-      : Session.create(sessions, ivy.config.model.name);
+    session = last ? Session.load(sessions, last.id) : Session.create(sessions, ivy.agent.model);
   } else {
-    session = Session.create(sessions, ivy.config.model.name);
+    session = Session.create(sessions, ivy.agent.model);
   }
 
   try {

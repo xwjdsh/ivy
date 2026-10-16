@@ -46,7 +46,7 @@ export async function createIvy(opts: IvyOptions): Promise<Ivy> {
   const systemPrompt = buildSystemPrompt(paths, plugins, opts.interfaceInstructions);
   const agent = new Agent({
     config,
-    model: opts.model ?? defaultModel(config, paths),
+    model: opts.model ?? createModelClient(config, paths),
     plugins,
     systemPrompt,
     confirm: opts.confirm,
@@ -56,9 +56,19 @@ export async function createIvy(opts: IvyOptions): Promise<Ivy> {
   return { agent, plugins, config, paths, systemPrompt, tracer };
 }
 
-function defaultModel(config: Config, paths: Paths): ModelClient {
-  if (!config.model.api_key) {
-    throw new Error(`No API key. Set [model] api_key in ${paths.config}`);
+/** The client for the active provider's API kind. */
+function createModelClient(config: Config, paths: Paths): ModelClient {
+  const p = config.activeProvider;
+  if (!p.api_key) {
+    throw new Error(`No API key. Set api_key under [providers.${p.name}] in ${paths.config}`);
   }
-  return new AnthropicModelClient({ apiKey: config.model.api_key, baseURL: config.model.base_url });
+  switch (p.type) {
+    case "anthropic":
+      return new AnthropicModelClient({ apiKey: p.api_key, baseURL: p.base_url });
+    default: {
+      // Compile error here when a type is added to PROVIDER_TYPES without a client.
+      const unsupported: never = p.type;
+      throw new Error(`Unsupported provider type: ${String(unsupported)}`);
+    }
+  }
 }
