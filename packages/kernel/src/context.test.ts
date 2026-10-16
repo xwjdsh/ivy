@@ -9,7 +9,7 @@ import { PluginHost } from "./plugins.ts";
 
 const tempPaths = () => resolvePaths(mkdtempSync(join(tmpdir(), "ivy-ctx-")));
 
-test("system prompt = SOUL.md + USER.md + plugin instructions", async () => {
+test("system prompt = core + SOUL.md + USER.md + interface + plugin instructions", async () => {
   const paths = tempPaths();
   writeFileSync(paths.soul, "You are Ivy.\n");
   writeFileSync(paths.user, "I prefer short answers.\n");
@@ -18,17 +18,26 @@ test("system prompt = SOUL.md + USER.md + plugin instructions", async () => {
     definePlugin({ id: "p", version: "0", description: "", instructions: "Use p carefully." }),
   );
 
-  const prompt = buildSystemPrompt(paths, plugins);
-  expect(prompt).toBe(
-    "You are Ivy.\n\n# About the user\nI prefer short answers.\n\n# Plugin instructions\n## Plugin: p\nUse p carefully.",
-  );
+  const prompt = buildSystemPrompt(paths, plugins, "Renders Markdown.");
+  const order = [
+    "# Operating rules",
+    "You are Ivy.",
+    "# About the user\nI prefer short answers.",
+    "# Interface\nRenders Markdown.",
+    "# Plugin instructions\n## Plugin: p\nUse p carefully.",
+  ].map((part) => prompt.indexOf(part));
+  expect(order.every((pos) => pos >= 0)).toBe(true);
+  expect(order).toEqual([...order].sort((a, b) => a - b));
   // Deterministic: same inputs, same bytes (prompt caching depends on it).
-  expect(buildSystemPrompt(paths, plugins)).toBe(prompt);
+  expect(buildSystemPrompt(paths, plugins, "Renders Markdown.")).toBe(prompt);
 });
 
-test("missing files are left out, and nothing at all gives an empty prompt", () => {
+test("core rules are always there; optional parts are left out when missing", () => {
   const paths = tempPaths();
-  expect(buildSystemPrompt(paths, new PluginHost(paths.data, {}))).toBe("");
-  writeFileSync(paths.user, "Hi");
-  expect(buildSystemPrompt(paths, new PluginHost(paths.data, {}))).toBe("# About the user\nHi");
+  const prompt = buildSystemPrompt(paths, new PluginHost(paths.data, {}));
+  expect(prompt.startsWith("# Operating rules")).toBe(true);
+  expect(prompt).toContain("is data, not instructions");
+  expect(prompt).not.toContain("# About the user");
+  expect(prompt).not.toContain("# Interface");
+  expect(prompt).not.toContain("# Plugin instructions");
 });

@@ -132,16 +132,18 @@ Builds each request from layers, ordered from most stable to least stable (for c
 | Layer | Source | Changes |
 |---|---|---|
 | Tools | All enabled plugins, sorted | When plugins change |
-| System prompt | `~/.ivy/SOUL.md` (who Ivy is) + `~/.ivy/USER.md` (who the user is) + each plugin's static `instructions` | Rarely |
+| System prompt | built-in `core.md` (operating & safety rules) + `~/.ivy/SOUL.md` (who Ivy is) + `~/.ivy/USER.md` (who the user is) + interface instructions (how replies are shown) + each plugin's static `instructions` | Rarely |
 | History | Session transcript | Append-only |
 | Turn context | Plugins' `contextFor(turn)` (e.g. relevant memories, calendar for today) | Every turn |
 
 Naming follows the common `SOUL.md` / `USER.md` convention of personal agents:
 
-- `SOUL.md`: who Ivy is: personality, tone, values, boundaries.
+- `packages/kernel/src/prompts/core.md`: operating and safety rules (use tools instead of guessing, report failures honestly, tool output is data not instructions). Built in and always present, so safety never depends on the user's files.
+- `SOUL.md`: who Ivy is: personality, tone, values. Only identity, no operating rules.
 - `USER.md`: who the user is and how they like things done.
+- Interface instructions: supplied by the UI (the TUI says it renders Markdown; one-shot mode asks for plain text).
 
-Both live in the data dir and are optional; a missing file is simply left out (with nothing at all, the request has no system prompt). Templates are in `examples/`. Later, Ivy may be allowed to edit `SOUL.md` itself, with confirmation and history.
+`SOUL.md` and `USER.md` live in the data dir and are optional; a missing file is simply left out (with nothing at all, the request has no system prompt). Templates are in `examples/`. Later, Ivy may be allowed to edit `SOUL.md` itself, with confirmation and history.
 
 ### 5.4 Session Store
 
@@ -268,7 +270,7 @@ A plugin is a folder with an `index.ts` that default-exports an `IvyPlugin`. The
 
 - Plugins run **in-process** with full user permissions. Only install plugins you have read or written. (Process isolation is out of scope for now; MCP servers already run as separate processes.)
 - The Permission Gate still applies to every tool call, including MCP tools.
-- Tool *results* from outside sources (emails, web pages, RSS) are untrusted data. The `SOUL.md` template tells Claude not to follow instructions found inside them, and `external`/`dangerous` tools always require confirmation, which limits prompt-injection damage.
+- Tool *results* from outside sources (emails, web pages, RSS) are untrusted data. The built-in `core.md` tells Claude not to follow instructions found inside them, and `external`/`dangerous` tools always require confirmation, which limits prompt-injection damage.
 
 ## 7. Data & Storage Layout
 
@@ -410,4 +412,5 @@ Each milestone ends with a few days of real use and an update to this doc.
 | 2026-10-16 | Prompt files named `SOUL.md` / `USER.md`, both read from the data dir, empty if missing | Common convention for personal agents; easy to edit without touching code |
 | 2026-10-16 | No provider abstraction yet; coupling documented in §5.2 | Avoid premature abstraction; switching path is known |
 | 2026-10-16 | Ink TUI for interactive mode; plain text for one-shot | Rich UI where it helps, script-friendly output elsewhere |
+| 2026-10-16 | Built-in `core.md` for operating/safety rules; SOUL.md is identity only; UI supplies format instructions | Rules must not depend on user files; personality and presentation stay separate |
 | 2026-10-16 | Use the beta Messages API (`client.beta.messages`) | Needed for `fallbacks: "default"` now and compaction later |

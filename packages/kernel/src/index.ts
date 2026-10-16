@@ -18,6 +18,8 @@ export interface IvyOptions {
   confirm(call: ToolCallRequest): Promise<boolean>;
   paths?: Paths;
   model?: ModelClient;
+  /** How the current UI shows replies (e.g. "renders Markdown"), added to the system prompt. */
+  interfaceInstructions?: string;
 }
 
 export interface Ivy {
@@ -35,7 +37,7 @@ export async function createIvy(opts: IvyOptions): Promise<Ivy> {
   const plugins = new PluginHost(paths.data, config.plugins);
   for (const plugin of opts.plugins) await plugins.register(plugin);
 
-  const systemPrompt = buildSystemPrompt(paths, plugins);
+  const systemPrompt = buildSystemPrompt(paths, plugins, opts.interfaceInstructions);
   const agent = new Agent({
     config,
     model: opts.model ?? defaultModel(config, paths),
