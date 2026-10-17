@@ -150,7 +150,7 @@ Builds each request from layers, ordered from most stable to least stable (for c
 | Layer | Source | Changes |
 |---|---|---|
 | Tools | All enabled plugins, sorted | When plugins change |
-| System prompt | built-in `core.md` (operating & safety rules) + `~/.ivy/SOUL.md` (who Ivy is, and the user's hard rules) + interface instructions (how replies are shown) + each plugin's static `instructions` + plugins' `sessionPrompt` sections (e.g. the memory profile) | Per session at most |
+| System prompt | built-in `core.md` (operating & safety rules) + `~/.ivy/SOUL.md` (who Ivy is, and the user's hard rules) + interface instructions (how replies are shown) + each plugin's static `instructions` + plugins' `sessionPrompt` sections (e.g. the memory hot files) | Per session at most |
 | History | Session transcript | Append-only |
 | Turn context | Plugins' `contextFor(turn)` (e.g. current time, relevant memories), stored with the user message and sent as a system message or a `<context>` block (below) | Every turn |
 
@@ -170,8 +170,7 @@ Each user turn, the kernel asks every enabled plugin for `contextFor(turn)` and 
 ## core
 Now: 2026-10-16 Fri 14:57 (Asia/Tokyo, UTC+09:00)
 ## memory
-- [todo, due 2026-10-21] Dentist appointment at 15:00. (id 2026-10-17-a1b2c3)
-- [fact] Passport expires 2026-12. (id 2026-10-12-9f8e7d)
+Due: Dentist appointment at 15:00 (today)
 </context>
 ```
 
@@ -313,9 +312,9 @@ There is no timeout that moves a call to the background: it would make the same 
 | Contribution | Purpose | Example |
 |---|---|---|
 | `tools` | Functions the model can call | `memory__search`, `gmail__list_threads` |
-| `instructions` | Static text added to the system prompt | Memory routing rules: what goes into the profile vs. notes |
-| `sessionPrompt(session)` | System prompt section computed when a session starts, frozen for that session | The memory profile |
-| `contextFor(turn)` | Dynamic text added per turn | Top 5 notes relevant to the message, due todos |
+| `instructions` | Static text added to the system prompt | Memory routing rules: what goes into `USER.md`, `MEMORY.md` or the archive |
+| `sessionPrompt(session)` | System prompt section computed when a session starts, frozen for that session | The memory hot files (`USER.md`, `MEMORY.md`) |
+| `contextFor(turn)` | Dynamic text added per turn | The current time; todos due today |
 | `commands` | Slash commands for the user | `/today`, `/memory [query]` |
 | `jobs` | Scheduled tasks (daemon) | Morning brief at 08:30 on weekdays |
 | `hooks` | Lifecycle callbacks (planned, added when a plugin needs one) | `onSessionStart`, `beforeToolCall` |
@@ -423,7 +422,7 @@ What the model is told about them:
 ├── cache/models.json    # model capabilities: Models API facts + features learned unsupported
 ├── sessions/            # append-only JSONL transcripts (subagent child sessions linked to their parent, §5.9)
 ├── data/<pluginId>/     # per-plugin storage
-│   └── memory/          #   memory plugin: USER.md (profile) + notes/<id>.md (§8.1)
+│   └── memory/          #   memory plugin: USER.md, MEMORY.md (hot), ARCHIVE.md (cold) (§8.1)
 ├── plugins/             # user-installed plugins
 ├── traces/              # raw API requests/responses per session (see §5.8)
 └── logs/                # kernel & daemon logs
@@ -438,7 +437,7 @@ The data root is `$IVY_HOME`, default `~/.ivy`. During development `bun run ivy`
 | Plugin | Milestone | Summary | Key tools |
 |---|---|---|---|
 | `core` | M0 / M1 | Current time in every turn's context; date arithmetic | `date_calc` |
-| `memory` | M1 | Long-term preferences, facts, todos and notes as markdown files; relevant ones injected each turn (§8.1) | `save`, `search`, `list`, `update`, `delete` |
+| `memory` | M1 | Preferences, facts and todos as markdown files: capped hot files injected whole per session, a searchable archive (§8.1) | `save`, `update`, `move`, `delete`, `search` |
 | `fs` + `shell` | M2 | Read/edit files and run commands (CLI tools, §6.4) in allowed directories; the baseline for everyday work and coding on any model (pi shows four such tools suffice) | `read`, `write`, `edit`, `glob`, `grep`, `run` |
 | `claude-code` | M2 | Optional enhancement (principle 7): hands coding tasks to Claude Code as a subagent (`claude -p --output-format stream-json`, or the Agent SDK) in a given directory; backgroundable, cancellable, resumable (`--resume`). Its own permissions are preset (`acceptEdits`, `--allowedTools`, the directory); in Ivy it is `dangerous`, so asked every time. Claude only, billed separately; optional, so G7 holds | `run` |
 | `mcp` bridge | M2 | Wraps configured MCP servers as plugins | (from servers) |
@@ -446,134 +445,140 @@ The data root is `$IVY_HOME`, default `~/.ivy`. During development `bun run ivy`
 | `web` | M3 | Web search & fetch (Anthropic server tools on Anthropic's API; otherwise a client-side tool) | `search`, `fetch` |
 | `digest` | M4 | Scheduled brief from RSS / GitHub / email / calendar | job `morning-brief` |
 
-### 8.1 Memory plugin (design v2)
+### 8.1 Memory plugin (design v3)
 
-Memory is what makes Ivy *personal*, so it gets its own design. v2 folds in lessons from Hermes Agent (§10.3), whose memory is the closest prior art.
+Memory is what makes Ivy *personal*, so it gets its own design. v3 follows Hermes Agent (§10.3) more closely than v2 did: what matters is injected whole, and the model is the one that decides what is relevant. v2 recalled the top 5 notes per turn by keyword score; that missed synonyms and the other language ("牙医" / "dentist"), and with a prompt frozen per session, whole injection is cheap (cache reads cost about a tenth).
 
 #### Goals
 
-1. **Used unprompted.** What matters is applied without the user repeating it, including preferences that share no words with the current question ("keep answers short" must apply to "what's the date next Wednesday?").
+1. **Used unprompted.** What matters is applied without the user repeating it, including preferences and facts that share no words with the current question ("keep answers short" must apply to "what's the date next Wednesday?").
 2. **Visible and editable.** Plain files the user can read, edit, delete and back up with git; every write shows up in the transcript as a tool call.
-3. **Cheap.** Bounded tokens; no prompt-cache breakage turn to turn.
+3. **Cheap.** Bounded tokens; no prompt-cache breakage within a session.
 4. **Safe.** Memory is injected into prompts every session, so it must not become an injection channel; nothing is ever silently dropped.
-5. **Any model.** Retrieval and rules live in Ivy, not in model features; tools have small flat schemas.
+5. **Any model.** Rules live in Ivy, not in model features; tools have small flat schemas.
 
-#### Two layers
+#### Three files: two hot, one cold
 
-| | **Profile** (always on) | **Notes** (recalled on demand) |
-|---|---|---|
-| What | How Ivy should behave for this user, and stable facts about them: "prefers concise answers", "Chinese for chat, English for code", "lives in Tokyo", "partner: Mei" | Everything else worth keeping: facts (people, projects, places, accounts), todos, notes ("parking spot B12") |
-| Size | Capped: `[plugins.memory] profile_limit`, default 2,000 characters (500–20,000) | Unbounded |
-| Storage | `memory/USER.md`, one entry per line | `memory/notes/<id>.md`, one entry per file |
-| Reaches the model | Whole, in the system prompt, **frozen per session** | Top 5 relevant to the new message in the turn's `<context>`; due/overdue todos always; more via `memory__search` |
-| When full | Writing returns an error with the entries and how many characters to free; the model consolidates (merge, shorten, move to notes) and retries | n/a |
+| | `USER.md` (hot) | `MEMORY.md` (hot) | `ARCHIVE.md` (cold) |
+|---|---|---|---|
+| What | How Ivy should behave for this user, and stable facts about them: "prefers concise answers", "Chinese for chat, English for code", "lives in Tokyo", "partner: Mei" | Facts, todos and notes in current use: people, projects, accounts, "dentist on 10-21", "parking spot B12" | Entries no longer in current use: done todos, old facts |
+| Size | `[plugins.memory] profile_limit`, default 2,000 characters (500–20,000) | `memory_limit`, default 8,000 characters (1,000–50,000), about 2,500–3,000 tokens | Unbounded |
+| Reaches the model | Whole, in the system prompt, **frozen per session** | Same | Only through `memory__search` |
+| When full | A write fails with the entry count and how many characters to free; the model consolidates (merge, shorten, move to `MEMORY.md` or the archive) and retries | Same (merge, shorten, archive) | n/a |
 
-Why two layers: keyword retrieval alone misses preferences that must apply everywhere; a capped, always-on file alone (Hermes) can't hold a life's worth of facts and todos. The cap forces the profile to stay a concise, high-value summary.
-
-**The profile is `USER.md`**, maintained by Ivy and editable by the user (there is no separate user-written profile: tell Ivy, or edit the file). Things Ivy must never change, such as hard rules, belong in `SOUL.md`, which Ivy never edits (§5.3). Lowering `profile_limit` below the current size truncates nothing: the profile is still injected whole, the next write fails until it is consolidated, and `/memory` shows it as over the limit.
-
-**Frozen per session:** the profile snapshot is taken when a session starts (startup, `/new`, `/resume`); hand edits to `USER.md` therefore apply after `/new`, no restart needed. Writes reach disk at once and the model knows what it just wrote, but the system prompt only changes at the next session. That keeps the cached prefix stable within a session (§5.2). This uses the plugin `sessionPrompt` (§6.2): computed on session start, frozen for the session (M1 step 4a). `SOUL.md` follows the same rule.
-
-#### What goes where (routing rules, given to the model in the plugin's instructions)
-
-- **profile**: durable preferences and standing instructions about how to help this user; stable facts about the user that matter in most conversations. One idea per line.
-- **fact**: durable information that matters later but not in every conversation.
-- **todo**: something the user (or Ivy) should do; optional due date; status open/done.
-- **note**: anything else the user asks to keep.
-- **Don't save:** one-off details, things easy to look up again, guesses about the user, secrets (passwords, keys, card numbers; refuse and say why), sensitive personal data unless the user explicitly asks.
-- **Before saving:** search first and update an existing entry instead of adding a near-duplicate; keep the user's language; one fact per entry.
-- When the user says "remember …", save it in the right layer; when they correct something, update the entry rather than adding a contradiction.
-
-There is no `/remember` command: the user just says it, and the model routes it (a command that bypassed the model could not put a preference into the profile).
+- **Why hot and cold:** whole injection never misses and lets the model judge relevance across synonyms and languages; the caps keep it cheap and focused, and the archive holds a lifetime of entries without putting them in every request. On endpoints without prompt caching the hot files cost full price each call, which is why they are capped.
+- **Why `USER.md` apart from `MEMORY.md`:** it holds standing instructions about the user, so it has its own cap and stricter rules (Safety); `MEMORY.md` holds facts and errands.
+- **The profile is `USER.md`**, maintained by Ivy and editable by the user (there is no separate user-written profile: tell Ivy, or edit the file). Things Ivy must never change, such as hard rules, belong in `SOUL.md`, which Ivy never edits (§5.3).
+- **Usage is visible to the model** (Letta, Hermes): each hot file is injected under a header with its size, e.g. `## MEMORY.md (5,310 / 8,000 chars)`, and every write returns the current usage. The rules ask the model to consolidate from 80% on, so a failed write is the exception and tidying doesn't land in the middle of urgent work.
+- **Lowering a limit truncates nothing:** the file is still injected whole, the next write fails until it is consolidated, and `/memory` shows it as over the limit.
+- **Frozen per session:** both hot files are read when a session starts (startup, `/new`, `/resume`) through the plugin's `sessionPrompt` (§6.2, M1 step 4a), so hand edits apply after `/new`. Writes reach disk at once and the model knows what it just wrote (and `memory__search` reads the files as they are now), but the system prompt only changes at the next session, which keeps the cached prefix stable.
 
 #### Storage
 
 ```
 ~/.ivy/data/memory/
-├── USER.md           # the profile
-└── notes/
-    └── 2026-10-17-a1b2c3.md
+├── USER.md
+├── MEMORY.md
+└── ARCHIVE.md
 ```
 
-`USER.md`:
+All three use the same format, one entry per line, so moving an entry is moving a line:
 
 ```markdown
-# Profile
+# Memory
 Maintained by Ivy; you can edit it. One entry per line.
 
-- Prefers concise answers; Chinese for chat, English for code.
-- Lives in Tokyo (Asia/Tokyo).
+- [todo 2026-10-17 due:2026-10-21] Dentist appointment at 15:00 #health #牙医
+- [fact 2026-10-12] Passport expires 2026-12 #passport #护照
+- [fact 2026-09-30] Mei likes sushi #寿司
 ```
 
-A note:
+- Line prefix: the type (`fact`, `note` or `todo`; none in `USER.md`) and the date the line was written or last changed, set by the tool, so the model can tell an old entry from a fresh one ("lives in Tokyo", as of when?). About 11 characters per line, roughly a seventh of `MEMORY.md` at full size. Then `due:YYYY-MM-DD` for todos, `done:YYYY-MM-DD` once done, `until:YYYY-MM-DD` on a superseded version in the archive, and `ext` on an entry saved from outside content (Safety). Unknown prefixes and free text are kept as they are, so hand edits never break parsing.
+- `#tags` at the end, written in both languages with common synonyms (routing rules); they matter for searching the archive.
+- New entries are appended, so later lines are newer.
+- The files are the only state: tools read and write them on every call (they are small); nothing is cached.
 
-```markdown
----
-id: 2026-10-17-a1b2c3
-type: todo            # fact | todo | note
-tags: [health]
-status: open          # todos: open | done
-due: 2026-10-21       # todos, optional
-created: 2026-10-17T10:30:00+09:00
-updated: 2026-10-17T10:30:00+09:00
-source: user        # user | external (saved in a tainted session, see Safety)
----
-Dentist appointment at 15:00.
-```
+#### What goes where (routing rules, given to the model in the plugin's instructions)
 
-Files are the source of truth. They are loaded at startup and reloaded when their modification time changes, so hand edits apply on the next turn.
+- **`USER.md`**: durable preferences and standing instructions about how to help this user; stable facts about the user that matter in most conversations. One idea per line.
+- **`MEMORY.md`**: facts that will matter again soon or often, open todos (with a due date when there is one), notes the user asks to keep.
+- **`ARCHIVE.md`**: what no longer needs to be in front of the model: done todos (moved automatically), facts about past events, things rarely needed.
+- **Don't save:** one-off details, things easy to look up again, guesses about the user, secrets (passwords, keys, card numbers; refuse and say why), sensitive personal data unless the user explicitly asks.
+- **Before saving:** check the hot files in the prompt and search the archive; update an existing entry instead of adding a near-duplicate; keep the user's language; one fact per line.
+- **Absolute dates only:** "next Friday" is saved as 2026-10-23; a relative date is wrong a week later (Memobase).
+- **Memory can be out of date** (Codex): check what is cheap to verify (a path, a command, a version) before relying on it, and when an answer rests on an old entry, say so ("as of my note from March").
+- **Tags bridge words:** add the key terms in the other language and common synonyms (`#dentist #牙医 #看牙`), so archive search works across Chinese and English.
+- When the user says "remember …", save it in the right file; when they correct something, update the entry rather than adding a contradiction.
+
+There is no `/remember` command: the user just says it, and the model routes it (a command that bypassed the model could not put a preference into the profile).
 
 #### Tools
 
 | Tool | Risk | Default | Does |
 |---|---|---|---|
-| `save(type, content, tags?, due?)` | write | allowed (`defaultAllow`) | `profile` appends a line (cap checked); others create a note |
-| `update(id \| match, content?, status?, due?, tags?)` | write | allowed (`defaultAllow`) | Notes by `id`; profile entries by `match`, a unique substring of the line. No whole-file replace (it wipes unrelated entries) |
-| `delete(id \| match)` | write | asks | Removes a note or a profile line |
-| `search(query?, type?, status?, limit?)` | read | allowed | Scored search; empty query lists recent entries |
+| `save(file, content, type?, due?, tags?)` | write | allowed (`defaultAllow`) | Appends a line to `user` or `memory` (cap checked) |
+| `update(match, content?, due?, done?, tags?)` | write | allowed (`defaultAllow`) | Changes the one line containing `match` (a unique substring, in any file); patch only, no whole-file replace (Hermes removed its replace action because models wiped unrelated entries with it). Changing the text moves the old version to the archive with `until:` (below); `done: true` moves a todo to the archive |
+| `move(match, to)` | write | allowed (`defaultAllow`) | Moves a line between files: archiving, or bringing an archived entry back (cap checked) |
+| `delete(match)` | write | asks | Removes a line for good (e.g. for privacy); nothing goes to the archive |
+| `search(query?, type?, limit?)` | read | allowed | Searches all three files as they are now, archive included; empty query lists the newest entries |
 
-Done todos are marked `status: done`, not deleted: they stop being injected but remain for history.
+`match` must hit exactly one line; otherwise the tool returns the candidates so the model can be more specific. There are no ids.
 
-#### Recall (per-turn context)
+#### Tidying (automatic, never asks)
 
-`contextFor` adds a `## memory` section with:
-- open todos that are overdue or due within 2 days (max 3), whatever the message is;
-- the top 5 notes relevant to the new message, above a minimum score, each with its id so the model can update it.
+Moving between hot and cold deletes nothing (the archive stays searchable), so tidying runs without confirmation and shows as tool calls.
+- **By rule:** a todo marked done moves to the archive. When `update` changes an entry's text, the old version goes to the archive marked `until:` (Graphiti and Mem0 invalidate facts instead of deleting them). This keeps history ("where did I live before?") and, more importantly, makes consolidation safe: whatever the model merges or shortens under cap pressure survives word for word in the archive. Overdue open todos stay in `MEMORY.md`; `/memory` flags those overdue for more than 30 days, since moving them would silently give up on them.
+- **By the model, when a hot file is full:** the over-cap error makes it consolidate (above). Generous limits keep this rare.
+- **Back from the archive:** when a searched archive entry is in use again, the model moves it back.
+- **Later (backlog):** a background tidy with `helper_model` on `/new` or once a day (merge duplicates, shorten, archive entries untouched for long), so consolidation doesn't interrupt work. Usage can't drive it: with whole injection Ivy can't tell which entries the model used, so "not updated for a long time" is only a rough signal.
 
-**Scoring:** text is split into words (Latin, lowercased) and overlapping character bigrams (CJK), so Chinese matches without a segmenter (Hermes uses the same bigram approach for its session search). Score = sum of matched terms weighted by rarity across all notes (BM25-like), with tags counting extra, plus a small recency boost. A linear scan is fine for a personal store (thousands of entries). Known gap: synonyms ("car" / "vehicle") don't match; the model can search again with other words, and embeddings can replace the scorer later behind the same `search` function.
+#### Per-turn context
+
+`contextFor` adds one line only when todos are due today or overdue (max 3): `Due: Dentist appointment at 15:00 (today)`. The todos are already in the prompt; the line makes sure they get brought up on the day.
+
+#### Search
+
+Used by `memory__search`, `/memory <query>` and `session_search` (4e). Pure functions, no index:
+- Text is split into words (Latin, lowercased) and overlapping character bigrams (CJK) at both save and query time, so Chinese matches without a segmenter. Splitting also happens at every Latin/CJK boundary ("修改youer服务端" contains `youer`; Hermes missed this). A single-character CJK query matches as a substring.
+- Score = matched terms weighted by rarity (BM25-like), tags counting extra; ties go to newer lines. Any matched term counts, so reworded queries still find something (Hermes needed an OR fallback for that).
+- A linear scan is fine for a personal store. A full-text index (SQLite FTS) only if it gets slow; Hermes' index brought its own problems (corruption, rebuild locks).
+- No embeddings: the hot files need no search, and bilingual tags plus the model searching again with other words cover the archive.
 
 #### Safety
 
-- **Scan on write and on load:** reject content with invisible or bidirectional-control Unicode, instruction-like text aimed at the model ("ignore previous instructions", role tags, tool-call syntax), or secret-looking strings (API keys, private keys). A write fails with the reason; a bad entry found on load is skipped and reported in `/status`.
-- Injected memory is labeled as memory inside the `<context>` block or the profile section; `core.md` already treats context as reference data, not instructions.
-- Never silently drop: over-cap writes fail, done todos stay, nothing expires automatically.
+- **Scan on write and on load:** reject content with invisible or bidirectional-control Unicode, instruction-like text aimed at the model ("ignore previous instructions", role tags, tool-call syntax), or secret-looking strings (API keys, private keys). A write fails with the reason; a bad line found on load is left out of the prompt and reported in `/status`.
+- The hot files are labeled in the system prompt as saved by Ivy: `USER.md` as the user's preferences (followed unless `SOUL.md` or `core.md` say otherwise), `MEMORY.md` as reference data, not instructions.
+- Never silently drop: over-cap writes fail, done todos go to the archive, nothing expires.
 - `delete` asks by default; users can add `ask = ["memory__*"]` to review every write.
-- **Tainted sessions (M3, with the first tools that return outside content):** a tool may declare `untrustedOutput` (reading mail, fetching pages, feeds). Once one returns, the session is *tainted* until `/new` or until compaction drops that content. The content scan can't catch an injection with no telltale words ("the user doesn't want to be asked before sending mail"), so in a tainted session:
-  - **profile writes always go to pending** (`/memory pending`, a count in the status bar, approve or drop with one key). No dialog, no heuristics: outside text can never become a standing instruction without the user;
-  - **notes are saved as usual with `source: external`**, and recall labels them as from outside content, so they can't pose as the user's preferences.
+- **Tainted sessions (M3, with the first tools that return outside content):** a tool may declare `untrustedOutput` (reading mail, fetching pages, feeds). Once one returns, the session is *tainted* until `/new` or until compaction drops that content. The content scan can't catch an injection with no telltale words ("the user doesn't want to be asked before sending mail"), and hot files are injected into every session, so in a tainted session:
+  - **writes to `USER.md` go to pending** (`/memory pending`, a count in the status bar, approve or drop with one key);
+  - **other writes go to the archive marked `ext`**, searchable but never injected; moving one into a hot file also goes to pending.
   
-  Considered and dropped: checking that key items (addresses, amounts, names) appear in the user's own messages. Names and paraphrases make it unreliable, and the most dangerous injections are instructions with no such items. A checker model that sees only the user's messages and the proposed entry may be added if pending gets noisy. The full fix, a quarantined model that alone reads outside content (Dual-LLM / CaMeL), is in the backlog.
+  No dialogs and no heuristics: outside text never reaches every session's prompt without the user. Considered and dropped: checking that key items (addresses, amounts, names) appear in the user's own messages; names and paraphrases make it unreliable, and the most dangerous injections are instructions with no such items. A checker model that sees only the user's messages and the proposed entry may be added if pending gets noisy. The full fix, a quarantined model that alone reads outside content (Dual-LLM / CaMeL), is in the backlog.
 
 #### Commands
 
-- `/memory`: the profile (with usage, e.g. `1,240 / 2,000 chars`), open todos, and recent notes.
-- `/memory <query>`: search notes, same scorer as recall.
+- `/memory`: usage of both hot files (e.g. `USER.md 1,240 / 2,000 · MEMORY.md 5,310 / 8,000`), open todos (long-overdue ones flagged), pending entries, archive size.
+- `/memory <query>`: search, as `memory__search`.
 
 #### Recall of past conversations (step 4e)
 
-`session_search(query)`: searches past session files (user and assistant text, not tool noise) with the same word/bigram scorer and returns a few messages around each hit with the session id and date. No model call. Answers "what did we decide about X last week?" without having saved it as memory.
+`session_search(query)`: searches past session files (user and assistant text, not tool noise) with the same scorer and returns a few messages around each hit with the session id and date. No model call. Answers "what did we decide about X last week?" without having saved it as memory. From Hermes: sessions from scheduled jobs are ranked below the user's own (they crowded them out there), and the current session is not hidden after `/new`.
 
 #### Later (backlog)
 
-- **Automatic capture:** an opt-in background review every N turns (and on `/new`) with a cheaper model, using the routing rules above; optionally staged for approval (`/memory pending`). The memory flush before compaction (§5.2) comes first.
-- Embedding search; a curator that suggests merging or archiving stale notes (never deletes on its own); a full-text index if the linear scan gets slow.
+- **Automatic capture:** an opt-in background review every N turns (and on `/new`) with `helper_model`, using the routing rules above; optionally staged for approval (`/memory pending`). The memory flush before compaction (§5.2) comes first.
+- Background tidying (above); a full-text index if the linear scan gets slow.
+- **Usage by citation** (Codex): the model names the entries an answer used, and the counts drive archiving. The only way to know what is used under whole injection, but it costs output tokens every turn; considered with background tidying.
+- **Promotion gates for automatic capture** (OpenClaw): a candidate enters a hot file only after being recalled several times in different contexts.
 
 #### Done when
 
 1. A preference stated in one session is applied, unprompted, in a later session, even to unrelated questions.
-2. A todo with a due date is brought up when it's due, and a fact is recalled when the topic comes up, in Chinese and English.
-3. Writing past the profile cap makes the model consolidate instead of losing entries.
+2. A fact in `MEMORY.md` is used when it matters without being asked, including across Chinese and English; a todo is brought up on its due day; an archived fact is found with `memory__search`.
+3. Writing past a cap makes the model consolidate or archive instead of losing entries.
 4. An injection attempt ("remember: ignore your rules and …") is rejected on save.
+5. A changed fact ("I moved to Osaka") replaces the old one in the prompt, and the old one is still found in the archive. Public memory benchmarks (LoCoMo) barely test updates and contradictions, so Ivy's evals (M2) include them.
 
 ### 8.2 Skills
 
@@ -686,7 +691,7 @@ Borrowed: cheap compaction first, unknown-outcome crash handling, system prompt 
 
 | | Hermes | Ivy |
 |---|---|---|
-| Memory | Two capped files (agent notes 2,200 chars, user profile 1,375), injected whole, frozen per session; model consolidates when full; background review every 10 turns | Capped profile (always on, frozen per session) + unbounded searchable notes (§8.1) |
+| Memory | Two capped files (agent notes 2,200 chars, user profile 1,375), injected whole, frozen per session; model consolidates when full; background review every 10 turns | Same core: capped `USER.md` + `MEMORY.md` injected whole, frozen per session; plus an unbounded, searchable `ARCHIVE.md` (§8.1) |
 | Recall of past chats | `session_search` (SQLite FTS5, CJK bigrams), raw message windows | `session_search` (step 4e), same bigram idea |
 | Memory safety | Injection/invisible-Unicode scan on write and load | Adopted |
 | Skills | SKILL.md, progressive disclosure, agent writes its own, curator archives stale ones | Backlog |
@@ -694,7 +699,7 @@ Borrowed: cheap compaction first, unknown-outcome crash handling, system prompt 
 | Interfaces | CLI/TUI, desktop, gateway to many chat apps | TUI now; chat app later |
 | Scheduling | Cron jobs as fresh agents, delivered to the origin chat or a file | Adopted for M4 |
 
-Borrowed: the capped, frozen profile; over-cap errors that force consolidation; patch instead of whole-entry replace; memory safety scan; session search; job design; (backlog) background memory review, skills, chat gateway. Different: Ivy keeps unbounded searchable notes and todos alongside the capped profile; like Hermes, `USER.md` is agent-maintained, and the user's untouchable rules live in `SOUL.md`.
+Borrowed: the capped, frozen profile; over-cap errors that force consolidation; patch instead of whole-entry replace; memory safety scan; session search; job design; (backlog) background memory review, skills, chat gateway. Different: Ivy adds an archive that holds what no longer fits, todos with due dates, and automatic tidying between hot and cold; like Hermes, `USER.md` is agent-maintained, and the user's untouchable rules live in `SOUL.md`.
 
 #### 10.4 Related work: OpenClaw
 
@@ -703,14 +708,23 @@ Borrowed: the capped, frozen profile; over-cap errors that force consolidation; 
 | | OpenClaw | Ivy |
 |---|---|---|
 | Shape | Gateway daemon (WebSocket protocol) for chat apps, apps and devices | Terminal first; daemon in M4 |
-| Memory | `MEMORY.md` + `USER.md` + daily notes; hybrid vector/keyword search (embeddings default to OpenAI); memory flush before compaction; nightly "dreaming" promotion with a review file | Capped profile + searchable notes, keyword + CJK bigrams; flush before compaction (adopted) |
+| Memory | `MEMORY.md` + `USER.md` + daily notes; hybrid vector/keyword search (embeddings default to OpenAI); memory flush before compaction; nightly "dreaming" promotion with a review file | Capped hot files injected whole + a searchable archive (keyword + CJK bigrams); flush before compaction (adopted) |
 | Skills | `SKILL.md` with gating on bins/env/OS, invocation flags, index budget; ClawHub registry hit by hundreds of malicious skills (2026-02), now hash + VirusTotal scanning | Same format; gating, flags, budget and hash pinning adopted |
 | Plugins | npm/ClawHub modules, in-process | Own plugins; third-party plugins wait for isolation (§6.3) |
 | Messages mid-run | Queue modes: steer, follow-up, collect (debounced), interrupt | Speaking backgrounds tools (§5.9); collect adopted |
 | Models | Auth-profile rotation, then a fallback list, for one turn; explicit `/model` never falls back | Refusal fallback only; cross-provider fallbacks in backlog |
 | Scheduling | Cron, heartbeat turn in the main session, condition scripts, active hours, `NO_REPLY` | Fresh agent per job (Hermes); `NO_REPLY` and pre-check scripts adopted |
 
-Borrowed: memory flush before compaction; taint-style handling of outside content (Ivy's own design, prompted by its taint gating); collecting quick messages; skill flags, index budget and pinning; `NO_REPLY` and pre-check scripts for jobs; (backlog) cross-provider fallbacks. Not borrowed: the gateway protocol and device nodes (too much for one user in a terminal; a reference for the M4 daemon), default embeddings from an outside service, three memory files, heartbeat turns inside the main session (mixes job output into the user's context), in-process third-party plugins from a registry, active hours, a `doctor` audit command (one user who writes the config; changed skills are caught by pinning).
+Borrowed: memory flush before compaction; taint-style handling of outside content (Ivy's own design, prompted by its taint gating); collecting quick messages; skill flags, index budget and pinning; `NO_REPLY` and pre-check scripts for jobs; (backlog) cross-provider fallbacks. Not borrowed: the gateway protocol and device nodes (too much for one user in a terminal; a reference for the M4 daemon), embeddings for memory search, three memory files, heartbeat turns inside the main session (mixes job output into the user's context), in-process third-party plugins from a registry, active hours, a `doctor` audit command (one user who writes the config; changed skills are caught by pinning).
+
+#### 10.5 Related work: agent memory projects
+
+Compared on 2026-10-17 with the memory designs of Mem0, Letta (MemGPT), Zep/Graphiti, LangMem, Memobase, MemoryOS, A-MEM, Cognee, supermemory, Basic Memory, Anthropic's memory tool, Claude Code and Codex CLI.
+
+- **Same core as Ivy v3:** capped memory injected whole with fail-and-consolidate (Hermes, Letta core blocks, Claude Code's index), patch by unique substring (Hermes, Letta, Anthropic's memory tool), plain markdown as the source of truth (Basic Memory, Claude Code, OpenClaw), no memory writes from sessions that read outside content (Codex, OpenClaw).
+- **Evidence for simple:** on LoCoMo, full context scored 72.9 against Mem0's 66.9 (Mem0's own paper), and Letta reached 74.0 with plain files and grep; the benchmark is criticized for barely testing updates and contradictions.
+- **Not adopted:** vector stores, knowledge graphs and per-turn LLM extraction pipelines (several model calls per turn, e.g. about 5 for MemoryOS and 13 for A-MEM; Graphiti warns that small models and endpoints without structured output make ingestion fail), decay and heat formulas with hand-set thresholds, rewriting neighboring memories on insert (A-MEM; provenance drifts).
+- **Adopted:** usage shown to the model and consolidation from 80% (Letta, Hermes); absolute dates and a date per line (Memobase, Claude Code); superseded versions kept in the archive (Graphiti, Mem0); a reminder that memory can be out of date (Codex). Backlog: usage by citation (Codex), promotion gates for automatic capture (OpenClaw).
 
 **Alternative considered:** building on the Claude Agent SDK (Claude Code as a library). It gives file/shell tools and a loop for free, but it is coding-centric and makes the plugin model, context layering and permission UX harder to own. We build our own small kernel and may borrow ideas from it. Claude Code can still be a *delegate*: the `claude-code` plugin (§8) hands it coding tasks as a subagent.
 
@@ -740,11 +754,11 @@ Goal: Ivy starts remembering. Built in this order; each step is shippable on its
 3. **Permission rules:** `[permissions]` allow/deny globs, `permissions.json` learned rules, *Always* in the dialog, plugin default rules (§5.5).
    *Done when:* a tool allowed with *Always* isn't asked about after a restart, and a `deny` rule beats every allow.
    *Status: done.* Also: `ask` rules (force a confirmation regardless of declared risk), `defaultAllow` on tools, dangerous tools offer only Yes/No with the full input shown, `/status` lists tools with risk and the rules in effect.
-4. **memory plugin** (§8.1, design v2), in parts:
+4. **memory plugin** (§8.1, design v3), in parts:
    - 4a. Kernel: plugin `sessionPrompt`, re-evaluated on session start/switch (the system prompt is rebuilt then, frozen within a session); remove the kernel's `USER.md` loader.
      *Status: done.* The whole system prompt is now built per session (`SystemPrompt` in `context.ts`): `SOUL.md` and plugins' session sections are read at startup, `/new` and `/resume`, and the bytes stay fixed within a session. Each session section is capped at 24,000 characters and 2 s; a failing plugin is skipped. `/status` shows the sections of the current session.
-   - 4b. Store and scorer: profile and note files, parsing, word + CJK-bigram scoring; pure and unit-tested.
-   - 4c. Plugin: tools, routing instructions, profile in the session prompt, per-turn recall, `/memory`.
+   - 4b. Store and search: the three files' line format (parse, append, patch with the old version archived, move, caps, usage), word + CJK-bigram search; pure and unit-tested.
+   - 4c. Plugin: tools, routing instructions, both hot files in the session prompt (raise the kernel's 24,000-character session section cap to fit both limits), due-todo line, tidying rules, `/memory`.
    - 4d. Safety scan on write and load.
    - 4e. `session_search` over past sessions.
    *Done when:* the four checks at the end of §8.1 pass with a real model.
@@ -782,9 +796,8 @@ Goal: Ivy starts remembering. Built in this order; each step is shippable on its
 
 ### M5+ — Ideas backlog
 - Chat-app interface for phone access.
-- Semantic (embedding) search for memory.
 - Automatic memory extraction (opt-in) and periodic memory cleanup.
-- Memory search on SQLite FTS or embeddings if the keyword scan gets slow or misses too much.
+- Memory search on SQLite FTS if the keyword scan gets slow.
 - Endpoint capabilities are detected from `base_url` (`api.anthropic.com` = official). Add a per-provider override (e.g. `api = "auto" | "official" | "compatible"`) once a gateway or cloud platform that proxies the official API gets misdetected.
 - Usage dashboard; per-plugin effort/model tuning.
 - **Model fallbacks across providers** (OpenClaw): on errors, rate limits or outages, try the next entry of a `fallbacks` list, for that turn only; a model picked with `/model` never falls back silently. Generalizes the Anthropic-only refusal fallback (G7).
@@ -798,7 +811,7 @@ Goal: Ivy starts remembering. Built in this order; each step is shippable on its
 ## 12. Open Questions
 
 1. ~~**TUI library**~~ → Ink (decided in M0).
-2. ~~**Memory format**~~ → design v2 (§8.1): capped always-on profile + searchable notes; written by the model via tools; auto-capture later and opt-in.
+2. ~~**Memory format**~~ → design v3 (§8.1): capped hot files injected whole (`USER.md`, `MEMORY.md`) + a searchable archive; written by the model via tools; auto-capture later and opt-in.
 3. **Email/calendar:** MCP servers vs. direct Google API plugins (OAuth handling, offline access for the daemon)? → decide in M3.
 4. **Notifications:** macOS notifications only, or also push to phone? → decide in M4.
 5. **Language of conversation:** Ivy's code and docs are English; should Ivy reply in the language I write in (Chinese/English)? Default: yes, mirror the user.
@@ -825,7 +838,7 @@ Goal: Ivy starts remembering. Built in this order; each step is shippable on its
 | 2026-10-16 | Built-in `core.md` for operating/safety rules; SOUL.md is identity only; UI supplies format instructions | Rules must not depend on user files; personality and presentation stay separate |
 | 2026-10-16 | ~~Per-turn context as a `<context>` block in the user message~~ (superseded below) | Works on every Anthropic-compatible endpoint and model |
 | 2026-10-16 | Per-turn context stored apart from the prompt; rendered as `clear_at` system messages on Anthropic's API with supported models, `<context>` blocks elsewhere | Use the official API's newer features without breaking compatible endpoints |
-| 2026-10-16 | Memory: markdown file per memory (kept for notes in v2), in-memory keyword scoring with CJK bigrams, no SQLite in v1 | Human-editable source of truth; Chinese works without a segmenter; small data |
+| 2026-10-16 | Memory: ~~markdown file per memory~~ (one line per entry since v3), in-memory keyword scoring with CJK bigrams, no SQLite in v1 | Human-editable source of truth; Chinese works without a segmenter; small data |
 | 2026-10-16 | ~~Memories written by the model via tools (+ `/remember`)~~ (superseded by memory v2); auto-extraction later, opt-in | Fewer junk memories; no extra model call per turn |
 | 2026-10-16 | Learned permission rules go to `permissions.json`, not `config.toml` | Never rewrite the user's hand-edited config |
 | 2026-10-16 | Compatibility first, Anthropic features as progressive enhancements (principle 7, G7) | The user switches between many models through a compatible proxy; Claude-only would lose that |
@@ -835,7 +848,7 @@ Goal: Ivy starts remembering. Built in this order; each step is shippable on its
 | 2026-10-16 | Use the beta Messages API (`client.beta.messages`) | Needed for `fallbacks: "default"` now and compaction later |
 | 2026-10-17 | Compaction is client-side (any endpoint); server-side compaction only an enhancement | Compatibility first; as in pi |
 | 2026-10-17 | Adopt from pi: steering/follow-up (M2), deferred MCP tools (M2); backlog: synchronized output, session branching | See §10.1 |
-| 2026-10-17 | Memory v2: capped profile (always on, frozen per session) + searchable notes; no `/remember`; safety scan; session search | Keyword recall alone misses preferences that must always apply; a cap alone can't hold todos and facts (Hermes, §10.3) |
+| 2026-10-17 | ~~Memory v2~~ (superseded by v3): capped profile (always on, frozen per session) + searchable notes; no `/remember`; safety scan; session search | Keyword recall alone misses preferences that must always apply; a cap alone can't hold todos and facts (Hermes, §10.3) |
 | 2026-10-17 | Plugins may contribute a per-session system prompt section (`sessionPrompt`) | The memory profile must be in the system prompt without breaking the cache within a session |
 | 2026-10-17 | Adopt from DSH/Hermes: cheap compaction first, unknown-outcome crash handling (before M3), system prompt snapshots, loop guard, per-call concurrency, sandboxed shell, job design | §10.2, §10.3 |
 | 2026-10-17 | `USER.md` is the memory plugin's profile (`data/memory/USER.md`), not a user-written kernel file; no separate `ME.md` | One profile, no conflict rules; like Hermes |
@@ -847,5 +860,8 @@ Goal: Ivy starts remembering. Built in this order; each step is shippable on its
 | 2026-10-17 | Tool calls never block the conversation: background only when the model asks or the user speaks; no auto-background timeout; hard timeouts cancel | Explicit intent only; predictable results; "cancel it" always works |
 | 2026-10-17 | Subagents are tools with resumable child sessions; backgrounding is a separate, kernel-wide layer | Two orthogonal concerns, each simple; follow-ups don't lose the child's context |
 | 2026-10-17 | Optional `claude-code` plugin as a coding delegate (M2); Ivy's own `fs`/`shell` remain the baseline for any model | Capabilities must not depend on one model or product (principle 7, G7); the delegate is an enhancement where Claude is available |
-| 2026-10-17 | Tainted sessions: after outside content, profile writes go to pending, notes get `source: external`; no key-item heuristic | Outside text must never become a standing instruction on its own; heuristics miss instruction-only injections; no dialogs keeps it light |
+| 2026-10-17 | Tainted sessions: after outside content, profile writes go to pending, other writes go to the archive marked `ext` (v3); no key-item heuristic | Outside text must never become a standing instruction on its own; heuristics miss instruction-only injections; no dialogs keeps it light |
 | 2026-10-17 | Adopt from OpenClaw: memory flush before compaction, collecting quick messages, skill flags/budget/pinning, `NO_REPLY` and pre-check scripts for jobs; backlog: cross-provider fallbacks; no active hours or `doctor` | §10.4 |
+| 2026-10-17 | No embeddings for memory recall: keyword + CJK-bigram scoring, bilingual tags written at save time, `memory__search` as fallback | No outside service or local model; tags cover cross-language and synonym gaps cheaply; quality measured with evals |
+| 2026-10-17 | Memory v3: `USER.md` and `MEMORY.md` capped and injected whole (frozen per session), `ARCHIVE.md` searched on demand; one line per entry, no ids; tidying between hot and cold without asking | Whole injection never misses and lets the model judge relevance across synonyms and languages; cached per session it is cheap; moving lines deletes nothing (Hermes, §10.3) |
+| 2026-10-17 | Memory v3 additions: usage shown and consolidation from 80%, absolute dates and a date per line, superseded versions archived with `until:`, out-of-date reminder; no extraction pipelines, vectors or graphs | §10.5: the mainstream personal-agent design, plus safeguards for time and consolidation |
