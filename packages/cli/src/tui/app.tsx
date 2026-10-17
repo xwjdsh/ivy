@@ -3,6 +3,7 @@ import {
   EFFORT_LEVELS,
   type Effort,
   type Ivy,
+  type PermissionChoice,
   type RequestInfo,
   Session,
   type SessionSummary,
@@ -25,18 +26,11 @@ import { Input } from "./input.tsx";
 import { historyItems, type Item, itemId } from "./items.ts";
 import { Picker } from "./picker.tsx";
 import { SessionPicker } from "./session-picker.tsx";
-import {
-  ItemView,
-  type PermissionChoice,
-  PermissionPrompt,
-  Spinner,
-  StatusBar,
-  ToolLine,
-} from "./widgets.tsx";
+import { ItemView, PermissionPrompt, Spinner, StatusBar, ToolLine } from "./widgets.tsx";
 
 /** Lets the kernel's confirm() callback (created before React mounts) reach the UI. */
 export interface ConfirmBridge {
-  confirm(call: ToolCallRequest): Promise<boolean>;
+  confirm(call: ToolCallRequest): Promise<PermissionChoice>;
 }
 
 /** Clears both Ink's frame and the terminal (incl. scrollback); wired to the Ink instance in main. */
@@ -175,20 +169,17 @@ export function App({
   const busy = phase !== null;
 
   const abortRef = useRef<AbortController | null>(null);
-  const allowedTools = useRef(new Set<string>());
   const [permission, setPermission] = useState<{
     call: ToolCallRequest;
-    resolve(allowed: boolean): void;
+    resolve(choice: PermissionChoice): void;
   } | null>(null);
 
   const [inputValue, setInputValue] = useState("");
   const [exitArmedAt, setExitArmedAt] = useState(0);
 
   useEffect(() => {
-    bridge.confirm = (call) =>
-      allowedTools.current.has(call.name)
-        ? Promise.resolve(true)
-        : new Promise((resolve) => setPermission({ call, resolve }));
+    // Only reached when the permission rules say "ask"; remembering choices is the kernel's job.
+    bridge.confirm = (call) => new Promise((resolve) => setPermission({ call, resolve }));
   }, [bridge]);
 
   // Tool inputs arrive with tool_call; keep them by id so the finished item can show them.
@@ -295,7 +286,7 @@ export function App({
   const switchSession = (next: Session) => {
     sessionRef.current = next;
     tracerRef.current = ivy.tracer(next.id);
-    allowedTools.current.clear();
+    ivy.permissions.clearSession();
     setSessionId(next.id);
     setTokens(sessionTokens(next.id));
   };
@@ -486,13 +477,12 @@ export function App({
 
   const answerPermission = (choice: PermissionChoice) => {
     if (!permission) return;
-    if (choice === "session") allowedTools.current.add(permission.call.name);
-    permission.resolve(choice !== "deny");
+    permission.resolve(choice);
     setPermission(null);
   };
 
   const interrupt = () => {
-    permission?.resolve(false);
+    permission?.resolve("deny");
     setPermission(null);
     abortRef.current?.abort();
   };

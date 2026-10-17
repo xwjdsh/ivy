@@ -24,6 +24,14 @@ models = ["claude-sonnet-5-5", "claude-haiku-4-5"]  # optional; other models /mo
 effort = "medium"                 # low | medium | high | xhigh | max
 max_tokens = 64000
 
+# Who may run which tool without asking. Tool-name globs; checked in this order:
+# deny (blocked) > ask (always asked, whatever risk the plugin declares) > allow.
+# "Always" in the permission dialog saves to permissions.json instead (Ivy-owned).
+[permissions]
+allow = []                        # e.g. ["memory__*"]
+ask = []                          # e.g. a tool you don't trust to be read-only
+deny = []                         # e.g. ["gmail__send"]
+
 [trace]
 enabled = true                    # save every request/response under traces/ (shown with -d)
 retention_days = 7                # delete older trace folders on startup; 0 = keep forever

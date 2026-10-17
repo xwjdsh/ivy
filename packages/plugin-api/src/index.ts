@@ -19,6 +19,11 @@ export interface ToolDef<S extends z.ZodType = z.ZodType> {
   description: string;
   input: S;
   risk: RiskLevel;
+  /**
+   * Run without asking by default (a plugin default allow rule) for low-impact tools,
+   * e.g. saving a memory. Not allowed on "dangerous" tools; user deny/ask rules still win.
+   */
+  defaultAllow?: boolean;
   run(input: z.infer<S>, ctx: ToolContext): Promise<ToolResult> | ToolResult;
 }
 

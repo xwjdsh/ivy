@@ -1,0 +1,113 @@
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
+import type { RiskLevel } from "@ivy/plugin-api";
+import { createLogger } from "./log.ts";
+
+/**
+ * Who may run a tool without asking. Checked in this order; the first match wins:
+ *
+ * 1. `deny` rules (config.toml): rejected, never asked.
+ * 2. `ask` rules (config.toml): always asked, whatever the tool's declared risk. This is
+ *    the user's answer to a plugin that labels a risky tool "read".
+ * 3. `dangerous` tools: always asked; allow rules and "remember" choices don't apply.
+ * 4. Allow: `allow` rules (config.toml), learned rules (permissions.json, from "Always"),
+ *    plugin defaults (`defaultAllow` on low-impact tools), and "for this session" choices.
+ * 5. The risk level's default: `read` runs, everything else is asked.
+ *
+ * Rules are tool-name globs; `*` matches anything ("memory__*").
+ */
+export type Decision = "allow" | "deny" | "ask";
+
+/** What the user picked in a permission prompt. */
+export type PermissionChoice = "once" | "session" | "always" | "deny";
+
+export interface PermissionRules {
+  allow: string[];
+  ask: string[];
+  deny: string[];
+}
+
+export interface DecisionWithReason {
+  decision: Decision;
+  reason: string;
+}
+
+export class Permissions {
+  private readonly session = new Set<string>();
+  private learned: string[] = [];
+  private readonly log = createLogger("permissions");
+
+  constructor(
+    private readonly rules: PermissionRules,
+    /** ~/.ivy/permissions.json: allow rules saved from the dialog; Ivy-owned. */
+    private readonly learnedFile: string,
+    /** Whether the owning plugin marks this tool as safe to run without asking. */
+    private readonly pluginDefault: (tool: string) => boolean = () => false,
+  ) {
+    try {
+      if (existsSync(learnedFile)) {
+        const data = JSON.parse(readFileSync(learnedFile, "utf8")) as { allow?: unknown };
+        this.learned = Array.isArray(data.allow)
+          ? data.allow.filter((x) => typeof x === "string")
+          : [];
+      }
+    } catch (err) {
+      this.log.warn(`ignoring unreadable ${learnedFile}`, String(err));
+    }
+  }
+
+  decide(tool: string, risk: RiskLevel | undefined): DecisionWithReason {
+    if (matchesAny(tool, this.rules.deny)) return { decision: "deny", reason: "deny rule" };
+    if (matchesAny(tool, this.rules.ask)) return { decision: "ask", reason: "ask rule" };
+    if (risk === "dangerous") return { decision: "ask", reason: "dangerous tool" };
+    if (matchesAny(tool, this.rules.allow)) return { decision: "allow", reason: "allow rule" };
+    if (matchesAny(tool, this.learned)) return { decision: "allow", reason: "allowed always" };
+    if (this.pluginDefault(tool)) return { decision: "allow", reason: "plugin default" };
+    if (this.session.has(tool)) return { decision: "allow", reason: "allowed for this session" };
+    if (risk === "read" || risk === undefined) return { decision: "allow", reason: "read-only" };
+    return { decision: "ask", reason: `${risk} tool` };
+  }
+
+  /** Whether "for this session" / "always" may be offered (never for dangerous tools). */
+  canRemember(risk: RiskLevel | undefined): boolean {
+    return risk !== "dangerous";
+  }
+
+  /** Apply what the user picked; returns whether this call may run. */
+  remember(tool: string, choice: PermissionChoice): boolean {
+    if (choice === "session") this.session.add(tool);
+    if (choice === "always" && !this.learned.includes(tool)) {
+      this.learned.push(tool);
+      this.save();
+    }
+    return choice !== "deny";
+  }
+
+  /** "For this session" choices end with the session (/new, /resume). */
+  clearSession(): void {
+    this.session.clear();
+  }
+
+  /** Rules in effect, for /status. */
+  summary(): { allow: string[]; ask: string[]; deny: string[]; learned: string[] } {
+    return { ...this.rules, learned: [...this.learned] };
+  }
+
+  private save(): void {
+    try {
+      mkdirSync(dirname(this.learnedFile), { recursive: true });
+      writeFileSync(this.learnedFile, `${JSON.stringify({ allow: this.learned }, null, 2)}\n`);
+    } catch (err) {
+      this.log.warn(`could not save ${this.learnedFile}`, String(err));
+    }
+  }
+}
+
+export function matchesAny(name: string, patterns: string[]): boolean {
+  return patterns.some((p) => globToRegExp(p).test(name));
+}
+
+function globToRegExp(glob: string): RegExp {
+  const escaped = glob.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
+  return new RegExp(`^${escaped}$`);
+}

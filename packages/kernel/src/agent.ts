@@ -4,6 +4,7 @@ import { type Capabilities, type OptionalFeature, rejectedFeature } from "./capa
 import type { Config } from "./config.ts";
 import { createLogger } from "./log.ts";
 import { estimateCost, type ModelClient, type ModelMessage, type ModelRequest } from "./model.ts";
+import type { PermissionChoice, Permissions } from "./permissions.ts";
 import { errorMessage, type PluginHost } from "./plugins.ts";
 import type { Session } from "./session.ts";
 import type { Tracer } from "./trace.ts";
@@ -60,6 +61,8 @@ export interface ToolCallRequest {
   name: string;
   input: unknown;
   risk: RiskLevel;
+  /** Whether "for this session" / "always" may be offered (not for dangerous tools). */
+  canRemember: boolean;
 }
 
 export interface AgentOptions {
@@ -69,8 +72,10 @@ export interface AgentOptions {
   systemPrompt: string;
   /** What the current model supports on the active endpoint. */
   capabilities: Capabilities;
-  /** Asked before any tool whose risk is not "read". Resolve true to allow. */
-  confirm(call: ToolCallRequest): Promise<boolean>;
+  /** Who may run which tool without asking. */
+  permissions: Permissions;
+  /** Asked when the permission rules say "ask". */
+  confirm(call: ToolCallRequest): Promise<PermissionChoice>;
 }
 
 export interface TurnOptions {
@@ -282,28 +287,38 @@ export class Agent {
 
   /** Ask permission sequentially (prompts can't overlap), then run approved tools in parallel. */
   private async runTools(toolUses: ToolUseBlock[], turn: TurnOptions): Promise<ToolResultBlock[]> {
-    const { plugins, confirm } = this.opts;
+    const { plugins, confirm, permissions } = this.opts;
     const toolLog = createLogger("tool");
 
-    const approved: boolean[] = [];
+    const verdicts: Array<"run" | "denied by user" | "denied by rule"> = [];
     for (const use of toolUses) {
       turn.onEvent({ type: "tool_call", id: use.id, name: use.name, input: use.input });
       const risk = plugins.riskOf(use.name);
-      const allowed =
-        !turn.signal.aborted &&
-        (risk === undefined ||
-          risk === "read" ||
-          (await confirm({ name: use.name, input: use.input, risk })));
-      approved.push(allowed);
+      const { decision } = permissions.decide(use.name, risk);
+      if (turn.signal.aborted || decision === "deny") {
+        verdicts.push("denied by rule");
+      } else if (decision === "allow" || risk === undefined) {
+        verdicts.push("run");
+      } else {
+        const choice = await confirm({
+          name: use.name,
+          input: use.input,
+          risk,
+          canRemember: permissions.canRemember(risk),
+        });
+        verdicts.push(permissions.remember(use.name, choice) ? "run" : "denied by user");
+      }
     }
 
     return Promise.all(
       toolUses.map(async (use, i): Promise<ToolResultBlock> => {
         const outcome = turn.signal.aborted
           ? { content: "Interrupted by the user before this tool ran.", isError: true }
-          : approved[i]
+          : verdicts[i] === "run"
             ? await plugins.call(use.name, use.input, { signal: turn.signal, log: toolLog })
-            : { content: "The user denied this tool call.", isError: true };
+            : verdicts[i] === "denied by rule"
+              ? { content: "This tool call is blocked by a permission rule.", isError: true }
+              : { content: "The user denied this tool call.", isError: true };
         turn.onEvent({ type: "tool_result", id: use.id, name: use.name, ...outcome });
         return {
           type: "tool_result",

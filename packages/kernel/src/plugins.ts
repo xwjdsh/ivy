@@ -71,6 +71,9 @@ export class PluginHost {
       if (!NAME_RE.test(def.name) || fullName.length > 64) {
         throw new Error(`Invalid tool name "${fullName}"`);
       }
+      if (def.defaultAllow && def.risk === "dangerous") {
+        throw new Error(`Tool "${fullName}" is dangerous and can't be allowed by default`);
+      }
       this.tools.set(fullName, { fullName, pluginId: plugin.id, def });
     }
 
@@ -142,6 +145,22 @@ export class PluginHost {
 
   getTool(fullName: string): RegisteredTool | undefined {
     return this.tools.get(fullName);
+  }
+
+  /** Whether the owning plugin lets this tool run without asking (see ToolDef.defaultAllow). */
+  isDefaultAllowed(fullName: string): boolean {
+    return this.tools.get(fullName)?.def.defaultAllow === true;
+  }
+
+  /** Every tool with its declared risk, sorted (for /status). */
+  toolList(): Array<{ name: string; risk: RiskLevel; defaultAllow: boolean }> {
+    return [...this.tools.values()]
+      .sort((a, b) => a.fullName.localeCompare(b.fullName))
+      .map(({ fullName, def }) => ({
+        name: fullName,
+        risk: def.risk,
+        defaultAllow: !!def.defaultAllow,
+      }));
   }
 
   riskOf(fullName: string): RiskLevel | undefined {

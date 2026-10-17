@@ -201,14 +201,29 @@ Rules are tool-name globs (`*` matches anything). Argument patterns such as `she
 
 ```toml
 [permissions]
-allow = ["memory__*"]
-deny  = ["gmail__send"]
+allow = ["gmail__*"]        # everything from the mail plugin runs without asking...
+ask   = ["gmail__send"]     # ...except sending, which is always confirmed
+deny  = ["shell__*"]
 ```
 
-- **Precedence:** `deny` > `allow` > the risk level's default. A denied call is rejected without asking, and the model is told it was denied by a rule.
+- **`ask` carves exceptions out of a wildcard `allow`** (as in Claude Code's `allow`/`ask`/`deny`), and also forces a confirmation for a tool whose declared risk you don't trust.
+
+- **Precedence** (`permissions.ts`): `deny` > `ask` > dangerous tools always ask > allow (`allow` rules, learned "Always" rules, plugin defaults, "for this session") > the risk level's default (`read` runs, everything else asks). A denied call is rejected without asking, and the model is told it was blocked by a rule.
+- **Risk levels are declared by plugins and not verified.** A plugin could label a risky tool `read`. The gate protects against the *model* misusing tools, not against a malicious plugin (§6.3). `ask` rules let the user force a confirmation for any tool, and `/status` lists every tool with its declared risk.
 - **Sources:** rules from `config.toml` (hand-written) plus learned rules in `~/.ivy/permissions.json`, which Ivy owns. Ivy never rewrites `config.toml` as a whole; the only in-place edits are `/model` and `/effort` saving their choice (§5.2).
 - **Dialog:** *Yes* / *Yes, for this session* / *Always (saves an allow rule to permissions.json)* / *No*. `dangerous` tools never offer *Always*.
-- **Plugin defaults:** a plugin may ship default allow rules for low-impact tools (e.g. memory saves); user `deny` rules still win.
+- **Plugin defaults:** a tool may set `defaultAllow: true` (low-impact tools such as memory saves; not allowed on `dangerous` tools); user `deny` and `ask` rules still win.
+- "For this session" choices are cleared on `/new` and `/resume`.
+- **Permission modes (later):** a session-wide switch that resolves "ask" by risk level, like Claude Code's modes. This is why the four risk levels stay distinct:
+
+  | Mode | read | write | external | dangerous |
+  |---|---|---|---|---|
+  | default (today) | run | ask | ask | ask every time |
+  | read-only / plan | run | deny | deny | deny |
+  | unattended (M4 daemon jobs) | run | run | deny, ask when back | deny |
+  | auto | run | a classifier model decides | a classifier model decides | ask every time |
+
+  Unattended is needed for M4; read-only and auto when real use calls for them.
 
 ### 5.6 Plugin Host
 
@@ -325,7 +340,8 @@ A plugin is a folder with an `index.ts` that default-exports an `IvyPlugin`. The
 
 ### 6.3 Trust model
 
-- Plugins run **in-process** with full user permissions. Only install plugins you have read or written. (Process isolation is out of scope for now; MCP servers already run as separate processes.)
+- Plugins run **in-process** with full user permissions. Only install plugins you have read or written. A plugin's declared risk levels and its `setup()` are trusted as code; nothing enforces them.
+- **Isolation trigger:** before Ivy loads third-party plugins from `~/.ivy/plugins/` (M2), revisit running plugins in a separate process or sandbox, with file and network access only through kernel APIs that enforce the declared risk. MCP servers already run as separate processes (still with the user's permissions).
 - The Permission Gate still applies to every tool call, including MCP tools.
 - Tool *results* from outside sources (emails, web pages, RSS) are untrusted data. The built-in `core.md` tells the model not to follow instructions found inside them, and `external`/`dangerous` tools always require confirmation, which limits prompt-injection damage.
 
@@ -460,6 +476,7 @@ Goal: Ivy starts remembering. Built in this order; each step is shippable on its
    *Status: done.* Checked with a non-Claude model via a proxy: "what's the date next Wednesday?" → 2026-10-21, using "today is Friday 10-16" from the context; that model double-checked with `date_calc` (two parallel calls in one step). Context line: `Now: 2026-10-16 Friday 18:28 (Asia/Tokyo, UTC+09:00)` (minute precision; the M0 `now` tool was removed as redundant, since models don't know the time but the context now tells them). `date_calc` ops: `weekday`, `diff` (calendar days, DST-safe), `add` (days…years, months clamp to month end; hours/minutes), `convert` (IANA timezones). "YYYY-MM-DD" is a local date, not UTC midnight.
 3. **Permission rules:** `[permissions]` allow/deny globs, `permissions.json` learned rules, *Always* in the dialog, plugin default rules (§5.5).
    *Done when:* a tool allowed with *Always* isn't asked about after a restart, and a `deny` rule beats every allow.
+   *Status: done.* Also: `ask` rules (force a confirmation regardless of declared risk), `defaultAllow` on tools, dangerous tools offer only Yes/No with the full input shown, `/status` lists tools with risk and the rules in effect.
 4. **memory plugin** (§8.1): files, keyword search incl. CJK, tools, instructions, per-turn context, `/remember`, `/memory`.
    *Done when:* a preference or todo mentioned in one session is used, unprompted, in a later one.
 5. *(Optional)* Progress notes while the model works (`thinking.display: "updates"`), only where the provider supports it.

@@ -136,3 +136,17 @@ test("commands: listed sorted, looked up by name; bad names and duplicates rejec
     'Invalid command name "Bad"',
   );
 });
+
+test("a dangerous tool can't be allowed by default", async () => {
+  const tool = defineTool({
+    name: "run",
+    description: "",
+    input: z.object({}),
+    risk: "dangerous",
+    defaultAllow: true,
+    run: () => "",
+  });
+  await expect(host().register(plugin("shell", { tools: [tool] }))).rejects.toThrow(
+    'Tool "shell__run" is dangerous and can\'t be allowed by default',
+  );
+});

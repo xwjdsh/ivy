@@ -5,6 +5,7 @@ import { Capabilities } from "./capabilities.ts";
 import { type Config, loadConfig, type Paths, resolvePaths } from "./config.ts";
 import { buildSystemPrompt, systemPromptParts } from "./context.ts";
 import { AnthropicModelClient, isOfficialAnthropicApi, type ModelClient } from "./model.ts";
+import { type PermissionChoice, Permissions } from "./permissions.ts";
 import { PluginHost } from "./plugins.ts";
 import { pruneTraces, Tracer } from "./trace.ts";
 
@@ -14,6 +15,7 @@ export * from "./config.ts";
 export * from "./config-edit.ts";
 export { createLogger, type LogLevel, setLogLevel, setLogSink } from "./log.ts";
 export * from "./model.ts";
+export * from "./permissions.ts";
 export * from "./plugins.ts";
 export * from "./session.ts";
 export * from "./trace.ts";
@@ -22,7 +24,7 @@ export * from "./usage.ts";
 
 export interface IvyOptions {
   plugins: IvyPlugin[];
-  confirm(call: ToolCallRequest): Promise<boolean>;
+  confirm(call: ToolCallRequest): Promise<PermissionChoice>;
   paths?: Paths;
   model?: ModelClient;
   /** How the current UI shows replies (e.g. "renders Markdown"), added to the system prompt. */
@@ -38,6 +40,7 @@ export interface Ivy {
   /** The system prompt's sections with names (verbose view). */
   systemPromptParts: Array<{ name: string; text: string }>;
   capabilities: Capabilities;
+  permissions: Permissions;
   /** Tracer for a session, or undefined when tracing is off. */
   tracer(sessionId: string): Tracer | undefined;
 }
@@ -63,10 +66,17 @@ export async function createIvy(opts: IvyOptions): Promise<Ivy> {
   const lister = model.listModels?.bind(model);
   if (lister) void capabilities.refresh({ listModels: lister });
 
+  const permissions = new Permissions(
+    config.permissions,
+    join(paths.home, "permissions.json"),
+    (tool) => plugins.isDefaultAllowed(tool),
+  );
+
   const agent = new Agent({
     config,
     model,
     capabilities,
+    permissions,
     plugins,
     systemPrompt,
     confirm: opts.confirm,
@@ -82,6 +92,7 @@ export async function createIvy(opts: IvyOptions): Promise<Ivy> {
     systemPrompt,
     systemPromptParts: parts,
     capabilities,
+    permissions,
     tracer,
   };
 }

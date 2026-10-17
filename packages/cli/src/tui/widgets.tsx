@@ -1,4 +1,4 @@
-import type { ToolCallRequest } from "@ivy/kernel";
+import type { PermissionChoice, ToolCallRequest } from "@ivy/kernel";
 import { Box, Text, useAnimation, useInput } from "ink";
 import { useState } from "react";
 import { renderMarkdown } from "../markdown.ts";
@@ -48,11 +48,10 @@ export function StatusBar(props: {
   );
 }
 
-export type PermissionChoice = "once" | "session" | "deny";
-
-const CHOICES: Array<{ value: PermissionChoice; label: string; key: string }> = [
+const CHOICES: Array<{ value: PermissionChoice; label: string; key: string; remember?: true }> = [
   { value: "once", label: "Yes", key: "y" },
-  { value: "session", label: "Yes, for the rest of this session", key: "a" },
+  { value: "session", label: "Yes, for the rest of this session", key: "s", remember: true },
+  { value: "always", label: "Always (saved to permissions.json)", key: "a", remember: true },
   { value: "deny", label: "No", key: "n" },
 ];
 
@@ -63,14 +62,16 @@ export function PermissionPrompt({
   call: ToolCallRequest;
   onChoose(choice: PermissionChoice): void;
 }) {
+  // Dangerous tools: only once or no, and the full input is shown.
+  const choices = CHOICES.filter((c) => call.canRemember || !c.remember);
   const [index, setIndex] = useState(0);
   useInput((input, key) => {
-    if (key.upArrow) setIndex((i) => (i + CHOICES.length - 1) % CHOICES.length);
-    else if (key.downArrow) setIndex((i) => (i + 1) % CHOICES.length);
-    else if (key.return) onChoose(CHOICES[index]?.value ?? "deny");
+    if (key.upArrow) setIndex((i) => (i + choices.length - 1) % choices.length);
+    else if (key.downArrow) setIndex((i) => (i + 1) % choices.length);
+    else if (key.return) onChoose(choices[index]?.value ?? "deny");
     else if (key.escape) onChoose("deny");
     else {
-      const hit = CHOICES.find((c) => c.key === input.toLowerCase());
+      const hit = choices.find((c) => c.key === input.toLowerCase());
       if (hit) onChoose(hit.value);
     }
   });
@@ -80,10 +81,14 @@ export function PermissionPrompt({
       <Text>
         Allow <Text bold>{call.name}</Text> <Text color="yellow">({call.risk})</Text>?
       </Text>
-      <Text dimColor wrap="truncate-end">
-        {JSON.stringify(call.input)}
-      </Text>
-      {CHOICES.map((c, i) => (
+      {call.canRemember ? (
+        <Text dimColor wrap="truncate-end">
+          {JSON.stringify(call.input)}
+        </Text>
+      ) : (
+        <Text>{JSON.stringify(call.input, null, 2)}</Text>
+      )}
+      {choices.map((c, i) => (
         <Text key={c.value} color={i === index ? "cyan" : undefined}>
           {i === index ? "❯ " : "  "}
           {c.label} <Text dimColor>({c.key})</Text>

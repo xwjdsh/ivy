@@ -61,6 +61,13 @@ export function statusReport(
     `  model: ${model}`,
     ...ivy.capabilities.explain(model).map((l) => `    ${l}`),
     `  system prompt: ${prompt.map((part) => `${part.name} ${part.text.length}`).join(" · ")} · total ${total} chars`,
+    `  tools: ${
+      ivy.plugins
+        .toolList()
+        .map((t) => `${t.name} (${t.risk}${t.defaultAllow ? ", allowed by plugin" : ""})`)
+        .join(", ") || "none"
+    }`,
+    `  permissions: ${permissionSummary(ivy)}`,
     `  plugins: ${plugins.join(", ") || "none"}${ivy.plugins.disabled.length ? ` · disabled: ${ivy.plugins.disabled.join(", ")}` : ""}`,
     `  session: ${sessionId} · ${sessionFile}`,
     `  traces: ${ivy.config.trace.enabled ? `${ivy.paths.traces}/${sessionId}` : "off"}`,
@@ -68,4 +75,15 @@ export function statusReport(
     `  capability cache: ${ivy.paths.home}/cache/models.json`,
   ];
   return lines.join("\n");
+}
+
+function permissionSummary(ivy: Ivy): string {
+  const p = ivy.permissions.summary();
+  const parts = [
+    p.deny.length ? `deny ${p.deny.join(" ")}` : "",
+    p.ask.length ? `ask ${p.ask.join(" ")}` : "",
+    p.allow.length ? `allow ${p.allow.join(" ")}` : "",
+    p.learned.length ? `always (permissions.json) ${p.learned.join(" ")}` : "",
+  ].filter(Boolean);
+  return parts.join(" · ") || "defaults only";
 }

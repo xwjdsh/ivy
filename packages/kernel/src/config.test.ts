@@ -103,6 +103,14 @@ test("invalid values fail with a readable error", () => {
   expect(() => loadConfig(configWith(`${MINIMAL}base_url = "not a url"\n`))).toThrow("Invalid");
 });
 
+test("[permissions] rules parse; default is no rules", () => {
+  expect(loadConfig(configWith(MINIMAL)).permissions).toEqual({ allow: [], ask: [], deny: [] });
+  const config = loadConfig(
+    configWith(`${MINIMAL}[permissions]\nallow = ["memory__*"]\ndeny = ["gmail__send"]\n`),
+  );
+  expect(config.permissions).toEqual({ allow: ["memory__*"], ask: [], deny: ["gmail__send"] });
+});
+
 test("relative IVY_HOME resolves to an absolute path", () => {
   expect(resolvePaths(".ivy").home).toBe(join(process.cwd(), ".ivy"));
 });

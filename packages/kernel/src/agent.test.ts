@@ -14,6 +14,7 @@ import {
   type ModelMessage,
   type ModelRequest,
 } from "./model.ts";
+import { type PermissionChoice, Permissions } from "./permissions.ts";
 import { PluginHost } from "./plugins.ts";
 import { Session } from "./session.ts";
 
@@ -83,13 +84,14 @@ describe("Agent.runTurn", () => {
   async function makeAgent(
     model: ModelClient,
     risk: RiskLevel = "read",
-    confirm: (c: ToolCallRequest) => Promise<boolean> = async () => true,
+    confirm: (c: ToolCallRequest) => Promise<PermissionChoice> = async () => "once",
     systemPrompt = "sys",
     extraPlugins: IvyPlugin[] = [],
     providerToml = 'default_model = "claude-opus-5-5"\n',
+    extraToml = "",
   ) {
     const paths = resolvePaths(dir);
-    writeFileSync(paths.config, `[providers.anthropic]\n${providerToml}`);
+    writeFileSync(paths.config, `[providers.anthropic]\n${providerToml}${extraToml}`);
     const plugins = new PluginHost(paths.data, {});
     await plugins.register(testPlugin(risk));
     for (const p of extraPlugins) await plugins.register(p);
@@ -101,7 +103,10 @@ describe("Agent.runTurn", () => {
       isOfficialAnthropicApi(p.base_url),
       { effort: config.generation.effort, refusalFallback: p.refusal_fallback },
     );
-    return new Agent({ config, model, plugins, systemPrompt, confirm, capabilities });
+    const permissions = new Permissions(config.permissions, join(dir, "permissions.json"), (tool) =>
+      plugins.isDefaultAllowed(tool),
+    );
+    return new Agent({ config, model, plugins, systemPrompt, confirm, capabilities, permissions });
   }
 
   const run = (agent: Agent, input: string, signal = new AbortController().signal) =>
@@ -148,7 +153,7 @@ describe("Agent.runTurn", () => {
     ]);
     const agent = await makeAgent(model, "external", async (c) => {
       asked.push(c);
-      return false;
+      return "deny";
     });
     await run(agent, "go");
     expect(asked).toHaveLength(1);
@@ -156,6 +161,73 @@ describe("Agent.runTurn", () => {
       content: "The user denied this tool call.",
       isError: true,
     });
+  });
+
+  test("a deny rule blocks a call without asking", async () => {
+    let asked = 0;
+    const model = new FakeModel([
+      reply("tool_use", [toolUse("tu_1", "t__echo", { msg: "x" })]),
+      reply("end_turn", [text("ok")]),
+    ]);
+    const agent = await makeAgent(
+      model,
+      "read",
+      async () => {
+        asked++;
+        return "once";
+      },
+      "sys",
+      [],
+      undefined,
+      '[permissions]\ndeny = ["t__*"]\n',
+    );
+    await run(agent, "go");
+    expect(asked).toBe(0);
+    expect(events.find((e) => e.type === "tool_result")).toMatchObject({
+      content: "This tool call is blocked by a permission rule.",
+      isError: true,
+    });
+  });
+
+  test("an ask rule makes even a 'read' tool ask", async () => {
+    const asked: ToolCallRequest[] = [];
+    const model = new FakeModel([
+      reply("tool_use", [toolUse("tu_1", "t__echo", { msg: "x" })]),
+      reply("end_turn", [text("ok")]),
+    ]);
+    const agent = await makeAgent(
+      model,
+      "read",
+      async (c) => {
+        asked.push(c);
+        return "once";
+      },
+      "sys",
+      [],
+      undefined,
+      '[permissions]\nask = ["t__echo"]\n',
+    );
+    await run(agent, "go");
+    expect(asked).toEqual([
+      { name: "t__echo", input: { msg: "x" }, risk: "read", canRemember: true },
+    ]);
+  });
+
+  test("'always' sticks across a restart (a fresh agent doesn't ask again)", async () => {
+    let asked = 0;
+    const confirm = async () => {
+      asked++;
+      return "always" as const;
+    };
+    const script = () => [
+      reply("tool_use", [toolUse("tu_1", "t__echo", { msg: "x" })]),
+      reply("end_turn", [text("ok")]),
+    ];
+    await run(await makeAgent(new FakeModel(script()), "write", confirm), "go");
+    expect(asked).toBe(1);
+    session = Session.create(join(dir, "sessions"), "m");
+    await run(await makeAgent(new FakeModel(script()), "write", confirm), "go again");
+    expect(asked).toBe(1);
   });
 
   test("refusal is not added to history", async () => {

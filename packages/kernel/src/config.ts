@@ -50,6 +50,14 @@ const ConfigSchema = z.strictObject({
       max_steps: z.number().int().positive().default(25),
     })
     .prefault({}),
+  /** Tool-name globs; see permissions.ts for the order they are checked in. */
+  permissions: z
+    .strictObject({
+      allow: z.array(z.string().min(1)).default([]),
+      ask: z.array(z.string().min(1)).default([]),
+      deny: z.array(z.string().min(1)).default([]),
+    })
+    .prefault({}),
   trace: z
     .strictObject({
       /** Write every model request/response to traces/ (see trace.ts). */

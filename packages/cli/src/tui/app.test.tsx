@@ -58,6 +58,13 @@ const writeTool = definePlugin({
       run: () => "l1\nl2\nl3\nl4\nl5\nl6",
     }),
     defineTool({
+      name: "wipe",
+      description: "wipe",
+      input: z.object({ path: z.string() }),
+      risk: "dangerous",
+      run: () => "wiped",
+    }),
+    defineTool({
       name: "save",
       description: "save",
       input: z.object({}),
@@ -102,7 +109,7 @@ afterEach(() => cleanup?.());
 async function start(script: Step[], configToml?: string, extraPlugins: IvyPlugin[] = []) {
   if (configToml) writeFileSync(join(home, "config.toml"), configToml);
   const model = new FakeModel(script);
-  const bridge: ConfirmBridge = { confirm: async () => false };
+  const bridge: ConfirmBridge = { confirm: async () => "deny" };
   const ivy = await createIvy({
     plugins: [writeTool, ...extraPlugins],
     model,
@@ -159,7 +166,7 @@ test("risky tool asks once; 'for this session' skips later prompts", async () =>
   await type("save it");
   await type(ENTER);
   await eventually(() => expect(frame()).toContain("Allow t__save"));
-  await type("a");
+  await type("s"); // yes, for this session
   await eventually(() => expect(frame()).toContain("done one"));
   expect(frame()).toContain("✓ t__save");
 
@@ -568,4 +575,55 @@ test("/status shows provider, capabilities, prompt parts, plugins and paths", as
   expect(f).toMatch(/system prompt: core\.md \d+ · total \d+ chars/);
   expect(f).toContain("notes (context, /note)");
   expect(f).toContain("config: ");
+});
+
+test("'Always' is saved to permissions.json; a restart doesn't ask again", async () => {
+  const script = (): Step[] => [
+    { stop: "tool_use", content: [toolUse("a", "t__save")] },
+    { stop: "end_turn", content: [text("saved it")] },
+  ];
+  const first = await start(script());
+  await first.type("save it");
+  await first.type(ENTER);
+  await eventually(() => expect(first.frame()).toContain("Always (saved to permissions.json)"));
+  await first.type("a");
+  await eventually(() => expect(first.frame()).toContain("saved it"));
+  expect(JSON.parse(readFileSync(join(home, "permissions.json"), "utf8"))).toEqual({
+    allow: ["t__save"],
+  });
+  first.ui.unmount();
+
+  const second = await start(script());
+  await second.type("save again");
+  await second.type(ENTER);
+  await eventually(() => expect(second.frame()).toContain("saved it"));
+  expect(second.frame()).not.toContain("Allow t__save");
+});
+
+test("a dangerous tool offers only Yes/No and shows the full input", async () => {
+  const { type, frame } = await start([
+    { stop: "tool_use", content: [toolUse("a", "t__wipe", { path: "/tmp/x" })] },
+    { stop: "end_turn", content: [text("ok")] },
+  ]);
+  await type("wipe it");
+  await type(ENTER);
+  await eventually(() => expect(frame()).toContain("Allow t__wipe (dangerous)"));
+  expect(frame()).toContain('"path": "/tmp/x"');
+  expect(frame()).not.toContain("for the rest of this session");
+  expect(frame()).not.toContain("Always");
+  await type("n");
+  await eventually(() => expect(frame()).toContain("✗ t__wipe"));
+});
+
+test("/status lists tools with their declared risk and the rules in effect", async () => {
+  const { type, frame } = await start(
+    [],
+    '[providers.anthropic]\napi_key = "k"\ndefault_model = "claude-opus-5-5"\n[permissions]\nask = ["t__lines"]\n',
+  );
+  await type("/status");
+  await type(ENTER);
+  const f = frame().replace(/\s+/g, " ");
+  expect(f).toContain("t__lines (read)");
+  expect(f).toContain("t__wipe (dangerous)");
+  expect(f).toContain("permissions: ask t__lines");
 });

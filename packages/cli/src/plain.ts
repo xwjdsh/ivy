@@ -2,6 +2,7 @@ import { createInterface } from "node:readline/promises";
 import type {
   AgentEvent,
   Ivy,
+  PermissionChoice,
   RequestInfo,
   Session,
   ToolCallRequest,
@@ -19,14 +20,14 @@ const c = {
 };
 
 /** Asks on the terminal when there is one; without a TTY (scripts, pipes) risky tools are denied. */
-export async function confirmPlain(call: ToolCallRequest): Promise<boolean> {
-  if (!process.stdin.isTTY) return false;
+export async function confirmPlain(call: ToolCallRequest): Promise<PermissionChoice> {
+  if (!process.stdin.isTTY) return "deny";
   const rl = createInterface({ input: process.stdin, output: process.stderr });
   try {
     const answer = await rl.question(
       `${c.yellow("?")} Allow ${c.bold(call.name)} (${call.risk})? ${c.dim(JSON.stringify(call.input))} [y/N] `,
     );
-    return /^y(es)?$/i.test(answer.trim());
+    return /^y(es)?$/i.test(answer.trim()) ? "once" : "deny";
   } finally {
     rl.close();
   }
