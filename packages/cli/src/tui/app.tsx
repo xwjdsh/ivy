@@ -1,5 +1,6 @@
 import {
   type AgentEvent,
+  createLogger,
   EFFORT_LEVELS,
   type Effort,
   type Ivy,
@@ -182,7 +183,13 @@ export function App({
   } | null>(null);
 
   const [inputValue, setInputValue] = useState("");
-  const [exitArmedAt, setExitArmedAt] = useState(0);
+  // Ctrl-C on an empty prompt arms exit for a moment; the hint disappears when it lapses.
+  const [exitArmed, setExitArmed] = useState(false);
+  useEffect(() => {
+    if (!exitArmed) return;
+    const timer = setTimeout(() => setExitArmed(false), EXIT_CONFIRM_MS);
+    return () => clearTimeout(timer);
+  }, [exitArmed]);
 
   useEffect(() => {
     // Only reached when the permission rules say "ask"; remembering choices is the kernel's job.
@@ -467,7 +474,7 @@ export function App({
           .then(() =>
             command.def.run(argText, {
               sessionId: sessionRef.current.id,
-              log: { debug() {}, info() {}, warn() {}, error() {} },
+              log: createLogger(command.pluginId),
             }),
           )
           .then(
@@ -506,8 +513,8 @@ export function App({
       if (modelPickerOpen) return setModelPickerOpen(false);
       if (effortPickerOpen) return setEffortPickerOpen(false);
       if (inputValue !== "") return; // the input box clears itself
-      if (Date.now() - exitArmedAt < EXIT_CONFIRM_MS) return exit();
-      setExitArmedAt(Date.now());
+      if (exitArmed) return exit();
+      setExitArmed(true);
       return;
     }
     if (key.ctrl && input === "d" && !busy && inputValue === "") return exit();
@@ -535,7 +542,6 @@ export function App({
   let liveLines = streaming.trim() === "" ? [] : renderMarkdown(streaming, width).split("\n");
   const hiddenLines = liveLines.length > maxLiveLines ? liveLines.length - maxLiveLines + 1 : 0;
   if (hiddenLines > 0) liveLines = liveLines.slice(hiddenLines);
-  const exitArmed = Date.now() - exitArmedAt < EXIT_CONFIRM_MS;
 
   return (
     <Box flexDirection="column">

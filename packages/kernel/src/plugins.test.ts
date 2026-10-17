@@ -150,3 +150,16 @@ test("a dangerous tool can't be allowed by default", async () => {
     'Tool "shell__run" is dangerous and can\'t be allowed by default',
   );
 });
+
+test("two tools with the same name in one plugin are rejected", async () => {
+  const tool = defineTool({
+    name: "x",
+    description: "",
+    input: z.object({}),
+    risk: "read",
+    run: () => "",
+  });
+  await expect(host().register(plugin("p", { tools: [tool, tool] }))).rejects.toThrow(
+    'Duplicate tool "p__x"',
+  );
+});

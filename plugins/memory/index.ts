@@ -155,9 +155,10 @@ export function createMemoryPlugin(): IvyPlugin {
           tool((ctx) => {
             const r = move(ctx, match, to);
             const usage = r.usage ? ` ${usageText(r.usage)}` : "";
+            const full = r.usage && r.to !== "archive" ? fullness(r.to, r.usage) : "";
             return {
               files: r.files,
-              text: `Moved from ${FILE_NAMES[r.from]} to ${FILE_NAMES[r.to]}${usage}:\n${r.line}`,
+              text: `Moved from ${FILE_NAMES[r.from]} to ${FILE_NAMES[r.to]}${usage}:\n${r.line}${full}`,
             };
           }),
       }),

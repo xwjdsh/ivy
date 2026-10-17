@@ -66,7 +66,12 @@ export class Capabilities {
     private readonly settings: { effort: Effort; refusalFallback: boolean },
   ) {
     try {
-      if (existsSync(cacheFile)) this.cache = JSON.parse(readFileSync(cacheFile, "utf8"));
+      if (existsSync(cacheFile)) {
+        const data: unknown = JSON.parse(readFileSync(cacheFile, "utf8"));
+        // Anything but an object (null, an array, a number) is a broken cache: start over.
+        if (data && typeof data === "object" && !Array.isArray(data))
+          this.cache = data as typeof this.cache;
+      }
     } catch {
       this.cache = {};
     }

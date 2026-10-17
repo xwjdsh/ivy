@@ -440,7 +440,10 @@ const notes = definePlugin({
       name: "/note",
       args: "<text>",
       description: "Save a note",
-      run: (args) => `Saved: ${args}`,
+      run: (args, ctx) => {
+        ctx.log.info(`note saved: ${args}`);
+        return `Saved: ${args}`;
+      },
     },
   ],
 });
@@ -454,6 +457,15 @@ test("plugin command shows in the / list and runs; its output is shown", async (
   await type(ENTER);
   await tick(20);
   expect(frame()).toContain("Saved: buy milk");
+});
+
+test("a plugin command's log reaches the verbose view", async () => {
+  const { type, frame } = await start([], undefined, [notes]);
+  await type("/verbose");
+  await type(ENTER);
+  await type("/note tea");
+  await type(ENTER);
+  await eventually(() => expect(frame()).toContain("note saved: tea"));
 });
 
 test("plugin context reaches the model but isn't shown, live or after /resume", async () => {

@@ -155,3 +155,11 @@ test("limits are configurable within bounds", async () => {
     "/ 500 chars",
   );
 });
+
+test("moving into a nearly full hot file reminds the model", async () => {
+  await start({ memory_limit: 1000 });
+  await call("save", { file: "memory", content: "x".repeat(800) });
+  await call("move", { match: "xxxx", to: "archive" });
+  const back = text(await call("move", { match: "xxxx", to: "memory" }));
+  expect(back).toContain("% full: consolidate soon");
+});

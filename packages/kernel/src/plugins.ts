@@ -81,6 +81,7 @@ export class PluginHost {
       if (def.defaultAllow && def.risk === "dangerous") {
         throw new Error(`Tool "${fullName}" is dangerous and can't be allowed by default`);
       }
+      if (this.tools.has(fullName)) throw new Error(`Duplicate tool "${fullName}"`);
       this.tools.set(fullName, { fullName, pluginId: plugin.id, def });
     }
 

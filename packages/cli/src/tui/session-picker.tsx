@@ -6,10 +6,12 @@ import { Picker } from "./picker.tsx";
 const TIME_WIDTH = 16;
 
 /** Pad or cut to exactly `width` terminal columns (CJK-aware). */
-function fit(text: string, width: number): string {
+export function fit(text: string, width: number): string {
   let out = "";
   for (const ch of text.replace(/\s+/g, " ")) {
-    if (stringWidth(out + ch) > width - 1) return `${out}…`.padEnd(width);
+    if (stringWidth(out + ch) > width - 1) {
+      return `${out}…${" ".repeat(Math.max(0, width - 1 - stringWidth(out)))}`;
+    }
     out += ch;
   }
   return out + " ".repeat(Math.max(0, width - stringWidth(out)));

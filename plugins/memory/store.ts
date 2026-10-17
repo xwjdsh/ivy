@@ -146,10 +146,12 @@ export function update(ctx: Context, input: UpdateInput): UpdateResult {
 
   if (fields.due && old.type !== "todo") throw new MemoryError("`due` is only for todos.");
   const text = input.content === undefined ? old.text : cleanText(input.content);
+  // A changed fact is a new fact: the old one's start and end don't carry over.
+  const { since: _since, ends: _ends, ...kept } = old.fields;
   const updated = entryLine({
     ...old,
     date: ctx.today,
-    fields: { ...old.fields, ...fields },
+    fields: { ...(input.changed ? kept : old.fields), ...fields },
     text,
     tags: input.tags === undefined ? old.tags : normalizeTags(input.tags),
   });
@@ -190,6 +192,9 @@ export function move(ctx: Context, match: string, to: FileName): MoveResult {
   const found = findOne(ctx.files, match);
   if (found.file === to) throw new MemoryError(`That line is already in ${fileLabel(to)}.`);
   const old = found.line.entry as Entry;
+  if (to === "user" && old.type === "todo") {
+    throw new MemoryError("Todos belong in MEMORY.md, where their due dates are tracked.");
+  }
   // USER.md lines carry no type; lines leaving it become facts.
   const type = to === "user" ? undefined : (old.type ?? "fact");
   const moved = entryLine({ ...old, type });
@@ -330,11 +335,9 @@ function closestLine(text: string, lines: Line[]) {
     const others = termSets.filter((_, j) => j !== i);
     const s = compare(text, (line.entry as Entry).text, others);
     if (s.kind === "different") return;
-    if (
-      !best ||
-      s.overlap > best.overlap ||
-      (s.kind === "duplicate" && best.similarity !== "duplicate")
-    ) {
+    // A duplicate always wins over a merely similar line, even one with more overlap.
+    const rank = (kind: string, overlap: number) => (kind === "duplicate" ? 1 : 0) + overlap / 2;
+    if (!best || rank(s.kind, s.overlap) > rank(best.similarity, best.overlap)) {
       best = { line, similarity: s.kind, overlap: s.overlap };
     }
   });

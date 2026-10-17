@@ -47,7 +47,7 @@ const MIN_PREFIX = 3;
  * Rank items by BM25 over their text and tags (tags count double). Any matching term
  * counts, so a reworded query still finds something. A query word also matches longer
  * words it starts ("dent" → "dentist") at half weight, and a single CJK character matches
- * any text containing it. Ties keep the input order reversed: later lines are newer.
+ * any text containing it. Ties go to the entry with the later date, then the later line.
  */
 export function search<T extends Searchable>(items: T[], query: string, limit = 10): Hit<T>[] {
   const queryTerms = [...new Set(terms(query))];
@@ -75,9 +75,14 @@ export function search<T extends Searchable>(items: T[], query: string, limit = 
   return items
     .map((item, i) => ({ item, score: scores[i] ?? 0, i }))
     .filter((h) => h.score > 0)
-    .sort((a, b) => b.score - a.score || b.i - a.i)
+    .sort((a, b) => b.score - a.score || newer(a.item.entry, b.item.entry) || b.i - a.i)
     .slice(0, limit)
     .map(({ item, score }) => ({ item, score }));
+}
+
+/** Positive when b is dated later than a. */
+function newer(a: Entry, b: Entry): number {
+  return (b.date ?? "").localeCompare(a.date ?? "");
 }
 
 function docTerms(entry: Entry): { counts: Map<string, number>; length: number } {

@@ -198,3 +198,35 @@ test("find searches all files; an empty query lists the newest", () => {
 test("errors are MemoryError, so the plugin can return them to the model", () => {
   expect(() => update(ctx(), { match: "x" })).toThrow(MemoryError);
 });
+
+test("a changed fact doesn't inherit the old one's since: or ends:", () => {
+  const c = ctx(["- [fact 2026-01-05 since:2020-01-01 ends:2026-12-31] Lives in Tokyo"]);
+  const r = update(c, { match: "Tokyo", content: "Lives in Osaka", changed: true });
+  expect(r.line).toBe("- [fact 2026-10-18] Lives in Osaka");
+  const reworded = update(c, { match: "Tokyo", content: "Lives in Tokyo (Shibuya)" });
+  expect(reworded.line).toBe(
+    "- [fact 2026-10-18 since:2020-01-01 ends:2026-12-31] Lives in Tokyo (Shibuya)",
+  );
+});
+
+test("todos can't move to USER.md", () => {
+  const c = ctx(["- [todo 2026-10-01 due:2026-10-20] Renew passport"]);
+  expect(() => move(c, "Renew", "user")).toThrow("Todos belong in MEMORY.md");
+});
+
+test("a duplicate wins over a more-overlapping but vetoed similar line", () => {
+  const c = ctx([
+    "- [fact 2026-10-01] Room 101 and 102 booked for Mei",
+    "- [fact 2026-10-02] Room booked for Mei",
+  ]);
+  // Line 1 overlaps more but differs in numbers (vetoed); line 2 is the duplicate.
+  expect(save(c, { file: "memory", content: "Room booked for Mei" })).toEqual({
+    status: "duplicate",
+    line: "- [fact 2026-10-02] Room booked for Mei",
+  });
+});
+
+test("search ties go to the newer entry, across files", () => {
+  const c = ctx(["- [fact 2026-10-15] tea"], [], ["- [fact 2026-01-01] tea"]);
+  expect(find(c.files, { query: "tea" }).map((f) => f.file)).toEqual(["memory", "archive"]);
+});

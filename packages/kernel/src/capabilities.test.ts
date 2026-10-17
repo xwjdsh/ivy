@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type Anthropic from "@anthropic-ai/sdk";
 import { Capabilities, rejectedFeature } from "./capabilities.ts";
 
@@ -138,4 +138,16 @@ test("explain says why each feature is on or off", () => {
   expect(caps(PROXY).explain("vendor/x").join("\n")).toContain(
     "refusal fallback: off: compatible endpoint",
   );
+});
+
+test("a broken cache file (null, an array) is ignored, not fatal", () => {
+  for (const content of ["null", "[]", "42"]) {
+    const file = tempFile();
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, content);
+    const c = caps(OFFICIAL, file);
+    expect(c.for("claude-opus-5-5").fallbacks).toBe(true);
+    c.markUnsupported("claude-opus-5-5", "fallbacks");
+    expect(c.for("claude-opus-5-5").fallbacks).toBe(false);
+  }
 });
