@@ -116,6 +116,7 @@ Everything users care about (memory, email, calendar, coding help, news digests,
 - **Helper model for side work (planned, with the first such task):** compaction summaries, background memory review, an auto-permission classifier, session titles and digest summaries don't need the main model, and some sit in the user's path (classifying a tool call must be fast). An optional `[agent] helper_model` (a model on the active provider) runs them; unset, they use the main model at `low` effort, which per Anthropic's guidance is the first thing to measure: a strong model at low effort often matches a smaller model, and one model keeps one prompt cache. (Hermes uses an auxiliary model this way, §10.3.)
 - **Switching models:** the active provider's `models` lists what `/model` offers (a picker, or `/model <name>`); the choice is saved as the provider's `default_model` in `config.toml` (that one line is edited in place; comments and layout are kept). `/effort` works the same way for `[generation] effort` (a picker or `/effort <level>`); note that changing the top-level effort mid-session invalidates the cached messages once (Anthropic's per-message effort beta would avoid that; possible enhancement). Requests only carry params the model accepts (`Capabilities`): e.g. Haiku gets no `effort` and no refusal fallback, and an unsupported effort level is lowered to the nearest one the model has. The prompt cache is per model, so the first call after a switch misses it.
 - **Long sessions — compaction:** when the context nears the model's window (minus a reserve for the answer), Ivy summarizes older history itself with a model call, keeps the most recent part (~20k tokens) verbatim, and sends `summary + recent` from then on; the original messages stay in the session file, and later compactions update the summary. This works on every endpoint (compatibility first). Anthropic's server-side compaction (beta) is an enhancement where `Capabilities` allows it, not the baseline. Also `/compact [instructions]` to compact by hand. (Approach as in pi, §10.1.)
+  - **Memory flush first** (OpenClaw, §10.4): before compacting, one extra call on `helper_model` sees the part about to be summarized, with the memory tools and the routing rules, and saves what is worth keeping (or replies `NO_REPLY`). The writes show as tool calls. Summaries lose details; this is the natural first trigger for automatic memory capture.
   - **Cheap relief first** (DSH, §10.2): before any summary, shorten oversized old tool results to head + tail, and spill very large results to files the model can read back; no model call needed.
   - **Trigger:** `min(0.8 × window, window − max_output − reserve)`. The window comes from the Models API on the official endpoint, else a per-model setting or a conservative default.
   - Keep the first user message and the latest exchange verbatim; if the summary call fails, fall back to a deterministic summary (Hermes, §10.3); on a context-overflow error, compact once and retry.
@@ -289,6 +290,7 @@ There is no timeout that moves a call to the background: it would make the same 
 - **Task tools:** `status(id)`, `wait(id)` (wait inside the turn when the next step needs the result; the user speaking interrupts the wait), `cancel(id)`. `/tasks` lists and cancels without the model; Esc interrupts everything in the current turn; the status bar shows running tasks.
 - **Cancelling really stops:** tools honor `ToolContext.signal`; `shell` kills the whole process group.
 - **Hard timeout:** per tool, configurable. It cancels the call and returns an error; it never backgrounds. Guards against hung commands, especially in unattended jobs where nobody can speak.
+- **Messages in quick succession** are collected (about 500 ms debounce) and handled as one, so a thought typed as three lines costs one model call (OpenClaw).
 - **Permission prompt open when the user types:** counts as *No*, plus the new message.
 - **Quitting** with tasks running asks first; tasks that outlive the CLI need the daemon (M4).
 
@@ -350,6 +352,7 @@ export interface ToolDef<I = unknown> {
   risk: "read" | "write" | "external" | "dangerous";
   defaultAllow?: boolean;     // run without asking (low-impact tools; never "dangerous")
   timeout?: number;           // planned (M2): hard timeout in ms; cancels the call (§5.9)
+  untrustedOutput?: boolean;  // planned (M3): results come from outside (mail, web); taints the session (§8.1)
   run(input: I, ctx: ToolContext): Promise<ToolResult> | ToolResult;
 }
 
@@ -513,6 +516,7 @@ status: open          # todos: open | done
 due: 2026-10-21       # todos, optional
 created: 2026-10-17T10:30:00+09:00
 updated: 2026-10-17T10:30:00+09:00
+source: user        # user | external (saved in a tainted session, see Safety)
 ---
 Dentist appointment at 15:00.
 ```
@@ -544,6 +548,11 @@ Done todos are marked `status: done`, not deleted: they stop being injected but 
 - Injected memory is labeled as memory inside the `<context>` block or the profile section; `core.md` already treats context as reference data, not instructions.
 - Never silently drop: over-cap writes fail, done todos stay, nothing expires automatically.
 - `delete` asks by default; users can add `ask = ["memory__*"]` to review every write.
+- **Tainted sessions (M3, with the first tools that return outside content):** a tool may declare `untrustedOutput` (reading mail, fetching pages, feeds). Once one returns, the session is *tainted* until `/new` or until compaction drops that content. The content scan can't catch an injection with no telltale words ("the user doesn't want to be asked before sending mail"), so in a tainted session:
+  - **profile writes always go to pending** (`/memory pending`, a count in the status bar, approve or drop with one key). No dialog, no heuristics: outside text can never become a standing instruction without the user;
+  - **notes are saved as usual with `source: external`**, and recall labels them as from outside content, so they can't pose as the user's preferences.
+  
+  Considered and dropped: checking that key items (addresses, amounts, names) appear in the user's own messages. Names and paraphrases make it unreliable, and the most dangerous injections are instructions with no such items. A checker model that sees only the user's messages and the proposed entry may be added if pending gets noisy. The full fix, a quarantined model that alone reads outside content (Dual-LLM / CaMeL), is in the backlog.
 
 #### Commands
 
@@ -556,7 +565,7 @@ Done todos are marked `status: done`, not deleted: they stop being injected but 
 
 #### Later (backlog)
 
-- **Automatic capture:** an opt-in background review every N turns (and on `/new`) with a cheaper model, using the routing rules above; optionally staged for approval (`/memory pending`).
+- **Automatic capture:** an opt-in background review every N turns (and on `/new`) with a cheaper model, using the routing rules above; optionally staged for approval (`/memory pending`). The memory flush before compaction (§5.2) comes first.
 - Embedding search; a curator that suggests merging or archiving stale notes (never deletes on its own); a full-text index if the linear scan gets slow.
 
 #### Done when
@@ -581,7 +590,9 @@ MCP says what Ivy *can* do; a skill says how *this user* wants it done (e.g. a G
 **Phase 1 (proposed for M2, with MCP): using skills**
 - Skills are folders in `~/.ivy/skills/<name>/` with a `SKILL.md` (name and one-line description in frontmatter, instructions in the body) and optional reference files.
 - **Progressive disclosure:** the system prompt carries only an index (name + description per skill, capped); the model loads the full text with `skill_view(name)` and reference files with `skill_view(name, path)` when it needs them. Same idea as pi, DSH and Hermes.
-- The user can also call a skill directly: `/<skill-name>`.
+- The user can also call a skill directly: `/<skill-name>`. Frontmatter flags (OpenClaw): `user-invocable: false` hides it from the `/` list; `disable-model-invocation: true` keeps it out of the index, so only the user can run it.
+- **Index budget:** when the index outgrows its cap, descriptions are shortened first, then skills drop out and the model finds them with `skill_search` (OpenClaw).
+- **Installed skills are pinned:** Ivy records a hash of each third-party skill when it is approved; if the files change, it asks again and shows the diff.
 - A skill may declare the commands it needs; if one is missing from `PATH`, the skill is left out of the index, so the model never picks a skill that can't run (as in OpenClaw).
 - Plain prompt text plus one read tool: works on any model and endpoint (Anthropic's server-side Skills are not required).
 
@@ -685,6 +696,22 @@ Borrowed: cheap compaction first, unknown-outcome crash handling, system prompt 
 
 Borrowed: the capped, frozen profile; over-cap errors that force consolidation; patch instead of whole-entry replace; memory safety scan; session search; job design; (backlog) background memory review, skills, chat gateway. Different: Ivy keeps unbounded searchable notes and todos alongside the capped profile; like Hermes, `USER.md` is agent-maintained, and the user's untouchable rules live in `SOUL.md`.
 
+#### 10.4 Related work: OpenClaw
+
+[OpenClaw](https://github.com/openclaw/openclaw) (formerly Clawdbot/Moltbot; TypeScript, Node) is a personal assistant built around a long-running gateway that owns 20+ chat-app connections, with device nodes, multi-agent routing, a plugin and skill registry (ClawHub) and Docker sandboxing. Compared on 2026-10-17 from its docs:
+
+| | OpenClaw | Ivy |
+|---|---|---|
+| Shape | Gateway daemon (WebSocket protocol) for chat apps, apps and devices | Terminal first; daemon in M4 |
+| Memory | `MEMORY.md` + `USER.md` + daily notes; hybrid vector/keyword search (embeddings default to OpenAI); memory flush before compaction; nightly "dreaming" promotion with a review file | Capped profile + searchable notes, keyword + CJK bigrams; flush before compaction (adopted) |
+| Skills | `SKILL.md` with gating on bins/env/OS, invocation flags, index budget; ClawHub registry hit by hundreds of malicious skills (2026-02), now hash + VirusTotal scanning | Same format; gating, flags, budget and hash pinning adopted |
+| Plugins | npm/ClawHub modules, in-process | Own plugins; third-party plugins wait for isolation (§6.3) |
+| Messages mid-run | Queue modes: steer, follow-up, collect (debounced), interrupt | Speaking backgrounds tools (§5.9); collect adopted |
+| Models | Auth-profile rotation, then a fallback list, for one turn; explicit `/model` never falls back | Refusal fallback only; cross-provider fallbacks in backlog |
+| Scheduling | Cron, heartbeat turn in the main session, condition scripts, active hours, `NO_REPLY` | Fresh agent per job (Hermes); `NO_REPLY` and pre-check scripts adopted |
+
+Borrowed: memory flush before compaction; taint-style handling of outside content (Ivy's own design, prompted by its taint gating); collecting quick messages; skill flags, index budget and pinning; `NO_REPLY` and pre-check scripts for jobs; (backlog) cross-provider fallbacks. Not borrowed: the gateway protocol and device nodes (too much for one user in a terminal; a reference for the M4 daemon), default embeddings from an outside service, three memory files, heartbeat turns inside the main session (mixes job output into the user's context), in-process third-party plugins from a registry, active hours, a `doctor` audit command (one user who writes the config; changed skills are caught by pinning).
+
 **Alternative considered:** building on the Claude Agent SDK (Claude Code as a library). It gives file/shell tools and a loop for free, but it is coding-centric and makes the plugin model, context layering and permission UX harder to own. We build our own small kernel and may borrow ideas from it. Claude Code can still be a *delegate*: the `claude-code` plugin (§8) hands it coding tasks as a subagent.
 
 ## 11. Roadmap
@@ -739,7 +766,7 @@ Goal: Ivy starts remembering. Built in this order; each step is shippable on its
 - **Done when:** I use Ivy for at least one real work task per day.
 
 ### M3 — Email & Calendar
-- Prerequisite: "unknown outcome" for interrupted side-effecting tools (§5.4).
+- Prerequisites: "unknown outcome" for interrupted side-effecting tools (§5.4); tainted sessions and memory pending (§8.1).
 - Gmail + Calendar (MCP first; native plugin only if MCP is not good enough).
 - `/inbox` triage summary, draft replies (never auto-send), `/today` agenda.
 - `web` plugin.
@@ -748,6 +775,7 @@ Goal: Ivy starts remembering. Built in this order; each step is shippable on its
 ### M4 — Daemon & Digest
 - `ivy daemon` (launchd service), scheduler, macOS notifications.
 - Jobs (as in Hermes): each run is a fresh agent with no chat history; schedules like `every 1d at 08:30` or cron syntax; results delivered to a notification, a file, or (later) a chat; a job can't create jobs; the unattended permission mode applies (writes allowed, external actions deferred to the user, dangerous denied).
+- From OpenClaw: a job with nothing worth reporting replies `NO_REPLY` and sends no notification; a job may have a cheap pre-check script ("any new mail?") and the model runs only when it says so.
 - `digest` plugin: morning brief combining calendar, inbox, todos, feeds.
 - **Done when:** a useful brief is waiting every weekday morning.
 
@@ -758,6 +786,8 @@ Goal: Ivy starts remembering. Built in this order; each step is shippable on its
 - Memory search on SQLite FTS or embeddings if the keyword scan gets slow or misses too much.
 - Endpoint capabilities are detected from `base_url` (`api.anthropic.com` = official). Add a per-provider override (e.g. `api = "auto" | "official" | "compatible"`) once a gateway or cloud platform that proxies the official API gets misdetected.
 - Usage dashboard; per-plugin effort/model tuning.
+- **Model fallbacks across providers** (OpenClaw): on errors, rate limits or outages, try the next entry of a `fallbacks` list, for that turn only; a model picked with `/model` never falls back silently. Generalizes the Anthropic-only refusal fallback (G7).
+- **Quarantined reading of outside content** (Dual-LLM / CaMeL): only a tool-less model reads mail and web pages and hands back structured results; would replace taint tracking (§8.1).
 - Skills phase 2 (§8.2): Ivy writes and improves its own skills (asked every time, kept apart from the user's), plus a curator that archives stale ones.
 - Chat-app gateway: one chat = one continuous session until `/new`; pairing codes for access (Hermes).
 - TUI: synchronized output (`CSI ?2026h/l`) around redraws, so no frame is ever half-drawn.
@@ -816,3 +846,5 @@ Goal: Ivy starts remembering. Built in this order; each step is shippable on its
 | 2026-10-17 | Tool calls never block the conversation: background only when the model asks or the user speaks; no auto-background timeout; hard timeouts cancel | Explicit intent only; predictable results; "cancel it" always works |
 | 2026-10-17 | Subagents are tools with resumable child sessions; backgrounding is a separate, kernel-wide layer | Two orthogonal concerns, each simple; follow-ups don't lose the child's context |
 | 2026-10-17 | Optional `claude-code` plugin as a coding delegate (M2); Ivy's own `fs`/`shell` remain the baseline for any model | Capabilities must not depend on one model or product (principle 7, G7); the delegate is an enhancement where Claude is available |
+| 2026-10-17 | Tainted sessions: after outside content, profile writes go to pending, notes get `source: external`; no key-item heuristic | Outside text must never become a standing instruction on its own; heuristics miss instruction-only injections; no dialogs keeps it light |
+| 2026-10-17 | Adopt from OpenClaw: memory flush before compaction, collecting quick messages, skill flags/budget/pinning, `NO_REPLY` and pre-check scripts for jobs; backlog: cross-provider fallbacks; no active hours or `doctor` | §10.4 |
