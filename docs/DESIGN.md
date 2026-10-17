@@ -1,6 +1,6 @@
 # Ivy — Design Document
 
-> Status: **Draft v0.1** (M0 done; M1 steps 1–3 done, next: step 4, memory) · Last updated: 2026-10-17
+> Status: **Draft v0.1** (M0 done; M1 steps 1–3 and 4a done, next: 4b, memory store and search) · Last updated: 2026-10-18
 > This is a living document. Every milestone starts by updating it and ends by recording what changed in the [Decision Log](#13-decision-log).
 
 ---
@@ -43,7 +43,7 @@ Everything users care about (memory, email, calendar, coding help, news digests,
 1. **Kernel stays boring.** If a feature can be a plugin, it is a plugin.
 2. **Files over databases.** Markdown/JSON/JSONL first; SQLite only where indexing or querying really needs it.
 3. **Append-only history.** Conversation transcripts are never rewritten. (This also keeps prompt caching and preserved thinking working correctly.)
-4. **Explicit over magic.** Ivy should be able to tell the user which plugin, tool and memory produced an answer.
+4. **Explicit over magic.** Ivy should be able to tell the user which plugin and tool produced an answer and what it remembered at the time (`/memory`, the session prompt in `/status`; which entry an answer used would need citations, §8.1 backlog).
 5. **Confirm before effects.** Any outward-facing or hard-to-reverse action is shown to the user before it runs, unless a permission rule says otherwise.
 6. **Dogfood every milestone.** A milestone is only done once it has been used in real life for a few days.
 7. **Compatibility first, enhance progressively.** Core features rely only on what every Anthropic-compatible endpoint offers: messages, tool calls, streaming, a system prompt. Anthropic-only features (prompt caching, effort, refusal fallback, `clear_at` system messages, compaction, server tools, ...) are enhancements: switched on per request where the provider and model support them, with a fallback everywhere else. No Ivy feature may *require* one. Capability decisions live in one place, `Capabilities` (`capabilities.ts`, §5.2).
@@ -82,7 +82,7 @@ Everything users care about (memory, email, calendar, coding help, news digests,
 ### Request flow (one user turn)
 
 1. The interface sends the user's message to the **Agent Loop** with a session id.
-2. The **Context Builder** assembles the request: the frozen system prompt, the tool list from all enabled plugins, the session history, and the new user message with the turn's context built from plugins' per-turn context (e.g. the current time, relevant memories); see §5.3.
+2. The **Context Builder** assembles the request: the frozen system prompt, the tool list from all enabled plugins, the session history, and the new user message with the turn's context built from plugins' per-turn context (e.g. the current time, todos due today); see §5.3.
 3. The **Model Client** streams the request to the model.
 4. If the model calls tools, the loop sends each call through the **Permission Gate**, then to the owning plugin, and appends all results in a single message.
 5. Steps 3–4 repeat until the model ends the turn (or a step/budget limit is hit).
@@ -112,7 +112,7 @@ Everything users care about (memory, email, calendar, coding help, news digests,
   2. **Learned:** when the endpoint answers a request with a 400 naming an optional feature it used (system messages, fallbacks, effort), the agent turns that feature off for that model, tells the user with a notice, and resends the step. Remembered in the same cache, per endpoint and model.
   3. **Defaults:** on the official API, Claude models get the optional features, except a fixed pattern of *older* models known to lack them (this list only covers the past, so it never grows). Compatible endpoints get only the basics plus `effort` (dropped on a 400). `refusal_fallback = false` in a provider turns fallbacks off.
 - The official endpoint is recognised by `base_url` (`api.anthropic.com`).
-- **Prompt caching:** tools and system prompt are kept byte-stable (plugins sorted by id, no timestamps), with a cache breakpoint after them. Volatile context (date/time, retrieved memories) goes into the new user message as a `<context>` block (§5.3), never into the system prompt, so the cached prefix stays intact.
+- **Prompt caching:** tools and system prompt are kept byte-stable (plugins sorted by id, no timestamps), with a cache breakpoint after them. Volatile context (the time, todos due today) goes with the new user message, as a `clear_at` system message or a `<context>` block (§5.3), never into the system prompt, so the cached prefix stays intact.
 - **Helper model for side work (planned, with the first such task):** compaction summaries, background memory review, an auto-permission classifier, session titles and digest summaries don't need the main model, and some sit in the user's path (classifying a tool call must be fast). An optional `[agent] helper_model` (a model on the active provider) runs them; unset, they use the main model at `low` effort, which per Anthropic's guidance is the first thing to measure: a strong model at low effort often matches a smaller model, and one model keeps one prompt cache. (Hermes uses an auxiliary model this way, §10.3.)
 - **Switching models:** the active provider's `models` lists what `/model` offers (a picker, or `/model <name>`); the choice is saved as the provider's `default_model` in `config.toml` (that one line is edited in place; comments and layout are kept). `/effort` works the same way for `[generation] effort` (a picker or `/effort <level>`); note that changing the top-level effort mid-session invalidates the cached messages once (Anthropic's per-message effort beta would avoid that; possible enhancement). Requests only carry params the model accepts (`Capabilities`): e.g. Haiku gets no `effort` and no refusal fallback, and an unsupported effort level is lowered to the nearest one the model has. The prompt cache is per model, so the first call after a switch misses it.
 - **Long sessions — compaction:** when the context nears the model's window (minus a reserve for the answer), Ivy summarizes older history itself with a model call, keeps the most recent part (~20k tokens) verbatim, and sends `summary + recent` from then on; the original messages stay in the session file, and later compactions update the summary. This works on every endpoint (compatibility first). Anthropic's server-side compaction (beta) is an enhancement where `Capabilities` allows it, not the baseline. Also `/compact [instructions]` to compact by hand. (Approach as in pi, §10.1.)
@@ -152,7 +152,7 @@ Builds each request from layers, ordered from most stable to least stable (for c
 | Tools | All enabled plugins, sorted | When plugins change |
 | System prompt | built-in `core.md` (operating & safety rules) + `~/.ivy/SOUL.md` (who Ivy is, and the user's hard rules) + interface instructions (how replies are shown) + each plugin's static `instructions` + plugins' `sessionPrompt` sections (e.g. the memory hot files) | Per session at most |
 | History | Session transcript | Append-only |
-| Turn context | Plugins' `contextFor(turn)` (e.g. current time, relevant memories), stored with the user message and sent as a system message or a `<context>` block (below) | Every turn |
+| Turn context | Plugins' `contextFor(turn)` (e.g. the current time, todos due today), stored with the user message and sent as a system message or a `<context>` block (below) | Every turn |
 
 Naming follows the common `SOUL.md` / `USER.md` convention of personal agents:
 
@@ -193,7 +193,7 @@ Due: Dentist appointment at 15:00 (today)
 - One JSONL file per session in `~/.ivy/sessions/YYYY-MM-DD-<id>.jsonl`. Each line is a full API message plus metadata (timestamp, plugin, token usage).
 - Crash-tolerant: unparseable lines (a write cut off mid-line) are skipped, the next write starts on a fresh line, and an assistant tool call whose results were never written is dropped on load so the history stays a valid request. A tool call and its results are written in a single append.
 - **Side effects survive crashes honestly** (DSH, §10.2; needed before M3): before running an `external` or `dangerous` tool, record that it started; if the session reloads without its result, the model is told the outcome is *unknown* (it may already have happened) instead of the call being dropped and possibly repeated, e.g. an email sent twice.
-- **System prompt snapshot:** record the system prompt in the session whenever it changes (start, `/new`, `/resume`, profile change between sessions), so every request can be rebuilt from the session file alone ("model-visible ⟺ logged", DSH).
+- **System prompt snapshot:** record the system prompt in the session whenever it changes (start, `/new`, `/resume`), so every request can be rebuilt from the session file alone ("model-visible ⟺ logged", DSH).
 - Commands: `ivy -c` continues the most recently active session; `/resume` (or `ivy -r`) opens a picker of recent sessions (last active, first prompt, turn count); `/resume <id>` / `ivy -r <id>` jump directly; `/new` starts a new one. No separate list command.
 - **Background results and child sessions (M2, §5.9):** a backgrounded call's placeholder result is written at once and its real result appended later as a new message; a subagent's child session is its own file, linked to the parent by id.
 - Usage (tokens, cache hits, and a cost estimate that is recorded but not shown) is written per model call; `/usage` reports tokens.
@@ -205,7 +205,7 @@ Every tool declares a **risk level**:
 | Risk | Examples | Default |
 |---|---|---|
 | `read` | search memory, read a file, list emails | allow |
-| `write` | save a note, edit a local file, create a draft | ask (allowable by rule) |
+| `write` | save a note, edit a local file, create a draft | ask (allowable by rule or *Always*) |
 | `external` | send an email, post a message, accept an invite | ask (allowable by rule or *Always*) |
 | `dangerous` | shell commands, deleting data | always ask (Yes/No only, no rule allows it), show full input |
 
@@ -254,7 +254,7 @@ Loads, configures and runs plugins; see §6 for the plugin contract. Responsibil
 
 An interface turns user I/O into kernel calls. All interfaces share the same kernel API, so adding one does not touch plugins.
 
-- **M0 — TUI** (`ivy`, built with Ink): streamed answers rendered as Markdown, spinner with phase and elapsed time, one-line tool calls with folded results, multi-line input (Shift/Option+Enter or trailing `\`) with persistent history and `/` command completion, permission dialog (once / for this session / always / deny; Yes/No only for dangerous tools), status bar (provider, model, effort, session, session token totals, `verbose` when on); each turn ends with steps, time and tokens. No money anywhere in the UI (verbose included): `/usage` shows token usage for this session, today, the last 7 days and all time (an estimated cost is still recorded in session files, but not shown). Esc or Ctrl-C interrupts; Ctrl-C twice or Ctrl-D quits. The real terminal cursor follows the input caret so IME composition (e.g. Chinese) appears in place.
+- **M0 — TUI** (`ivy`, built with Ink): streamed answers rendered as Markdown, spinner with phase and elapsed time, one-line tool calls with folded results, multi-line input (Shift/Option+Enter or trailing `\`) with persistent history and `/` command completion, permission dialog (once / for this session / always / deny; Yes/No only for dangerous tools and `ask` rules), status bar (provider, model, effort, session, session token totals, `verbose` when on); each turn ends with steps, time and tokens. No money anywhere in the UI (verbose included): `/usage` shows token usage for this session, today, the last 7 days and all time (an estimated cost is still recorded in session files, but not shown). Esc or Ctrl-C interrupts; Ctrl-C twice or Ctrl-D quits. The real terminal cursor follows the input caret so IME composition (e.g. Chinese) appears in place.
   - Finished paragraphs move into Ink's `<Static>` (printed once, kept in scrollback); only the growing tail re-renders. The live area is capped below the terminal height (older lines shown as "… N more lines above"), because once Ink's dynamic output is taller than the screen it redraws everything on each update and flickers.
   - Redraw (`refresh`): clear Ink's frame and the terminal, then remount `<Static>` with a new key so history reprints. Used by `/new`, `/clear`, `/resume`, Ctrl+L, Ctrl+O and (debounced 100 ms) terminal width changes. Approach borrowed from Gemini CLI.
   - Tool calls are one line each: ✓/✗, name and input, plus the first line of an error. Results are hidden (the answer uses them); Ctrl+O shows the latest turn's tool output (capped at 500 lines) and hides it again; the verbose view shows full input and a short result preview.
@@ -371,7 +371,7 @@ export interface PluginContext {
 
 export interface TurnInfo {
   sessionId: string;
-  userText: string;           // the new user message (for relevance)
+  userText: string;           // the new user message
   now: Date;
 }
 
@@ -529,7 +529,7 @@ There is no `/remember` command: the user just says it, and the model routes it 
 
 | Tool | Risk | Default | Does |
 |---|---|---|---|
-| `save(file, content, type?, since?, due?, tags?, distinct?)` | write | allowed (`defaultAllow`) | Appends a line to `user` or `memory` (cap checked). If a line in that file is nearly the same (bigram overlap ≥ 0.9), nothing is added or changed and that line is returned ("already saved"); to save something different after all, `distinct: true`. Re-saving is not confirmation: the model sees the hot files, so a repeat is usually an echo of memory, not news. A partial match (0.5–0.9) is saved, and the closest line is returned so the model can merge them (agentmemory, which instead replaces such entries silently) |
+| `save(file, content, type?, since?, ends?, due?, tags?, distinct?)` | write | allowed (`defaultAllow`) | Appends a line to `user` or `memory` (cap checked). If a line in that file is nearly the same (bigram overlap ≥ 0.9), nothing is added or changed and that line is returned ("already saved"); to save something different after all, `distinct: true`. Re-saving is not confirmation: the model sees the hot files, so a repeat is usually an echo of memory, not news. A partial match (0.5–0.9) is saved, and the closest line is returned so the model can merge them (agentmemory, which instead replaces such entries silently) |
 | `update(match, content?, changed?, since?, ends?, due?, done?, tags?)` | write | allowed (`defaultAllow`) | Changes the one line containing `match` (a unique substring, in any file); patch only, no whole-file replace (Hermes removed its replace action because models wiped unrelated entries with it). Changing the text archives the old version (below): with `changed: true` (the fact itself changed: both can't be true, or it explicitly ended or was replaced) it is marked `until:`, otherwise (more detail, rewording, a correction) `replaced:`. `done: true` moves a todo to the archive. With no changes at all, it confirms the entry: its date becomes today |
 | `move(match, to)` | write | allowed (`defaultAllow`) | Moves a line between files: archiving, or bringing an archived entry back (cap checked) |
 | `delete(match)` | write | asks | Removes a line for good (e.g. for privacy); nothing goes to the archive |
@@ -588,7 +588,7 @@ Used by `memory__search`, `/memory <query>` and `session_search` (4e). Pure func
 - **Automatic capture:** an opt-in background review every N turns (and on `/new`) with `helper_model`, using the routing rules above; optionally staged for approval (`/memory pending`). The memory flush before compaction (§5.2) comes first.
 - Background tidying (above); a full-text index if the linear scan gets slow.
 - **Usage by citation** (Codex): the model names the entries an answer used, and the counts drive archiving. The only way to know what is used under whole injection, but it costs output tokens every turn; considered with background tidying.
-- **Promotion gates for automatic capture** (OpenClaw): a candidate enters a hot file only after being recalled several times in different contexts.
+- **Promotion gates for automatic capture** (OpenClaw): a candidate enters a hot file only after coming up several times in different conversations.
 
 #### Done when
 
@@ -669,7 +669,9 @@ ivy/
 | Tests | `bun test` | Built in |
 | Lint/format | Biome | One fast tool |
 
-#### 10.1 Related work: pi
+**Alternative considered:** building on the Claude Agent SDK (Claude Code as a library). It gives file/shell tools and a loop for free, but it is coding-centric and makes the plugin model, context layering and permission UX harder to own. We build our own small kernel and may borrow ideas from it. Claude Code can still be a *delegate*: the `claude-code` plugin (§8) hands it coding tasks as a subagent.
+
+### 10.1 Related work: pi
 
 [pi](https://github.com/earendil-works/pi) (Mario Zechner; now Earendil) is an open-source, deliberately minimal terminal **coding** agent. Compared on 2026-10-17 (v1.3):
 
@@ -687,7 +689,7 @@ ivy/
 
 Borrowed: client-side compaction, steering/follow-up messages, deferred MCP tools, and (backlog) synchronized output and session branching. Not borrowed: no permissions, project-level context files, a multi-API layer for now.
 
-#### 10.2 Related work: DeepSeek Harness
+### 10.2 Related work: DeepSeek Harness
 
 [deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) (`dsh`, DeepSeek; 0.2 alpha, MIT, TypeScript) is a large general-purpose harness where *everything* is a plugin, including the agent loop; web UI and desktop app, no TUI. It also speaks the Anthropic Messages protocol by default. Compared on 2026-10-17:
 
@@ -703,7 +705,7 @@ Borrowed: client-side compaction, steering/follow-up messages, deferred MCP tool
 
 Borrowed: cheap compaction first, unknown-outcome crash handling, system prompt snapshots, loop guard, per-call concurrency, sandboxed shell with justified escalation, recorded-session eval replays. Not borrowed: a kernel-less design, approvals without rules, MCP instead of own memory.
 
-#### 10.3 Related work: Hermes Agent
+### 10.3 Related work: Hermes Agent
 
 [hermes-agent](https://github.com/nousresearch/hermes-agent) (Nous Research, MIT, Python with an Ink TUI) is the closest to Ivy: a *personal*, "self-improving" agent with SOUL.md/USER.md, memory, skills, cron jobs (including a daily-briefing guide) and a gateway to 25+ chat apps. Compared on 2026-10-17:
 
@@ -712,14 +714,14 @@ Borrowed: cheap compaction first, unknown-outcome crash handling, system prompt 
 | Memory | Two capped files (agent notes 2,200 chars, user profile 1,375), injected whole, frozen per session; model consolidates when full; background review every 10 turns | Same core: capped `USER.md` + `MEMORY.md` injected whole, frozen per session; plus an unbounded, searchable `ARCHIVE.md` (§8.1) |
 | Recall of past chats | `session_search` (SQLite FTS5, CJK bigrams), raw message windows | `session_search` (step 4e), same bigram idea |
 | Memory safety | Injection/invisible-Unicode scan on write and load | Adopted |
-| Skills | SKILL.md, progressive disclosure, agent writes its own, curator archives stale ones | Backlog |
+| Skills | SKILL.md, progressive disclosure, agent writes its own, curator archives stale ones | Using skills in M2; Ivy-written skills and a curator later (§8.2) |
 | Approvals | Pattern-matched dangerous commands; smart (LLM) / manual / off; once/session/always; hard floor; unattended runs deny dangerous | Rule-based gate; modes and hard floor later |
 | Interfaces | CLI/TUI, desktop, gateway to many chat apps | TUI now; chat app later |
 | Scheduling | Cron jobs as fresh agents, delivered to the origin chat or a file | Adopted for M4 |
 
-Borrowed: the capped, frozen profile; over-cap errors that force consolidation; patch instead of whole-entry replace; memory safety scan; session search; job design; (backlog) background memory review, skills, chat gateway. Different: Ivy adds an archive that holds what no longer fits, todos with due dates, and automatic tidying between hot and cold; like Hermes, `USER.md` is agent-maintained, and the user's untouchable rules live in `SOUL.md`.
+Borrowed: the capped, frozen profile; over-cap errors that force consolidation; patch instead of whole-entry replace; memory safety scan; session search; job design; skills (M2; Ivy-written ones later); (backlog) background memory review, chat gateway. Different: Ivy adds an archive that holds what no longer fits, todos with due dates, and automatic tidying between hot and cold; like Hermes, `USER.md` is agent-maintained, and the user's untouchable rules live in `SOUL.md`.
 
-#### 10.4 Related work: OpenClaw
+### 10.4 Related work: OpenClaw
 
 [OpenClaw](https://github.com/openclaw/openclaw) (formerly Clawdbot/Moltbot; TypeScript, Node) is a personal assistant built around a long-running gateway that owns 20+ chat-app connections, with device nodes, multi-agent routing, a plugin and skill registry (ClawHub) and Docker sandboxing. Compared on 2026-10-17 from its docs:
 
@@ -733,13 +735,13 @@ Borrowed: the capped, frozen profile; over-cap errors that force consolidation; 
 | Models | Auth-profile rotation, then a fallback list, for one turn; explicit `/model` never falls back | Refusal fallback only; cross-provider fallbacks in backlog |
 | Scheduling | Cron, heartbeat turn in the main session, condition scripts, active hours, `NO_REPLY` | Fresh agent per job (Hermes); `NO_REPLY` and pre-check scripts adopted |
 
-Borrowed: memory flush before compaction; taint-style handling of outside content (Ivy's own design, prompted by its taint gating); collecting quick messages; skill flags, index budget and pinning; `NO_REPLY` and pre-check scripts for jobs; (backlog) cross-provider fallbacks. Not borrowed: the gateway protocol and device nodes (too much for one user in a terminal; a reference for the M4 daemon), embeddings for memory search, three memory files, heartbeat turns inside the main session (mixes job output into the user's context), in-process third-party plugins from a registry, active hours, a `doctor` audit command (one user who writes the config; changed skills are caught by pinning).
+Borrowed: memory flush before compaction; taint-style handling of outside content (Ivy's own design, prompted by its taint gating); collecting quick messages; skill flags, index budget and pinning; `NO_REPLY` and pre-check scripts for jobs; (backlog) cross-provider fallbacks. Not borrowed: the gateway protocol and device nodes (too much for one user in a terminal; a reference for the M4 daemon), embeddings for memory search, daily note files beside `MEMORY.md`, heartbeat turns inside the main session (mixes job output into the user's context), in-process third-party plugins from a registry, active hours, a `doctor` audit command (one user who writes the config; changed skills are caught by pinning).
 
-#### 10.5 Related work: agent memory projects
+### 10.5 Related work: agent memory projects
 
 Compared on 2026-10-17 with the memory designs of Mem0, Letta (MemGPT), Zep/Graphiti, LangMem, Memobase, MemoryOS, A-MEM, Cognee, supermemory, Basic Memory, Anthropic's memory tool, Claude Code and Codex CLI.
 
-- **Same core as Ivy v3:** capped memory injected whole with fail-and-consolidate (Hermes, Letta core blocks, Claude Code's index), patch by unique substring (Hermes, Letta, Anthropic's memory tool), plain markdown as the source of truth (Basic Memory, Claude Code, OpenClaw), no memory writes from sessions that read outside content (Codex, OpenClaw).
+- **Same core as Ivy v3:** capped memory injected whole with fail-and-consolidate (Hermes, Letta core blocks, Claude Code's index), patch by unique substring (Hermes, Letta, Anthropic's memory tool), plain markdown as the source of truth (Basic Memory, Claude Code, OpenClaw), nothing from sessions that read outside content goes into always-injected memory (Codex, OpenClaw).
 - **Evidence for simple:** on LoCoMo, full context scored 72.9 against Mem0's 66.9 (Mem0's own paper), and Letta reached 74.0 with plain files and grep; the benchmark is criticized for barely testing updates and contradictions.
 - **Not adopted:** vector stores, knowledge graphs and per-turn LLM extraction pipelines (several model calls per turn, e.g. about 5 for MemoryOS and 13 for A-MEM; Graphiti warns that small models and endpoints without structured output make ingestion fail), decay and heat formulas with hand-set thresholds, rewriting neighboring memories on insert (A-MEM; provenance drifts).
 - **Graphiti, looked at in depth:** a temporal knowledge graph built by 5–15 model calls per message (about 12 s), needing structured output; small models fail at it, and searching contradiction candidates across the whole graph wrongly retired many true facts. Its prompt rules are the useful part.
@@ -748,7 +750,6 @@ Compared on 2026-10-17 with the memory designs of Mem0, Letta (MemGPT), Zep/Grap
 - **claude-mem**, looked at in depth: a Claude Code plugin that sends every tool call to a second model (Haiku by default) to write observations, stores them in SQLite plus a vector store, and injects an index of recent ones at session start. Again automatic capture at scale, with the same results: users report memory adding 64% to their model spend, 63% of observer calls returning nothing, about 20% near-duplicates in one store, minute timestamps in injected text breaking the prompt cache, and CJK search falling back to substring matching. It now defaults to a paid hosted service.
 - **Adopted:** the rare-word veto in duplicate checks (claude-mem); confirmation only by an explicit `update` (a re-save is an echo, after Mem0's loop), `ends:` for temporary states, no hot-file writes from scheduled jobs, keep the richer line when merging, an explicit language rule (Mem0); partial matches returned as hints (agentmemory); prefix matching for Latin words; Graphiti's save rules (don't save vague things, keep specifics, qualify relations, preferences need grounds), `since:` vs. recorded date, deadlines are not end dates, a strict bar for "changed" with rewordings archived as `replaced:`, validity shown in search results, cheap near-duplicate checks; usage shown to the model and consolidation from 80% (Letta, Hermes); absolute dates and a date per line (Memobase, Claude Code); superseded versions kept in the archive (Graphiti, Mem0); a reminder that memory can be out of date (Codex). Backlog: usage by citation (Codex), promotion gates for automatic capture (OpenClaw).
 
-**Alternative considered:** building on the Claude Agent SDK (Claude Code as a library). It gives file/shell tools and a loop for free, but it is coding-centric and makes the plugin model, context layering and permission UX harder to own. We build our own small kernel and may borrow ideas from it. Claude Code can still be a *delegate*: the `claude-code` plugin (§8) hands it coding tasks as a subagent.
 
 ## 11. Roadmap
 
@@ -783,7 +784,7 @@ Goal: Ivy starts remembering. Built in this order; each step is shippable on its
    - 4c. Plugin: tools, routing instructions, both hot files in the session prompt (raise the kernel's 24,000-character session section cap to fit both limits), due-todo line, tidying rules, `/memory`.
    - 4d. Safety scan on write and load.
    - 4e. `session_search` over past sessions.
-   *Done when:* the four checks at the end of §8.1 pass with a real model.
+   *Done when:* the five checks at the end of §8.1 pass with a real model.
 5. *(Optional)* Progress notes while the model works (`thinking.display: "updates"`), only where the provider supports it.
 
 `USER.md` was a user-written file loaded by the kernel in M0. In 4a the kernel loader and `examples/USER.md` were removed; from 4c the file is the memory plugin's profile (`data/memory/USER.md`).
@@ -861,13 +862,17 @@ Goal: Ivy starts remembering. Built in this order; each step is shippable on its
 | 2026-10-16 | ~~Per-turn context as a `<context>` block in the user message~~ (superseded below) | Works on every Anthropic-compatible endpoint and model |
 | 2026-10-16 | Per-turn context stored apart from the prompt; rendered as `clear_at` system messages on Anthropic's API with supported models, `<context>` blocks elsewhere | Use the official API's newer features without breaking compatible endpoints |
 | 2026-10-16 | Memory: ~~markdown file per memory~~ (one line per entry since v3), in-memory keyword scoring with CJK bigrams, no SQLite in v1 | Human-editable source of truth; Chinese works without a segmenter; small data |
-| 2026-10-16 | ~~Memories written by the model via tools (+ `/remember`)~~ (superseded by memory v2); auto-extraction later, opt-in | Fewer junk memories; no extra model call per turn |
+| 2026-10-16 | ~~Memories written by the model via tools (+ `/remember`)~~ (superseded by memory v2, then v3: tools, no `/remember`); auto-extraction later, opt-in | Fewer junk memories; no extra model call per turn |
 | 2026-10-16 | Learned permission rules go to `permissions.json`, not `config.toml` | Never rewrite the user's hand-edited config |
 | 2026-10-16 | Compatibility first, Anthropic features as progressive enhancements (principle 7, G7) | The user switches between many models through a compatible proxy; Claude-only would lose that |
 | 2026-10-16 | Capabilities from the Models API + learned-on-400 + defaults for older models, instead of hard-coded model lists | New models work without code changes; endpoints that reject a feature degrade automatically |
 | 2026-10-16 | Refusal fallback on by default wherever supported (Anthropic's recommendation), with a notice naming both models; `refusal_fallback = false` opts out | Capabilities decide where it's safe; the user can still choose to see refusals |
 | 2026-10-16 | `/model` and `/effort` save the choice (`default_model`, `[generation] effort`), editing that one line of `config.toml` in place (validated, restored on failure) | The user wants the switch to stick; a line edit keeps comments and layout |
 | 2026-10-16 | Use the beta Messages API (`client.beta.messages`) | Needed for `fallbacks: "default"` now and compaction later |
+| 2026-10-16 | No money in the UI; usage shown as tokens (a cost estimate is still recorded) | Many models through proxies make prices unknown or misleading; tokens are what Ivy controls |
+| 2026-10-16 | A verbose view (`-v`, `/verbose`) instead of a debug flag; static state in the status bar and `/status` | Show only what changes per call; observing must not change the request |
+| 2026-10-16 | One effort level in `[generation]` (no per-route effort); side work will use `helper_model` | One knob users understand; cheaper side work comes from the helper model |
+| 2026-10-16 | The `now` tool removed; the time comes in every turn's context (core plugin) | Models don't know the time but don't need a tool call to learn it |
 | 2026-10-17 | Compaction is client-side (any endpoint); server-side compaction only an enhancement | Compatibility first; as in pi |
 | 2026-10-17 | Adopt from pi: steering/follow-up (M2), deferred MCP tools (M2); backlog: synchronized output, session branching | See §10.1 |
 | 2026-10-17 | ~~Memory v2~~ (superseded by v3): capped profile (always on, frozen per session) + searchable notes; no `/remember`; safety scan; session search | Keyword recall alone misses preferences that must always apply; a cap alone can't hold todos and facts (Hermes, §10.3) |
@@ -875,7 +880,7 @@ Goal: Ivy starts remembering. Built in this order; each step is shippable on its
 | 2026-10-17 | Adopt from DSH/Hermes: cheap compaction first, unknown-outcome crash handling (before M3), system prompt snapshots, loop guard, per-call concurrency, sandboxed shell, job design | §10.2, §10.3 |
 | 2026-10-17 | `USER.md` is the memory plugin's profile (`data/memory/USER.md`), not a user-written kernel file; no separate `ME.md` | One profile, no conflict rules; like Hermes |
 | 2026-10-17 | Ivy never edits `SOUL.md`; hard rules live there; at most a confirm-every-time proposal tool later | A model-editable rule file would turn one prompt injection into a permanent rule |
-| 2026-10-17 | `[plugins.memory] profile_limit` configurable (500–20,000, default 2,000); other memory numbers stay constants until needed | Tunable where it varies by person; few knobs |
+| 2026-10-17 | `[plugins.memory] profile_limit` configurable (500–20,000, default 2,000), and since v3 `memory_limit` (1,000–50,000, default 8,000); other memory numbers stay constants until needed | Tunable where it varies by person; few knobs |
 | 2026-10-17 | Optional `helper_model` for side work, default main model at low effort; added with the first side task | Cheaper and faster side work without paying for a second model until it helps |
 | 2026-10-17 | Skills (Agent Skills `SKILL.md`): phase 1 using them proposed for M2 with MCP; phase 2 Ivy writes its own, asked every time and kept apart from the user's | Know-how without code fits "adapt to my habits"; self-written skills are persistent instructions, so they get SOUL.md-level care |
 | 2026-10-17 | Reuse other ecosystems through Agent Skills and MCP, not their plugin formats; CLI tools via `shell` + skills, the installed list in the session prompt | Open standards are stable and language-neutral; other agents' plugins are tied to their runtimes |
@@ -884,7 +889,7 @@ Goal: Ivy starts remembering. Built in this order; each step is shippable on its
 | 2026-10-17 | Optional `claude-code` plugin as a coding delegate (M2); Ivy's own `fs`/`shell` remain the baseline for any model | Capabilities must not depend on one model or product (principle 7, G7); the delegate is an enhancement where Claude is available |
 | 2026-10-17 | Tainted sessions: after outside content, profile writes go to pending, other writes go to the archive marked `ext` (v3); no key-item heuristic | Outside text must never become a standing instruction on its own; heuristics miss instruction-only injections; no dialogs keeps it light |
 | 2026-10-17 | Adopt from OpenClaw: memory flush before compaction, collecting quick messages, skill flags/budget/pinning, `NO_REPLY` and pre-check scripts for jobs; backlog: cross-provider fallbacks; no active hours or `doctor` | §10.4 |
-| 2026-10-17 | No embeddings for memory recall: keyword + CJK-bigram scoring, bilingual tags written at save time, `memory__search` as fallback | No outside service or local model; tags cover cross-language and synonym gaps cheaply; quality measured with evals |
+| 2026-10-17 | No embeddings for memory ~~recall~~ (search since v3: hot files need none, the archive is searched): keyword + CJK-bigram scoring, bilingual tags written at save time, `memory__search` | No outside service or local model; tags cover cross-language and synonym gaps cheaply; quality measured with evals |
 | 2026-10-17 | Memory v3: `USER.md` and `MEMORY.md` capped and injected whole (frozen per session), `ARCHIVE.md` searched on demand; one line per entry, no ids; tidying between hot and cold without asking | Whole injection never misses and lets the model judge relevance across synonyms and languages; cached per session it is cheap; moving lines deletes nothing (Hermes, §10.3) |
 | 2026-10-17 | Memory v3 additions: usage shown and consolidation from 80%, absolute dates and a date per line, superseded versions archived with `until:`, out-of-date reminder; no extraction pipelines, vectors or graphs | §10.5: the mainstream personal-agent design, plus safeguards for time and consolidation |
 | 2026-10-18 | Memory: Graphiti's save and dating rules; `update(changed)` separates facts that changed (`until:`) from rewordings (`replaced:`); near-duplicate check on save; quality kept by code first, tool design second, prompts last | Over-invalidation was Graphiti's main failure; rules a small model must follow belong in code |
@@ -892,3 +897,5 @@ Goal: Ivy starts remembering. Built in this order; each step is shippable on its
 | 2026-10-18 | Memory: a re-save changes nothing (confirmation is an explicit `update`); `ends:` for temporary states; scheduled jobs never write hot files; explicit language rule | Mem0's recall-and-re-extract loop and junk audit (§10.5): the model sees its own memory, so a repeat is not evidence |
 | 2026-10-18 | Memory: near-duplicate check vetoed by a differing number, date or rare word | Similar wording with a different value is a different fact (claude-mem, §10.5) |
 | 2026-10-18 | Subagents are briefed by the parent (fork optional), get a kernel-added contract and a minimal system prompt, and can't write memory | Clean context is the point; the contract keeps briefs from missing the essentials; background memory writes produce junk |
+| 2026-10-18 | Permission prompts offer *for this session* / *Always* only where they take effect (risk-default asks); the kernel enforces it and the prompt shows why it asks | An `ask` rule comes before every allow, so remembering there did nothing |
+| 2026-10-18 | System prompt built per session and frozen (M1 4a); plugins add sections via `sessionPrompt`; the kernel no longer loads `USER.md` | The memory files must be in the system prompt without breaking the cache within a session |

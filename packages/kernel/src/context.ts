@@ -15,7 +15,7 @@ export interface PromptPart {
  * 2. SOUL.md: who Ivy is (data dir, optional)
  * 3. interface instructions: output format for the current UI (e.g. TUI vs. plain text)
  * 4. plugin instructions (static)
- * 5. plugins' session sections (`sessionPrompt`, e.g. the memory profile in USER.md)
+ * 5. plugins' session sections (`sessionPrompt`, e.g. the memory files USER.md and MEMORY.md)
  *
  * Files and session sections are read when a session starts, so hand edits apply after
  * /new. Within a session the bytes never change: any change would invalidate the prompt
