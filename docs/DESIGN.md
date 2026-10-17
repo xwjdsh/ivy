@@ -12,7 +12,7 @@ Ivy is a **personal AI agent** for one user. It runs locally, talks through the 
 The core idea is a **small, stable kernel plus plugins**. The kernel only knows how to:
 
 1. hold a conversation with a model over the Anthropic Messages API,
-2. run tools in a loop,
+2. run tools in a loop, in the foreground or background (§5.9),
 3. load plugins and route their tools, commands, context and jobs,
 4. persist sessions and plugin data, and
 5. ask the user before risky actions.
@@ -98,7 +98,7 @@ Everything users care about (memory, email, calendar, coding help, news digests,
 - Limits: `maxSteps` per turn (default 25) and an optional task budget.
 - **Loop guard (M2):** when the same tool is called with identical input 3 times in a turn, add a short reminder to the next request; weaker models otherwise go in circles (DSH).
 - **Per-call concurrency (M2):** tools may declare whether a call is safe to run in parallel; unsafe calls (e.g. two writes to one file) run alone, in order (DSH, Hermes).
-- **Steering (planned, M2):** while a turn runs, the user can send a message that is added after the current tool batch and before the next model call ("don't touch that file"), instead of interrupting and starting over; a queued follow-up runs when the turn would otherwise end. Today the TUI only lets you type ahead. (Borrowed from pi, see §10.1.)
+- **Steering (planned, M2):** while a turn runs, the user can send a message instead of interrupting and starting over ("don't touch that file"). If tools are running, they move to the background at once (§5.9) and the model answers the message; if the model is writing, the message is added after the current step. Today the TUI only lets you type ahead. (Borrowed from pi, see §10.1.)
 - Before running any tool, check `stop_reason` (`max_tokens`, `refusal`) and validate the tool input against its schema.
 
 ### 5.2 Model Client
@@ -195,6 +195,7 @@ Now: 2026-10-16 Fri 14:57 (Asia/Tokyo, UTC+09:00)
 - **Side effects survive crashes honestly** (DSH, §10.2; needed before M3): before running an `external` or `dangerous` tool, record that it started; if the session reloads without its result, the model is told the outcome is *unknown* (it may already have happened) instead of the call being dropped and possibly repeated, e.g. an email sent twice.
 - **System prompt snapshot:** record the system prompt in the session whenever it changes (start, `/new`, `/resume`, profile change between sessions), so every request can be rebuilt from the session file alone ("model-visible ⟺ logged", DSH).
 - Commands: `ivy -c` continues the most recently active session; `/resume` (or `ivy -r`) opens a picker of recent sessions (last active, first prompt, turn count); `/resume <id>` / `ivy -r <id>` jump directly; `/new` starts a new one. No separate list command.
+- **Background results and child sessions (M2, §5.9):** a backgrounded call's placeholder result is written at once and its real result appended later as a new message; a subagent's child session is its own file, linked to the parent by id.
 - Usage (tokens, cache hits, and a cost estimate that is recorded but not shown) is written per model call; `/usage` reports tokens.
 
 ### 5.5 Permission Gate
@@ -275,6 +276,34 @@ Part of the kernel from M0, so problems can be debugged from day one.
 - `/trace` in the CLI shows the last turn's full request as the model saw it (system prompt, tools, context layers), so prompt and context changes can be checked directly.
 - `ivy replay <trace>` re-sends a recorded request, optionally with a changed system prompt, model or effort, to compare outputs. This is the starting point for evals (M2+).
 
+### 5.9 Background Tasks & Subagents (M2)
+
+**A tool call never blocks the conversation.** A call runs in the foreground and its result goes to the model, unless one of two things moves it to the background:
+
+1. **The model asks for it:** `background: true` on the call, when it knows the work is slow and has something else to do meanwhile ("while it builds, I'll read the docs").
+2. **The user speaks:** sending a message while tools run moves all of them to the background, and the model answers the message right away (so "cancel the build" always works).
+
+There is no timeout that moves a call to the background: it would make the same call return a result one time and a placeholder the next, and cost an extra model call to say "still running". Only explicit intent counts.
+
+- **Mechanics:** the kernel owns this for every tool; a tool just returns a promise. A backgrounded call gets a placeholder `tool_result` ("still running as task t1"), so the request stays valid and history stays append-only; the real result is appended later as a new message. If the user is idle, it starts a new turn so Ivy reports it; during a turn, it waits for the turn to end.
+- **Task tools:** `status(id)`, `wait(id)` (wait inside the turn when the next step needs the result; the user speaking interrupts the wait), `cancel(id)`. `/tasks` lists and cancels without the model; Esc interrupts everything in the current turn; the status bar shows running tasks.
+- **Cancelling really stops:** tools honor `ToolContext.signal`; `shell` kills the whole process group.
+- **Hard timeout:** per tool, configurable. It cancels the call and returns an error; it never backgrounds. Guards against hung commands, especially in unattended jobs where nobody can speak.
+- **Permission prompt open when the user types:** counts as *No*, plus the new message.
+- **Quitting** with tasks running asks first; tasks that outlive the CLI need the daemon (M4).
+
+**Subagents** are a kind of tool, not a separate mechanism: `run()` starts a child session with its own context and returns only a conclusion with its **sources** (paths, URLs, lines), keeping the main context small. Backgrounding is orthogonal and applies to them like any tool:
+
+| | Foreground | Background |
+|---|---|---|
+| Plain tool | `date_calc` | a long build |
+| Subagent | a quick lookup across files | broad research, a coding task |
+
+- **Resumable:** a child session is its own JSONL file linked to the parent, kept across restarts. The result carries its id; `subagent(resume: id, message)` continues with full context. For a follow-up the model tries, in order: the result itself, its sources, resuming the child, a fresh search. (A resumed child whose prompt cache expired re-reads its context at full price, still cheaper than redoing the work.)
+- May run on `helper_model`.
+
+**Who decides:** the model picks the tool, whether to use a subagent, and whether to start in the background, guided by tool descriptions and measured by evals. The kernel enforces limits: hard timeouts, a cap on concurrent tasks, one coding task per repository at a time, no subagents inside subagents, a step and token budget per subagent, and the Permission Gate on every call. The user can always direct, interrupt or cancel. Judgment goes in prompts, limits go in code.
+
 ## 6. Plugin System
 
 ### 6.1 What a plugin can contribute
@@ -320,6 +349,7 @@ export interface ToolDef<I = unknown> {
   input: z.ZodType<I>;        // converted to JSON Schema; validated before run
   risk: "read" | "write" | "external" | "dangerous";
   defaultAllow?: boolean;     // run without asking (low-impact tools; never "dangerous")
+  timeout?: number;           // planned (M2): hard timeout in ms; cancels the call (§5.9)
   run(input: I, ctx: ToolContext): Promise<ToolResult> | ToolResult;
 }
 
@@ -388,7 +418,7 @@ What the model is told about them:
 ├── skills/              # Agent Skills: <name>/SKILL.md (user's); .ivy/<name>/ (written by Ivy, phase 2)
 ├── permissions.json     # allow rules learned from the permission dialog (Ivy-owned)
 ├── cache/models.json    # model capabilities: Models API facts + features learned unsupported
-├── sessions/            # append-only JSONL transcripts
+├── sessions/            # append-only JSONL transcripts (subagent child sessions linked to their parent, §5.9)
 ├── data/<pluginId>/     # per-plugin storage
 │   └── memory/          #   memory plugin: USER.md (profile) + notes/<id>.md (§8.1)
 ├── plugins/             # user-installed plugins
@@ -406,7 +436,8 @@ The data root is `$IVY_HOME`, default `~/.ivy`. During development `bun run ivy`
 |---|---|---|---|
 | `core` | M0 / M1 | Current time in every turn's context; date arithmetic | `date_calc` |
 | `memory` | M1 | Long-term preferences, facts, todos and notes as markdown files; relevant ones injected each turn (§8.1) | `save`, `search`, `list`, `update`, `delete` |
-| `fs` + `shell` | M2 | Read/edit files and run commands in allowed directories — the coding/work helper | `read`, `write`, `edit`, `glob`, `grep`, `run` |
+| `fs` + `shell` | M2 | Read/edit files and run commands (CLI tools, §6.4) in allowed directories; the baseline for everyday work and coding on any model (pi shows four such tools suffice) | `read`, `write`, `edit`, `glob`, `grep`, `run` |
+| `claude-code` | M2 | Optional enhancement (principle 7): hands coding tasks to Claude Code as a subagent (`claude -p --output-format stream-json`, or the Agent SDK) in a given directory; backgroundable, cancellable, resumable (`--resume`). Its own permissions are preset (`acceptEdits`, `--allowedTools`, the directory); in Ivy it is `dangerous`, so asked every time. Claude only, billed separately; optional, so G7 holds | `run` |
 | `mcp` bridge | M2 | Wraps configured MCP servers as plugins | (from servers) |
 | `gmail` / `calendar` | M3 | Triage, summarize, draft replies, today's agenda — via MCP servers or Google APIs | `search`, `read_thread`, `draft`, `agenda` |
 | `web` | M3 | Web search & fetch (Anthropic server tools on Anthropic's API; otherwise a client-side tool) | `search`, `fetch` |
@@ -654,7 +685,7 @@ Borrowed: cheap compaction first, unknown-outcome crash handling, system prompt 
 
 Borrowed: the capped, frozen profile; over-cap errors that force consolidation; patch instead of whole-entry replace; memory safety scan; session search; job design; (backlog) background memory review, skills, chat gateway. Different: Ivy keeps unbounded searchable notes and todos alongside the capped profile; like Hermes, `USER.md` is agent-maintained, and the user's untouchable rules live in `SOUL.md`.
 
-**Alternative considered:** building on the Claude Agent SDK (Claude Code as a library). It gives file/shell tools and a loop for free, but it is coding-centric and makes the plugin model, context layering and permission UX harder to own. We build our own small kernel and may borrow ideas from it.
+**Alternative considered:** building on the Claude Agent SDK (Claude Code as a library). It gives file/shell tools and a loop for free, but it is coding-centric and makes the plugin model, context layering and permission UX harder to own. We build our own small kernel and may borrow ideas from it. Claude Code can still be a *delegate*: the `claude-code` plugin (§8) hands it coding tasks as a subagent.
 
 ## 11. Roadmap
 
@@ -700,6 +731,7 @@ Goal: Ivy starts remembering. Built in this order; each step is shippable on its
 - Skills phase 1 (§8.2): `~/.ivy/skills/*/SKILL.md`, index in the prompt, `skill_view`, `/<skill-name>`.
 - MCP bridge plugin. MCP servers can bring dozens of tools, so they are not all sent up front: deferred exposure via a tool search (the model looks tools up by need; Anthropic's `tool_search` where supported, a client-side search tool elsewhere), possibly a code mode later.
 - Steering and follow-up messages while a turn runs (§5.1); loop guard and per-call concurrency.
+- Background tasks and subagents (§5.9), in order: background tasks with "speaking backgrounds running tools"; subagents with resumable child sessions; the `claude-code` plugin. Ivy's own `fs`/`shell` are the baseline and must handle coding with any model; `claude-code` is an optional delegate for those who have Claude.
 - `shell` runs inside an OS sandbox (macOS Seatbelt) limited to allowed directories; a blocked command may ask once, with the model's justification, to run with wider permissions (DSH). Fewer prompts than confirming every command, and safer.
 - Eval cases can be recorded sessions replayed without an API key, next to real-model runs (DSH).
 - Plugin API frozen as `apiVersion: 1`; user plugins from `~/.ivy/plugins/`.
@@ -726,7 +758,6 @@ Goal: Ivy starts remembering. Built in this order; each step is shippable on its
 - Memory search on SQLite FTS or embeddings if the keyword scan gets slow or misses too much.
 - Endpoint capabilities are detected from `base_url` (`api.anthropic.com` = official). Add a per-provider override (e.g. `api = "auto" | "official" | "compatible"`) once a gateway or cloud platform that proxies the official API gets misdetected.
 - Usage dashboard; per-plugin effort/model tuning.
-- Subagents for fan-out research tasks.
 - Skills phase 2 (§8.2): Ivy writes and improves its own skills (asked every time, kept apart from the user's), plus a curator that archives stale ones.
 - Chat-app gateway: one chat = one continuous session until `/new`; pairing codes for access (Hermes).
 - TUI: synchronized output (`CSI ?2026h/l`) around redraws, so no frame is ever half-drawn.
@@ -782,3 +813,6 @@ Goal: Ivy starts remembering. Built in this order; each step is shippable on its
 | 2026-10-17 | Optional `helper_model` for side work, default main model at low effort; added with the first side task | Cheaper and faster side work without paying for a second model until it helps |
 | 2026-10-17 | Skills (Agent Skills `SKILL.md`): phase 1 using them proposed for M2 with MCP; phase 2 Ivy writes its own, asked every time and kept apart from the user's | Know-how without code fits "adapt to my habits"; self-written skills are persistent instructions, so they get SOUL.md-level care |
 | 2026-10-17 | Reuse other ecosystems through Agent Skills and MCP, not their plugin formats; CLI tools via `shell` + skills, the installed list in the session prompt | Open standards are stable and language-neutral; other agents' plugins are tied to their runtimes |
+| 2026-10-17 | Tool calls never block the conversation: background only when the model asks or the user speaks; no auto-background timeout; hard timeouts cancel | Explicit intent only; predictable results; "cancel it" always works |
+| 2026-10-17 | Subagents are tools with resumable child sessions; backgrounding is a separate, kernel-wide layer | Two orthogonal concerns, each simple; follow-ups don't lose the child's context |
+| 2026-10-17 | Optional `claude-code` plugin as a coding delegate (M2); Ivy's own `fs`/`shell` remain the baseline for any model | Capabilities must not depend on one model or product (principle 7, G7); the delegate is an enhancement where Claude is available |
