@@ -163,6 +163,26 @@ describe("Agent.runTurn", () => {
     });
   });
 
+  test("a made-up tool name fails without asking", async () => {
+    let asked = 0;
+    const model = new FakeModel([
+      reply("tool_use", [toolUse("tu_1", "t__nope", {})]),
+      reply("end_turn", [text("ok")]),
+    ]);
+    await run(
+      await makeAgent(model, "write", async () => {
+        asked++;
+        return "once";
+      }),
+      "go",
+    );
+    expect(asked).toBe(0);
+    expect(events.find((e) => e.type === "tool_result")).toMatchObject({
+      content: "Unknown tool: t__nope",
+      isError: true,
+    });
+  });
+
   test("a deny rule blocks a call without asking", async () => {
     let asked = 0;
     const model = new FakeModel([
@@ -209,7 +229,13 @@ describe("Agent.runTurn", () => {
     );
     await run(agent, "go");
     expect(asked).toEqual([
-      { name: "t__echo", input: { msg: "x" }, risk: "read", canRemember: true },
+      {
+        name: "t__echo",
+        input: { msg: "x" },
+        risk: "read",
+        reason: "ask rule",
+        canRemember: false,
+      },
     ]);
   });
 

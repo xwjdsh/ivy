@@ -55,6 +55,24 @@ const CHOICES: Array<{ value: PermissionChoice; label: string; key: string; reme
   { value: "deny", label: "No", key: "n" },
 ];
 
+/** Input lines shown in a permission prompt (all of them for dangerous tools). */
+const PROMPT_INPUT_LINES = 12;
+
+function promptLayout(call: ToolCallRequest) {
+  // Only once or no when remembering would have no effect (dangerous tools, ask rules).
+  const choices = CHOICES.filter((c) => call.canRemember || !c.remember);
+  // Dangerous tools show their full input; others enough to judge, e.g. a memory being saved.
+  const all = JSON.stringify(call.input, null, 2).split("\n");
+  const max = call.risk === "dangerous" ? all.length : PROMPT_INPUT_LINES;
+  return { choices, inputLines: all.slice(0, max), hidden: Math.max(0, all.length - max) };
+}
+
+/** Rows the permission prompt takes, so the live area can leave room for it. */
+export function permissionPromptHeight(call: ToolCallRequest): number {
+  const { choices, inputLines, hidden } = promptLayout(call);
+  return 2 + 1 + inputLines.length + (hidden > 0 ? 1 : 0) + choices.length; // border, title
+}
+
 export function PermissionPrompt({
   call,
   onChoose,
@@ -62,8 +80,7 @@ export function PermissionPrompt({
   call: ToolCallRequest;
   onChoose(choice: PermissionChoice): void;
 }) {
-  // Dangerous tools: only once or no, and the full input is shown.
-  const choices = CHOICES.filter((c) => call.canRemember || !c.remember);
+  const { choices, inputLines, hidden } = promptLayout(call);
   const [index, setIndex] = useState(0);
   useInput((input, key) => {
     if (key.upArrow) setIndex((i) => (i + choices.length - 1) % choices.length);
@@ -79,15 +96,11 @@ export function PermissionPrompt({
   return (
     <Box flexDirection="column" borderStyle="round" borderColor="yellow" paddingX={1}>
       <Text>
-        Allow <Text bold>{call.name}</Text> <Text color="yellow">({call.risk})</Text>?
+        Allow <Text bold>{call.name}</Text> <Text color="yellow">({call.risk})</Text>?{" "}
+        <Text dimColor>({call.reason})</Text>
       </Text>
-      {call.canRemember ? (
-        <Text dimColor wrap="truncate-end">
-          {JSON.stringify(call.input)}
-        </Text>
-      ) : (
-        <Text>{JSON.stringify(call.input, null, 2)}</Text>
-      )}
+      <Text>{inputLines.join("\n")}</Text>
+      {hidden > 0 && <Text dimColor>… {hidden} more lines</Text>}
       {choices.map((c, i) => (
         <Text key={c.value} color={i === index ? "cyan" : undefined}>
           {i === index ? "❯ " : "  "}

@@ -29,7 +29,13 @@ export interface PermissionRules {
 
 export interface DecisionWithReason {
   decision: Decision;
+  /** Why, in a few words; shown in the permission prompt and /status. */
   reason: string;
+  /**
+   * For "ask": whether "for this session" / "always" would have any effect. False for
+   * dangerous tools and ask rules, which are checked before every allow.
+   */
+  canRemember: boolean;
 }
 
 export class Permissions {
@@ -44,43 +50,40 @@ export class Permissions {
     /** Whether the owning plugin marks this tool as safe to run without asking. */
     private readonly pluginDefault: (tool: string) => boolean = () => false,
   ) {
-    try {
-      if (existsSync(learnedFile)) {
-        const data = JSON.parse(readFileSync(learnedFile, "utf8")) as { allow?: unknown };
-        this.learned = Array.isArray(data.allow)
-          ? data.allow.filter((x) => typeof x === "string")
-          : [];
-      }
-    } catch (err) {
-      this.log.warn(`ignoring unreadable ${learnedFile}`, String(err));
-    }
+    this.learned = this.load();
   }
 
-  decide(tool: string, risk: RiskLevel | undefined): DecisionWithReason {
-    if (matchesAny(tool, this.rules.deny)) return { decision: "deny", reason: "deny rule" };
-    if (matchesAny(tool, this.rules.ask)) return { decision: "ask", reason: "ask rule" };
-    if (risk === "dangerous") return { decision: "ask", reason: "dangerous tool" };
-    if (matchesAny(tool, this.rules.allow)) return { decision: "allow", reason: "allow rule" };
-    if (matchesAny(tool, this.learned)) return { decision: "allow", reason: "allowed always" };
-    if (this.pluginDefault(tool)) return { decision: "allow", reason: "plugin default" };
-    if (this.session.has(tool)) return { decision: "allow", reason: "allowed for this session" };
-    if (risk === "read" || risk === undefined) return { decision: "allow", reason: "read-only" };
-    return { decision: "ask", reason: `${risk} tool` };
+  decide(tool: string, risk: RiskLevel): DecisionWithReason {
+    const fixed = (decision: Decision, reason: string) => ({
+      decision,
+      reason,
+      canRemember: false,
+    });
+    if (matchesAny(tool, this.rules.deny)) return fixed("deny", "deny rule");
+    if (matchesAny(tool, this.rules.ask)) return fixed("ask", "ask rule");
+    if (risk === "dangerous") return fixed("ask", "dangerous tool");
+    if (matchesAny(tool, this.rules.allow)) return fixed("allow", "allow rule");
+    if (matchesAny(tool, this.learned)) return fixed("allow", "allowed always");
+    if (this.pluginDefault(tool)) return fixed("allow", "plugin default");
+    if (this.session.has(tool)) return fixed("allow", "allowed for this session");
+    if (risk === "read") return fixed("allow", "read-only");
+    return { decision: "ask", reason: `${risk} tool`, canRemember: true };
   }
 
-  /** Whether "for this session" / "always" may be offered (never for dangerous tools). */
-  canRemember(risk: RiskLevel | undefined): boolean {
-    return risk !== "dangerous";
-  }
-
-  /** Apply what the user picked; returns whether this call may run. */
-  remember(tool: string, choice: PermissionChoice): boolean {
+  /**
+   * Apply what the user picked for an "ask" decision; returns whether this call may run.
+   * "session" / "always" count as "once" when the decision can't be remembered, whatever
+   * the interface offered.
+   */
+  remember(tool: string, choice: PermissionChoice, asked: DecisionWithReason): boolean {
+    if (choice === "deny") return false;
+    if (!asked.canRemember) return true;
     if (choice === "session") this.session.add(tool);
     if (choice === "always" && !this.learned.includes(tool)) {
       this.learned.push(tool);
       this.save();
     }
-    return choice !== "deny";
+    return true;
   }
 
   /** "For this session" choices end with the session (/new, /resume). */
@@ -93,7 +96,20 @@ export class Permissions {
     return { ...this.rules, learned: [...this.learned] };
   }
 
+  private load(): string[] {
+    try {
+      if (!existsSync(this.learnedFile)) return [];
+      const data = JSON.parse(readFileSync(this.learnedFile, "utf8")) as { allow?: unknown };
+      return Array.isArray(data.allow) ? data.allow.filter((x) => typeof x === "string") : [];
+    } catch (err) {
+      this.log.warn(`ignoring unreadable ${this.learnedFile}`, String(err));
+      return [];
+    }
+  }
+
+  /** Merge with the file first, so rules saved meanwhile by another Ivy process survive. */
   private save(): void {
+    this.learned = [...new Set([...this.load(), ...this.learned])];
     try {
       mkdirSync(dirname(this.learnedFile), { recursive: true });
       writeFileSync(this.learnedFile, `${JSON.stringify({ allow: this.learned }, null, 2)}\n`);

@@ -61,7 +61,9 @@ export interface ToolCallRequest {
   name: string;
   input: unknown;
   risk: RiskLevel;
-  /** Whether "for this session" / "always" may be offered (not for dangerous tools). */
+  /** Why the user is asked, e.g. "write tool", "ask rule", "dangerous tool". */
+  reason: string;
+  /** Whether "for this session" / "always" would have any effect (see Permissions.decide). */
   canRemember: boolean;
 }
 
@@ -290,35 +292,47 @@ export class Agent {
     const { plugins, confirm, permissions } = this.opts;
     const toolLog = createLogger("tool");
 
-    const verdicts: Array<"run" | "denied by user" | "denied by rule"> = [];
+    type Verdict = "run" | "unknown tool" | "denied by rule" | "denied by user" | "interrupted";
+    const verdicts: Verdict[] = [];
     for (const use of toolUses) {
       turn.onEvent({ type: "tool_call", id: use.id, name: use.name, input: use.input });
       const risk = plugins.riskOf(use.name);
-      const { decision } = permissions.decide(use.name, risk);
-      if (turn.signal.aborted || decision === "deny") {
-        verdicts.push("denied by rule");
-      } else if (decision === "allow" || risk === undefined) {
-        verdicts.push("run");
-      } else {
-        const choice = await confirm({
-          name: use.name,
-          input: use.input,
-          risk,
-          canRemember: permissions.canRemember(risk),
-        });
-        verdicts.push(permissions.remember(use.name, choice) ? "run" : "denied by user");
+      if (turn.signal.aborted) {
+        verdicts.push("interrupted");
+        continue;
       }
+      if (risk === undefined) {
+        verdicts.push("unknown tool"); // a name the model made up; nothing to ask about
+        continue;
+      }
+      const decided = permissions.decide(use.name, risk);
+      if (decided.decision !== "ask") {
+        verdicts.push(decided.decision === "allow" ? "run" : "denied by rule");
+        continue;
+      }
+      const choice = await confirm({
+        name: use.name,
+        input: use.input,
+        risk,
+        reason: decided.reason,
+        canRemember: decided.canRemember,
+      });
+      verdicts.push(permissions.remember(use.name, choice, decided) ? "run" : "denied by user");
     }
 
+    const messages: Record<Exclude<Verdict, "run">, (name: string) => string> = {
+      "unknown tool": (name) => `Unknown tool: ${name}`,
+      "denied by rule": () => "This tool call is blocked by a permission rule.",
+      "denied by user": () => "The user denied this tool call.",
+      interrupted: () => "Interrupted by the user before this tool ran.",
+    };
     return Promise.all(
       toolUses.map(async (use, i): Promise<ToolResultBlock> => {
-        const outcome = turn.signal.aborted
-          ? { content: "Interrupted by the user before this tool ran.", isError: true }
-          : verdicts[i] === "run"
+        const verdict = turn.signal.aborted ? "interrupted" : (verdicts[i] ?? "interrupted");
+        const outcome =
+          verdict === "run"
             ? await plugins.call(use.name, use.input, { signal: turn.signal, log: toolLog })
-            : verdicts[i] === "denied by rule"
-              ? { content: "This tool call is blocked by a permission rule.", isError: true }
-              : { content: "The user denied this tool call.", isError: true };
+            : { content: messages[verdict](use.name), isError: true };
         turn.onEvent({ type: "tool_result", id: use.id, name: use.name, ...outcome });
         return {
           type: "tool_result",

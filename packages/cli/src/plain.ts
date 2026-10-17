@@ -25,7 +25,7 @@ export async function confirmPlain(call: ToolCallRequest): Promise<PermissionCho
   const rl = createInterface({ input: process.stdin, output: process.stderr });
   try {
     const answer = await rl.question(
-      `${c.yellow("?")} Allow ${c.bold(call.name)} (${call.risk})? ${c.dim(JSON.stringify(call.input))} [y/N] `,
+      `${c.yellow("?")} Allow ${c.bold(call.name)} (${call.risk}; ${call.reason})? ${c.dim(JSON.stringify(call.input))} [y/N] `,
     );
     return /^y(es)?$/i.test(answer.trim()) ? "once" : "deny";
   } finally {

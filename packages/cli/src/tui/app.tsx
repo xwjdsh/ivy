@@ -26,7 +26,14 @@ import { Input } from "./input.tsx";
 import { historyItems, type Item, itemId } from "./items.ts";
 import { Picker } from "./picker.tsx";
 import { SessionPicker } from "./session-picker.tsx";
-import { ItemView, PermissionPrompt, Spinner, StatusBar, ToolLine } from "./widgets.tsx";
+import {
+  ItemView,
+  PermissionPrompt,
+  permissionPromptHeight,
+  Spinner,
+  StatusBar,
+  ToolLine,
+} from "./widgets.tsx";
 
 /** Lets the kernel's confirm() callback (created before React mounts) reach the UI. */
 export interface ConfirmBridge {
@@ -514,7 +521,7 @@ export function App({
   const reserved =
     6 +
     pendingTools.length * 2 +
-    (permission ? 8 : 0) +
+    (permission ? permissionPromptHeight(permission.call) : 0) +
     (picker ? picker.length + 4 : 0) +
     (modelPickerOpen ? ivy.config.activeProvider.models.length + 4 : 0) +
     (effortPickerOpen ? EFFORT_LEVELS.length + 4 : 0) +

@@ -608,6 +608,7 @@ test("a dangerous tool offers only Yes/No and shows the full input", async () =>
   await type("wipe it");
   await type(ENTER);
   await eventually(() => expect(frame()).toContain("Allow t__wipe (dangerous)"));
+  expect(frame()).toContain("(dangerous tool)"); // why it asks
   expect(frame()).toContain('"path": "/tmp/x"');
   expect(frame()).not.toContain("for the rest of this session");
   expect(frame()).not.toContain("Always");
