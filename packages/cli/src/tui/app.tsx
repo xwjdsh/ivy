@@ -133,15 +133,19 @@ export function App({
     ...historyItems(initialSession.messages),
   ]);
   const push = useCallback((...next: Item[]) => setItems((prev) => [...prev, ...next]), []);
+  const info = useCallback(
+    (text: string, tone?: "warn" | "error") => push({ id: itemId(), kind: "info", text, tone }),
+    [push],
+  );
 
   // stderr would corrupt the screen: logs go into the transcript when verbose, else nowhere.
   useEffect(() => {
     verboseRef.current = verboseOn;
     setLogLevel(verboseOn ? "debug" : "warn");
     setLogSink((line) => {
-      if (verboseRef.current) push({ id: itemId(), kind: "info", text: line });
+      if (verboseRef.current) info(line);
     });
-  }, [verboseOn, push]);
+  }, [verboseOn, info]);
   useEffect(() => () => setLogSink(null), []);
 
   // <Static> prints each item once. To reprint (new width, expanded tools, switched
@@ -235,7 +239,7 @@ export function App({
         setPhase((p) => p && { ...p, label: "Thinking" });
         break;
       case "notice":
-        push({ id: itemId(), kind: "info", text: e.text, tone: "warn" });
+        info(e.text, "warn");
         break;
       case "step": {
         // The step's message is complete: print the rest of its text before any step details.
@@ -244,12 +248,12 @@ export function App({
         turnTokens.current = addTokens(turnTokens.current, step);
         setTokens((t) => addTokens(t, step));
         if (verboseRef.current) {
-          push({ id: itemId(), kind: "info", text: formatCall(e, lastRequest.current) });
+          info(formatCall(e, lastRequest.current));
         }
         break;
       }
       case "context":
-        if (verboseRef.current) push({ id: itemId(), kind: "info", text: `context:\n${e.text}` });
+        if (verboseRef.current) info(`context:\n${e.text}`);
         break;
       case "request":
         lastRequest.current = e.info; // shown with the call's result, in one line
@@ -312,16 +316,15 @@ export function App({
         ...historyItems(next.messages),
       ]);
     } catch (err) {
-      push({
-        id: itemId(),
-        kind: "info",
-        text: errorMessage(err),
-        tone: "error",
-      });
+      info(errorMessage(err), "error");
     }
   };
 
-  const [picker, setPicker] = useState<SessionSummary[] | null>(null);
+  // At most one dialog at a time: the session, model or effort picker.
+  const [dialog, setDialog] = useState<
+    { kind: "sessions"; sessions: SessionSummary[] } | { kind: "model" } | { kind: "effort" } | null
+  >(null);
+  const closeDialog = () => setDialog(null);
 
   const models = ivy.config.activeProvider.models;
   const commands = availableCommands(
@@ -333,11 +336,19 @@ export function App({
 
   // /model switches now and saves the choice as the provider's default_model.
   const [model, setModel] = useState(ivy.agent.model);
-  const [modelPickerOpen, setModelPickerOpen] = useState(false);
+
+  /** Save a switch to config.toml; if that fails, it still applies for this run. */
+  const saveChoice = (label: string, save: () => void, note = "") => {
+    try {
+      save();
+      info(`${label} (saved to config.toml).${note}`);
+    } catch (err) {
+      info(`${label} for this run only. ${errorMessage(err)}${note}`, "warn");
+    }
+  };
 
   // /effort switches now and saves the choice as [generation] effort.
   const [effort, setEffortState] = useState<Effort>(ivy.capabilities.effort);
-  const [effortPickerOpen, setEffortPickerOpen] = useState(false);
   const switchEffort = (level: Effort) => {
     if (level === effort) return;
     ivy.capabilities.setEffort(level);
@@ -349,40 +360,20 @@ export function App({
         : used !== level
           ? ` ${model} doesn't support it; ${used} is used.`
           : "";
-    try {
-      saveEffort(ivy.paths, level);
-      push({ id: itemId(), kind: "info", text: `Effort: ${level} (saved to config.toml).${note}` });
-    } catch (err) {
-      const reason = errorMessage(err);
-      push({
-        id: itemId(),
-        kind: "info",
-        text: `Effort: ${level} for this run only. ${reason}${note}`,
-        tone: "warn",
-      });
-    }
+    saveChoice(`Effort: ${level}`, () => saveEffort(ivy.paths, level), note);
   };
   const switchModel = (name: string) => {
     if (name === model) return;
     ivy.agent.setModel(name);
     setModel(name);
-    try {
-      saveDefaultModel(ivy.paths, ivy.config.activeProvider.name, name);
-      push({ id: itemId(), kind: "info", text: `Model: ${name} (saved to config.toml)` });
-    } catch (err) {
-      const reason = errorMessage(err);
-      push({
-        id: itemId(),
-        kind: "info",
-        text: `Model: ${name} for this run only. ${reason}`,
-        tone: "warn",
-      });
-    }
+    saveChoice(`Model: ${name}`, () =>
+      saveDefaultModel(ivy.paths, ivy.config.activeProvider.name, name),
+    );
   };
   const openPicker = () => {
     const others = Session.list(ivy.paths.sessions).filter((s) => s.id !== sessionRef.current.id);
-    if (others.length > 0) setPicker(others);
-    else push({ id: itemId(), kind: "info", text: "No other sessions to resume." });
+    if (others.length > 0) setDialog({ kind: "sessions", sessions: others });
+    else info("No other sessions to resume.");
   };
   // biome-ignore lint/correctness/useExhaustiveDependencies: run once on mount
   useEffect(() => {
@@ -391,8 +382,6 @@ export function App({
 
   const runCommand = (line: string) => {
     const [cmd, ...args] = line.trim().split(/\s+/);
-    const info = (text: string, tone?: "warn" | "error") =>
-      push({ id: itemId(), kind: "info", text, tone });
     switch (cmd) {
       case "/exit":
       case "/quit":
@@ -409,7 +398,7 @@ export function App({
             "warn",
           );
         } else if (!name) {
-          setModelPickerOpen(true);
+          setDialog({ kind: "model" });
         } else if (models.includes(name)) {
           switchModel(name);
         } else {
@@ -419,7 +408,7 @@ export function App({
       }
       case "/effort": {
         const level = args[0];
-        if (!level) setEffortPickerOpen(true);
+        if (!level) setDialog({ kind: "effort" });
         else if ((EFFORT_LEVELS as readonly string[]).includes(level))
           switchEffort(level as Effort);
         else info(`Unknown effort ${level}. Levels: ${EFFORT_LEVELS.join(", ")}`, "error");
@@ -501,9 +490,7 @@ export function App({
   useInput((input, key) => {
     if (key.ctrl && input === "c") {
       if (busy) return interrupt();
-      if (picker) return setPicker(null);
-      if (modelPickerOpen) return setModelPickerOpen(false);
-      if (effortPickerOpen) return setEffortPickerOpen(false);
+      if (dialog) return closeDialog();
       if (inputValue !== "") return; // the input box clears itself
       if (exitArmed) return exit();
       setExitArmed(true);
@@ -526,9 +513,9 @@ export function App({
     6 +
     pendingTools.length * 2 +
     (permission ? permissionPromptHeight(permission.call) : 0) +
-    (picker ? picker.length + 4 : 0) +
-    (modelPickerOpen ? models.length + 4 : 0) +
-    (effortPickerOpen ? EFFORT_LEVELS.length + 4 : 0) +
+    (dialog?.kind === "sessions" ? dialog.sessions.length + 4 : 0) +
+    (dialog?.kind === "model" ? models.length + 4 : 0) +
+    (dialog?.kind === "effort" ? EFFORT_LEVELS.length + 4 : 0) +
     completions.length;
   const maxLiveLines = Math.max(3, rows - reserved);
   let liveLines = streaming.trim() === "" ? [] : renderMarkdown(streaming, width).split("\n");
@@ -568,7 +555,7 @@ export function App({
         </Box>
       )}
       {permission && <PermissionPrompt call={permission.call} onChoose={answerPermission} />}
-      {modelPickerOpen && (
+      {dialog?.kind === "model" && (
         <Picker
           title={`Switch model on ${ivy.config.activeProvider.name} (saved as default)`}
           items={models}
@@ -576,13 +563,13 @@ export function App({
           initialIndex={Math.max(0, models.indexOf(model))}
           renderItem={(name) => (name === model ? `${name}  (current)` : name)}
           onPick={(name) => {
-            setModelPickerOpen(false);
+            closeDialog();
             switchModel(name);
           }}
-          onCancel={() => setModelPickerOpen(false)}
+          onCancel={closeDialog}
         />
       )}
-      {effortPickerOpen && (
+      {dialog?.kind === "effort" && (
         <Picker
           title="Switch effort (saved as default)"
           items={[...EFFORT_LEVELS]}
@@ -590,27 +577,27 @@ export function App({
           itemKey={(level) => level}
           renderItem={(level) => (level === effort ? `${level}  (current)` : level)}
           onPick={(level) => {
-            setEffortPickerOpen(false);
+            closeDialog();
             switchEffort(level);
           }}
-          onCancel={() => setEffortPickerOpen(false)}
+          onCancel={closeDialog}
         />
       )}
-      {picker && (
+      {dialog?.kind === "sessions" && (
         <SessionPicker
-          sessions={picker}
+          sessions={dialog.sessions}
           width={width}
           onPick={(id) => {
-            setPicker(null);
+            closeDialog();
             resumeSession(id);
           }}
-          onCancel={() => setPicker(null)}
+          onCancel={closeDialog}
         />
       )}
       <Input
         history={history.entries}
         commands={commands}
-        active={!permission && !picker && !modelPickerOpen && !effortPickerOpen}
+        active={!permission && !dialog}
         busy={busy}
         width={width}
         onSubmit={onSubmit}
