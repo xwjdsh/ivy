@@ -65,9 +65,7 @@ export type SaveResult =
 
 export function save(ctx: Context, input: SaveInput): SaveResult {
   const text = cleanText(input.content);
-  if (input.file === "user" && input.type) {
-    throw new MemoryError("USER.md entries have no type; leave `type` out.");
-  }
+  // USER.md entries have no type; a type passed for it is ignored, not an error.
   const type = input.file === "user" ? undefined : (input.type ?? (input.due ? "todo" : "fact"));
   if (input.due && type !== "todo") throw new MemoryError("`due` is only for todos.");
   const entry: Entry = {

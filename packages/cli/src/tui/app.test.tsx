@@ -608,7 +608,7 @@ test("/status shows provider, capabilities, prompt parts, plugins and paths", as
   const f = frame().replace(/\s+/g, " ");
   expect(f).toContain("provider: anthropic · https://api.anthropic.com");
   expect(f).toContain("model: claude-opus-5-5");
-  expect(f).toMatch(/system prompt: core\.md \d+ · total \d+ chars/);
+  expect(f).toMatch(/system prompt: rules\.md \d+ · total \d+ chars/);
   expect(f).toContain("notes (context, /note)");
   expect(f).toContain("config: ");
 });

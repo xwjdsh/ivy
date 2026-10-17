@@ -19,6 +19,7 @@
       "dependencies": {
         "@ivy/kernel": "workspace:*",
         "@ivy/plugin-core": "workspace:*",
+        "@ivy/plugin-memory": "workspace:*",
         "ink": "^8.0.0",
         "marked": "^18.1.1",
         "marked-terminal": "^7.3.0",
@@ -60,6 +61,10 @@
     "plugins/memory": {
       "name": "@ivy/plugin-memory",
       "version": "0.0.1",
+      "dependencies": {
+        "@ivy/plugin-api": "workspace:*",
+        "zod": "^4.6.7",
+      },
     },
   },
   "packages": {

@@ -22,8 +22,11 @@ const COMMAND_RE = /^\/[a-z][a-z0-9-]*$/;
 /** Per-plugin limits for contextFor, so one plugin can't bloat or stall a turn. */
 export const CONTEXT_MAX_CHARS = 2000;
 export const CONTEXT_TIMEOUT_MS = 1000;
-/** Per-plugin limits for sessionPrompt; room for a full memory profile (up to 20,000 chars). */
-export const SESSION_PROMPT_MAX_CHARS = 24_000;
+/**
+ * Per-plugin limits for sessionPrompt. Room for the memory plugin's two hot files at their
+ * largest settings (20,000 + 50,000 chars) plus headers: they must arrive whole.
+ */
+export const SESSION_PROMPT_MAX_CHARS = 80_000;
 export const SESSION_PROMPT_TIMEOUT_MS = 2000;
 
 export interface RegisteredCommand {

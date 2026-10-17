@@ -9,6 +9,7 @@
   "dependencies": {
     "@ivy/kernel": "workspace:*",
     "@ivy/plugin-core": "workspace:*",
+    "@ivy/plugin-memory": "workspace:*",
     "ink": "^8.0.0",
     "marked": "^18.1.1",
     "marked-terminal": "^7.3.0",

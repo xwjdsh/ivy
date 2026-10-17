@@ -36,7 +36,7 @@ test("system prompt = core + SOUL.md + interface + plugin instructions + session
   expect(order.every((pos) => pos >= 0)).toBe(true);
   expect(order).toEqual([...order].sort((a, b) => a - b));
   expect((await system.partsFor("s1")).map((p) => p.name)).toEqual([
-    "core.md",
+    "rules.md",
     "SOUL.md",
     "interface",
     "plugin instructions",
@@ -112,7 +112,7 @@ test("a failing or oversized session section is skipped or capped, never fatal",
   setLogSink((line) => warnings.push(line));
   const parts = await new SystemPrompt(paths, plugins).partsFor("s");
   setLogSink(null);
-  expect(parts.map((p) => p.name)).toEqual(["core.md", "huge (session)"]);
+  expect(parts.map((p) => p.name)).toEqual(["rules.md", "huge (session)"]);
   expect(parts[1]?.text.length).toBe(SESSION_PROMPT_MAX_CHARS);
   expect(warnings.some((w) => w.includes("sessionPrompt skipped"))).toBe(true);
 });

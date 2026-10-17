@@ -33,5 +33,12 @@ ask = []                          # e.g. a tool you don't trust to be read-only
 deny = []                         # e.g. ["gmail__send"]
 
 [trace]
-enabled = true                    # save every request/response under traces/ (shown with -d)
+enabled = true                    # save every request/response under traces/
 retention_days = 7                # delete older trace folders on startup; 0 = keep forever
+
+# Long-term memory: data/memory/USER.md and MEMORY.md go into every session's prompt
+# (capped), ARCHIVE.md is searched. Plain files; edit them as you like.
+# [plugins.memory]
+# user_limit = 2000               # USER.md, characters (500-20000)
+# memory_limit = 8000             # MEMORY.md, characters (1000-50000)
+# enabled = false                 # turn memory off

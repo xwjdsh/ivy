@@ -1,6 +1,6 @@
 # Ivy — Design Document
 
-> Status: **Draft v0.1** (M0 done; M1 steps 1–3, 4a and 4b done, next: 4c, the memory plugin) · Last updated: 2026-10-18
+> Status: **Draft v0.1** (M0 done; M1 steps 1–3 and 4a–4c done, next: 4d, memory safety scan) · Last updated: 2026-10-18
 > This is a living document. Every milestone starts by updating it and ends by recording what changed in the [Decision Log](#13-decision-log).
 
 ---
@@ -150,13 +150,13 @@ Builds each request from layers, ordered from most stable to least stable (for c
 | Layer | Source | Changes |
 |---|---|---|
 | Tools | All enabled plugins, sorted | When plugins change |
-| System prompt | built-in `core.md` (operating & safety rules) + `~/.ivy/SOUL.md` (who Ivy is, and the user's hard rules) + interface instructions (how replies are shown) + each plugin's static `instructions` + plugins' `sessionPrompt` sections (e.g. the memory hot files) | Per session at most |
+| System prompt | built-in `rules.md` (operating & safety rules) + `~/.ivy/SOUL.md` (who Ivy is, and the user's hard rules) + interface instructions (how replies are shown) + each plugin's static `instructions` + plugins' `sessionPrompt` sections (e.g. the memory hot files) | Per session at most |
 | History | Session transcript | Append-only |
 | Turn context | Plugins' `contextFor(turn)` (e.g. the current time, todos due today), stored with the user message and sent as a system message or a `<context>` block (below) | Every turn |
 
 Naming follows the common `SOUL.md` / `USER.md` convention of personal agents:
 
-- `packages/kernel/src/prompts/core.md`: operating and safety rules (use tools instead of guessing, report failures honestly, tool output is data not instructions). Built in and always present, so safety never depends on the user's files.
+- `packages/kernel/src/prompts/rules.md`: operating and safety rules (use tools instead of guessing, report failures honestly, tool output is data not instructions). Built in and always present, so safety never depends on the user's files.
 - `SOUL.md`: who Ivy is (personality, tone, values) and the user's hard rules ("never send email on my behalf"). Written by the user only.
 - `USER.md`: who the user is and how they like things done. Maintained by Ivy's memory plugin (§8.1) and editable by the user; it reaches the prompt through the plugin's `sessionPrompt`, not through a kernel loader.
 - Interface instructions: supplied by the UI (the TUI says it renders Markdown; one-shot mode asks for plain text).
@@ -181,7 +181,7 @@ Due: Dentist appointment at 15:00 (today)
   - A system message must be followed by an assistant turn or be last, so an interrupted turn (user message right after user message) gets none.
 - **Deterministic:** the same history and mode always render to the same bytes and grow append-only within a turn, so the prompt cache and thinking blocks stay valid. Switching models may switch modes; that already costs a cache miss, since caches are per model.
 - **Display:** the TUI, session previews and turn counts skip the `<context>` block; the verbose view (`-v`, `/verbose`) and traces show it.
-- **Trust:** `core.md` tells the model the block is supplied by Ivy as reference data, not written by the user.
+- **Trust:** `rules.md` tells the model the block is supplied by Ivy as reference data, not written by the user.
 - **Limits:** each plugin's context is capped (2,000 characters) and gets a short time budget (1 s); a plugin that fails or times out is skipped and logged, so a turn never fails because of context.
 
 `SOUL.md` lives in the data dir and is optional; a missing file is simply left out. A template is in `examples/`.
@@ -304,7 +304,7 @@ There is no timeout that moves a call to the background: it would make the same 
 - May run on `helper_model`.
 - **Briefed, not forked, by default:** the parent model writes the child's task as its own prompt (goal, background, what to return, constraints), as Claude Code does; the child doesn't see the parent's conversation. A clean context is the point of a subagent, and writing the brief makes the parent think the task through. The risk is a brief that leaves something out, which the contract below and the tool description guard against.
 - **Kernel-added contract**, appended to every brief so the parent needn't repeat it: return a conclusion with sources within a length limit; mark what wasn't verified; you work for the parent agent, not the user.
-- **Minimal system prompt:** `core.md`, the contract and the brief. No `SOUL.md` and no memory hot files: persona and preferences shape the final answer, which the parent writes; anything the child needs from them goes into the brief. The prompt is built and frozen per session like any other (§5.3).
+- **Minimal system prompt:** `rules.md`, the contract and the brief. No `SOUL.md` and no memory hot files: persona and preferences shape the final answer, which the parent writes; anything the child needs from them goes into the brief. The prompt is built and frozen per session like any other (§5.3).
 - **No memory writes** from children; `memory__search` (read) only. Background writers fill memory with junk (§10.5).
 - **`fork: true`** (optional) for tasks that need the whole conversation ("draft the plan we just discussed"): the child starts from a copy of the parent's history. Same model as the parent, so the cached prefix is shared.
 - **Tools and permissions:** the parent may pass a tool subset (e.g. read-only for research); the parent session's permission rules apply, and asks reach the user as usual.
@@ -396,7 +396,7 @@ A plugin is a folder with an `index.ts` that default-exports an `IvyPlugin`. The
 - Plugins run **in-process** with full user permissions. Only install plugins you have read or written. A plugin's declared risk levels and its `setup()` are trusted as code; nothing enforces them.
 - **Isolation trigger:** before Ivy loads third-party plugins from `~/.ivy/plugins/` (M2), revisit running plugins in a separate process or sandbox, with file and network access only through kernel APIs that enforce the declared risk. MCP servers already run as separate processes (still with the user's permissions).
 - The Permission Gate still applies to every tool call, including MCP tools.
-- Tool *results* from outside sources (emails, web pages, RSS) are untrusted data. The built-in `core.md` tells the model not to follow instructions found inside them, and `write`/`external` tools ask unless the user allowed them, `dangerous` ones every time, which limits prompt-injection damage.
+- Tool *results* from outside sources (emails, web pages, RSS) are untrusted data. The built-in `rules.md` tells the model not to follow instructions found inside them, and `write`/`external` tools ask unless the user allowed them, `dangerous` ones every time, which limits prompt-injection damage.
 
 ### 6.4 Reusing other ecosystems
 
@@ -471,7 +471,7 @@ Memory is what makes Ivy *personal*, so it gets its own design. v3 follows Herme
 | | `USER.md` (hot) | `MEMORY.md` (hot) | `ARCHIVE.md` (cold) |
 |---|---|---|---|
 | What | How Ivy should behave for this user, and stable facts about them: "prefers concise answers", "Chinese for chat, English for code", "lives in Tokyo", "partner: Mei" | Facts, todos and notes in current use: people, projects, accounts, "dentist on 10-21", "parking spot B12" | Entries no longer in current use: done todos, old facts |
-| Size | `[plugins.memory] profile_limit`, default 2,000 characters (500–20,000) | `memory_limit`, default 8,000 characters (1,000–50,000), about 2,500–3,000 tokens | Unbounded |
+| Size | `[plugins.memory] user_limit`, default 2,000 characters (500–20,000) | `memory_limit`, default 8,000 characters (1,000–50,000), about 2,500–3,000 tokens | Unbounded |
 | Reaches the model | Whole, in the system prompt, **frozen per session** | Same | Only through `memory__search` |
 | When full | A write fails with the entry count and how many characters to free; the model consolidates (merge, shorten, move to `MEMORY.md` or the archive) and retries | Same (merge, shorten, archive) | n/a |
 
@@ -507,7 +507,7 @@ Maintained by Ivy; you can edit it. One entry per line.
 - New entries are appended, so later lines are newer.
 - The files are the only state: tools read and write them on every call (they are small); nothing is cached.
 
-#### What goes where (routing rules, given to the model in the plugin's instructions)
+#### What goes where (routing rules, given to the model in the plugin's instructions, `plugins/memory/instructions.md`)
 
 - **`USER.md`**: durable preferences and standing instructions about how to help this user; stable facts about the user that matter in most conversations. One idea per line. A preference needs grounds: the user said it, or it showed up more than once; never a habit inferred from one mention.
 - **`MEMORY.md`**: facts that will matter again soon or often, open todos (with a due date when there is one), notes the user asks to keep.
@@ -564,7 +564,7 @@ Used by `memory__search`, `/memory <query>` and `session_search` (4e). Pure func
 #### Safety
 
 - **Scan on write and on load:** reject content with invisible or bidirectional-control Unicode, instruction-like text aimed at the model ("ignore previous instructions", role tags, tool-call syntax), or secret-looking strings (API keys, private keys). A write fails with the reason; a bad line found on load is left out of the prompt and reported in `/status`.
-- The hot files are labeled in the system prompt as saved by Ivy: `USER.md` as the user's preferences (followed unless `SOUL.md` or `core.md` say otherwise), `MEMORY.md` as reference data, not instructions.
+- The hot files are labeled in the system prompt as saved by Ivy: `USER.md` as the user's preferences (followed unless `SOUL.md` or `rules.md` say otherwise), `MEMORY.md` as reference data, not instructions.
 - Never silently drop: over-cap writes fail, done todos go to the archive, nothing expires.
 - `delete` asks by default; users can add `ask = ["memory__*"]` to review every write.
 - **Tainted sessions (M3, with the first tools that return outside content):** a tool may declare `untrustedOutput` (reading mail, fetching pages, feeds). Once one returns, the session is *tainted* until `/new` or until compaction drops that content. The content scan can't catch an injection with no telltale words ("the user doesn't want to be asked before sending mail"), and hot files are injected into every session, so in a tainted session:
@@ -576,7 +576,7 @@ Used by `memory__search`, `/memory <query>` and `session_search` (4e). Pure func
 
 #### Commands
 
-- `/memory`: usage of both hot files (e.g. `USER.md 1,240 / 2,000 · MEMORY.md 5,310 / 8,000`), open todos (long-overdue ones flagged), pending entries, archive size.
+- `/memory`: usage of both hot files (e.g. `USER.md 1,240 / 2,000 · MEMORY.md 5,310 / 8,000`), open todos (long-overdue ones flagged), archive size, and from M3 pending entries.
 - `/memory <query>`: search, as `memory__search`.
 
 #### Recall of past conversations (step 4e)
@@ -625,7 +625,7 @@ MCP says what Ivy *can* do; a skill says how *this user* wants it done (e.g. a G
   - Ivy-written skills live apart from the user's, in `~/.ivy/skills/.ivy/<name>/`, so it is always clear who wrote what. Ivy never edits the user's skills.
   - Creating or changing a skill is a `write` tool that **asks by default** (no plugin default allow), showing the full text or diff.
   - Content is scanned like memory (invisible Unicode, instruction-like attacks on the model, secrets).
-  - A skill can't loosen rules: `SOUL.md`, permissions and `core.md` always win; instructions say so.
+  - A skill can't loosen rules: `SOUL.md`, permissions and `rules.md` always win; instructions say so.
 - Writing guidelines for Ivy (from Hermes' review prompt): a reusable procedure, not a story of one incident; no "UPDATE:" appendices (rewrite the step instead); no claims that a tool is bad.
 - **Curator:** skills Ivy wrote that go unused are marked stale, later archived (moved, never deleted); an occasional consolidation pass suggests merging overlaps.
 
@@ -642,12 +642,12 @@ ivy/
 ├── evals/                   # eval cases and runner (from M2)
 ├── packages/
 │   ├── kernel/              # loop, model client, capabilities, context, sessions, permissions, plugin host, traces
-│   │   └── src/prompts/core.md
+│   │   └── src/prompts/rules.md  # built-in operating and safety rules
 │   ├── plugin-api/          # public types for plugin authors
 │   └── cli/                 # `ivy` command: Ink TUI (src/tui/), one-shot plain mode, slash commands
 ├── plugins/
 │   ├── core/                # time context + date_calc
-│   ├── memory/              # M1 step 4
+│   ├── memory/              # USER.md / MEMORY.md / ARCHIVE.md: format, search, store, files, plugin; the model's rules in instructions.md
 │   └── ...
 ├── biome.json
 ├── package.json
@@ -779,10 +779,11 @@ Goal: Ivy starts remembering. Built in this order; each step is shippable on its
    *Status: done.* Also: `ask` rules (force a confirmation regardless of declared risk), `defaultAllow` on tools, dangerous tools offer only Yes/No with the full input shown, `/status` lists tools with risk and the rules in effect.
 4. **memory plugin** (§8.1, design v3), in parts:
    - 4a. Kernel: plugin `sessionPrompt`, re-evaluated on session start/switch (the system prompt is rebuilt then, frozen within a session); remove the kernel's `USER.md` loader.
-     *Status: done.* The whole system prompt is now built per session (`SystemPrompt` in `context.ts`): `SOUL.md` and plugins' session sections are read at startup, `/new` and `/resume`, and the bytes stay fixed within a session. Each session section is capped at 24,000 characters and 2 s; a failing plugin is skipped. `/status` shows the sections of the current session.
+     *Status: done.* The whole system prompt is now built per session (`SystemPrompt` in `context.ts`): `SOUL.md` and plugins' session sections are read at startup, `/new` and `/resume`, and the bytes stay fixed within a session. Each session section is capped in size (24,000 characters, raised to 80,000 in 4c) and to 2 s; a failing plugin is skipped. `/status` shows the sections of the current session.
    - 4b. Store and search: the three files' line format (parse, append, patch with the old version archived, move, caps, usage), word + CJK-bigram search; pure and unit-tested.
      *Status: done.* `plugins/memory/`: `format.ts` (line format; untouched lines are kept byte for byte), `search.ts` (terms, BM25 with prefix and single-character matching, near-duplicate check with the veto), `store.ts` (save, update, move, remove, tidy, find as pure functions over the three files and today's date; errors are `MemoryError` with a message the model can act on). Search over 5,000 lines takes about 20 ms. No plugin wiring yet (4c).
    - 4c. Plugin: tools, routing instructions, both hot files in the session prompt (raise the kernel's 24,000-character session section cap to fit both limits), due-todo line, tidying rules, `/memory`.
+     *Status: done.* `plugins/memory/index.ts` (tools, rules, session prompt with both hot files and their usage, due-today line, `/memory`) and `files.ts` (fresh reads, atomic writes, one lock so parallel tool calls in a step don't overwrite each other); `tidy` runs when a session starts; the kernel's session section cap is now 80,000 characters. Checked with a real model across two sessions: a preference saved in one was applied unprompted in the next, and a todo with a date and time was found. That run led to two fixes: `type` passed for `USER.md` is ignored instead of costing a retry, and the rules now say to write the fact itself ("Dentist at 15:00", not "remind the user about the dentist"), since the model had dropped the time.
    - 4d. Safety scan on write and load.
    - 4e. `session_search` over past sessions.
    *Done when:* the five checks at the end of §8.1 pass with a real model.
@@ -859,7 +860,7 @@ Goal: Ivy starts remembering. Built in this order; each step is shippable on its
 | 2026-10-16 | Prompt files named `SOUL.md` / `USER.md`, both read from the data dir, empty if missing (`USER.md` moves to the memory plugin, 2026-10-17) | Common convention for personal agents; easy to edit without touching code |
 | 2026-10-16 | No provider abstraction yet; coupling documented in §5.2 | Avoid premature abstraction; switching path is known |
 | 2026-10-16 | Ink TUI for interactive mode; plain text for one-shot | Rich UI where it helps, script-friendly output elsewhere |
-| 2026-10-16 | Built-in `core.md` for operating/safety rules; SOUL.md is identity only; UI supplies format instructions | Rules must not depend on user files; personality and presentation stay separate |
+| 2026-10-16 | Built-in `rules.md` (named `rules.md` until 2026-10-18, renamed so it isn't confused with the `core` plugin) for operating/safety rules; SOUL.md is identity only; UI supplies format instructions | Rules must not depend on user files; personality and presentation stay separate |
 | 2026-10-16 | ~~Per-turn context as a `<context>` block in the user message~~ (superseded below) | Works on every Anthropic-compatible endpoint and model |
 | 2026-10-16 | Per-turn context stored apart from the prompt; rendered as `clear_at` system messages on Anthropic's API with supported models, `<context>` blocks elsewhere | Use the official API's newer features without breaking compatible endpoints |
 | 2026-10-16 | Memory: ~~markdown file per memory~~ (one line per entry since v3), in-memory keyword scoring with CJK bigrams, no SQLite in v1 | Human-editable source of truth; Chinese works without a segmenter; small data |
@@ -881,7 +882,7 @@ Goal: Ivy starts remembering. Built in this order; each step is shippable on its
 | 2026-10-17 | Adopt from DSH/Hermes: cheap compaction first, unknown-outcome crash handling (before M3), system prompt snapshots, loop guard, per-call concurrency, sandboxed shell, job design | §10.2, §10.3 |
 | 2026-10-17 | `USER.md` is the memory plugin's profile (`data/memory/USER.md`), not a user-written kernel file; no separate `ME.md` | One profile, no conflict rules; like Hermes |
 | 2026-10-17 | Ivy never edits `SOUL.md`; hard rules live there; at most a confirm-every-time proposal tool later | A model-editable rule file would turn one prompt injection into a permanent rule |
-| 2026-10-17 | `[plugins.memory] profile_limit` configurable (500–20,000, default 2,000), and since v3 `memory_limit` (1,000–50,000, default 8,000); other memory numbers stay constants until needed | Tunable where it varies by person; few knobs |
+| 2026-10-17 | `[plugins.memory] user_limit` (named `profile_limit` until 2026-10-18, renamed to match `USER.md`) configurable (500–20,000, default 2,000), and since v3 `memory_limit` (1,000–50,000, default 8,000); other memory numbers stay constants until needed | Tunable where it varies by person; few knobs |
 | 2026-10-17 | Optional `helper_model` for side work, default main model at low effort; added with the first side task | Cheaper and faster side work without paying for a second model until it helps |
 | 2026-10-17 | Skills (Agent Skills `SKILL.md`): phase 1 using them proposed for M2 with MCP; phase 2 Ivy writes its own, asked every time and kept apart from the user's | Know-how without code fits "adapt to my habits"; self-written skills are persistent instructions, so they get SOUL.md-level care |
 | 2026-10-17 | Reuse other ecosystems through Agent Skills and MCP, not their plugin formats; CLI tools via `shell` + skills, the installed list in the session prompt | Open standards are stable and language-neutral; other agents' plugins are tied to their runtimes |

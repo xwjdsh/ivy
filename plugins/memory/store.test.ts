@@ -46,6 +46,9 @@ test("save appends a dated line and reports usage; headings are untouched", () =
   expect(u.status === "saved" && u.line).toBe(
     "- [2026-10-18 since:2026-01-01] Prefers concise answers",
   );
+  // A type passed for USER.md is ignored rather than costing the model a retry.
+  const typed = save(ctx(), { file: "user", content: "Speaks Japanese", type: "fact" });
+  expect(typed.status === "saved" && typed.line).toBe("- [2026-10-18] Speaks Japanese");
 });
 
 test("save rejects bad input with a message the model can act on", () => {
@@ -56,7 +59,6 @@ test("save rejects bad input with a message the model can act on", () => {
   expect(() => save(c, { file: "memory", content: "x", type: "fact", due: "2026-10-21" })).toThrow(
     "only for todos",
   );
-  expect(() => save(c, { file: "user", content: "x", type: "fact" })).toThrow("no type");
 });
 
 test("a re-save changes nothing; distinct saves anyway; similar lines come back as hints", () => {

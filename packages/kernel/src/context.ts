@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import type { Paths } from "./config.ts";
 import type { PluginHost } from "./plugins.ts";
-import CORE from "./prompts/core.md" with { type: "text" };
+import RULES from "./prompts/rules.md" with { type: "text" };
 
 export interface PromptPart {
   name: string;
@@ -11,7 +11,7 @@ export interface PromptPart {
 /**
  * The system prompt, built per session and frozen for it, most stable part first:
  *
- * 1. core.md: built-in operating and safety rules (always present, not user-editable)
+ * 1. rules.md: built-in operating and safety rules (always present, not user-editable)
  * 2. SOUL.md: who Ivy is (data dir, optional)
  * 3. interface instructions: output format for the current UI (e.g. TUI vs. plain text)
  * 4. plugin instructions (static)
@@ -56,7 +56,7 @@ export class SystemPrompt {
   }
 
   private async build(sessionId: string): Promise<PromptPart[]> {
-    const parts = [{ name: "core.md", text: CORE.trim() }];
+    const parts = [{ name: "rules.md", text: RULES.trim() }];
 
     const soul = readOptional(this.paths.soul);
     if (soul) parts.push({ name: "SOUL.md", text: soul });
