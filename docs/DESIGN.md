@@ -359,6 +359,26 @@ A plugin is a folder with an `index.ts` that default-exports an `IvyPlugin`. The
 - The Permission Gate still applies to every tool call, including MCP tools.
 - Tool *results* from outside sources (emails, web pages, RSS) are untrusted data. The built-in `core.md` tells the model not to follow instructions found inside them, and `write`/`external` tools ask unless the user allowed them, `dangerous` ones every time, which limits prompt-injection damage.
 
+### 6.4 Reusing other ecosystems
+
+Ivy reuses other agents' work through open standards, not their plugin formats:
+
+| Source | Reusable? | How |
+|---|---|---|
+| Code plugins of other agents (Hermes: Python; OpenClaw: TypeScript on its own runtime API) | No | Bound to another runtime; an adapter would chase their API and run third-party code in-process (§6.3). Not planned. |
+| Skills (`SKILL.md`, Agent Skills format; Hermes skills, ClawHub) | Mostly as-is | §8.2. Many assume a shell, so most become useful with the `shell` plugin (M2). Third-party skills are instructions to the model: scanned like memory and confirmed on first use (ClawHub has hosted malicious skills). |
+| MCP servers | Yes | MCP bridge (M2); calls still go through the Permission Gate. |
+
+**Command-line tools** are reached in three ways, cheapest first:
+
+1. **`shell` plugin** (M2): the model runs the command. No code, but coarse permissions (argument rules such as `shell__run(gh pr list*)` and the sandbox narrow it).
+2. **`shell` + a skill**: the skill says how *this user* uses the tool (accounts, flags, workflow).
+3. **A thin plugin or an MCP server**: one tool per operation with a schema and an accurate risk level (`gh__pr_list` is `read`, `gh__pr_merge` is `external`). Worth it for tools used often, or where reads and side effects must be told apart.
+
+What the model is told about them:
+- **What is installed:** yes, briefly. The `shell` plugin's session prompt lists the configured tools (`[plugins.shell] tools`) that are actually on `PATH`, e.g. `Shell: zsh on macOS. Available: git, gh, jq, rg, ffmpeg`. A few dozen tokens, fixed per session.
+- **How to use them:** mostly not. Models know common tools; details come from `<tool> --help` at run time; unusual tools and personal habits go into skills, loaded on demand.
+
 ## 7. Data & Storage Layout
 
 ```
@@ -531,6 +551,7 @@ MCP says what Ivy *can* do; a skill says how *this user* wants it done (e.g. a G
 - Skills are folders in `~/.ivy/skills/<name>/` with a `SKILL.md` (name and one-line description in frontmatter, instructions in the body) and optional reference files.
 - **Progressive disclosure:** the system prompt carries only an index (name + description per skill, capped); the model loads the full text with `skill_view(name)` and reference files with `skill_view(name, path)` when it needs them. Same idea as pi, DSH and Hermes.
 - The user can also call a skill directly: `/<skill-name>`.
+- A skill may declare the commands it needs; if one is missing from `PATH`, the skill is left out of the index, so the model never picks a skill that can't run (as in OpenClaw).
 - Plain prompt text plus one read tool: works on any model and endpoint (Anthropic's server-side Skills are not required).
 
 **Phase 2 (later): Ivy writes its own skills** (as Hermes does)
@@ -760,3 +781,4 @@ Goal: Ivy starts remembering. Built in this order; each step is shippable on its
 | 2026-10-17 | `[plugins.memory] profile_limit` configurable (500–20,000, default 2,000); other memory numbers stay constants until needed | Tunable where it varies by person; few knobs |
 | 2026-10-17 | Optional `helper_model` for side work, default main model at low effort; added with the first side task | Cheaper and faster side work without paying for a second model until it helps |
 | 2026-10-17 | Skills (Agent Skills `SKILL.md`): phase 1 using them proposed for M2 with MCP; phase 2 Ivy writes its own, asked every time and kept apart from the user's | Know-how without code fits "adapt to my habits"; self-written skills are persistent instructions, so they get SOUL.md-level care |
+| 2026-10-17 | Reuse other ecosystems through Agent Skills and MCP, not their plugin formats; CLI tools via `shell` + skills, the installed list in the session prompt | Open standards are stable and language-neutral; other agents' plugins are tied to their runtimes |
