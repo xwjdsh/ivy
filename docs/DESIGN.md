@@ -35,7 +35,7 @@ Everything users care about (memory, email, calendar, coding help, news digests,
 
 - Multi-user, accounts, or hosting for others.
 - Speaking APIs other than the Anthropic Messages API, for now. Within it, any model works: Claude on Anthropic's API, or any model behind an Anthropic-compatible endpoint (e.g. a local proxy). An OpenAI-format adapter can be added in `ModelClient` when an endpoint needs it (§5.2).
-- A GUI. (A chat-app bot or local web UI may come later as more *interfaces*, see §5.7.)
+- A full GUI. The M4 daemon gets a small menu-bar app (settings, quick capture, notifications); a chat-app bot or local web UI may come later as more *interfaces*, see §5.7.
 - A general-purpose agent framework for other people. Ivy is tuned for one person.
 
 ## 3. Guiding Principles
@@ -54,7 +54,7 @@ Everything users care about (memory, email, calendar, coding help, news digests,
 ```
                 ┌──────────────────────────────────────────────┐
                 │                  Interfaces                  │
-                │   CLI/TUI (M0)   ·   Daemon (M4)   ·   Bot?  │
+                │  CLI/TUI · menu-bar app (M4) · chat bot? ... │
                 └───────────────────────┬──────────────────────┘
                                         │ events / messages
 ┌───────────────────────────────────────▼───────────────────────────────────────┐
@@ -79,6 +79,8 @@ Everything users care about (memory, email, calendar, coding help, news digests,
                                    (TS modules)          (stdio/http)    data dirs
 ```
 
+Today the kernel runs inside the CLI process. From M4 it runs in the daemon, which owns sessions, and every interface is a client of it (§5.7).
+
 ### Request flow (one user turn)
 
 1. The interface sends the user's message to the **Agent Loop** with a session id.
@@ -95,7 +97,7 @@ Everything users care about (memory, email, calendar, coding help, news digests,
 - A **manual tool-use loop** that we own (not the SDK's beta Tool Runner). The loop is small, and owning it gives us permission checks, plugin hooks, interruption (Ctrl-C), and step limits in one place.
 - Streaming by default; text and tool progress go to the interface as they arrive.
 - Parallel tool calls run concurrently; all `tool_result` blocks return in **one** user message. Failed tools return `is_error: true` instead of throwing.
-- Limits: `maxSteps` per turn (default 25) and an optional task budget.
+- Limits: `maxSteps` per turn (default 25); a task budget (tokens per turn) is planned.
 - **Loop guard (M2):** when the same tool is called with identical input 3 times in a turn, add a short reminder to the next request; weaker models otherwise go in circles (DSH).
 - **Per-call concurrency (M2):** tools may declare whether a call is safe to run in parallel; unsafe calls (e.g. two writes to one file) run alone, in order (DSH, Hermes).
 - **Steering (planned, M2):** while a turn runs, the user can send a message instead of interrupting and starting over ("don't touch that file"). If tools are running, they move to the background at once (§5.9) and the model answers the message; if the model is writing, the message is added after the current step. Today the TUI only lets you type ahead. (Borrowed from pi, see §10.1.)
@@ -115,7 +117,7 @@ Everything users care about (memory, email, calendar, coding help, news digests,
 - **Prompt caching:** tools and system prompt are kept byte-stable (plugins sorted by id, no timestamps), with a cache breakpoint after them. Volatile context (the time, todos due today) goes with the new user message, as a `clear_at` system message or a `<context>` block (§5.3), never into the system prompt, so the cached prefix stays intact.
 - **Helper model for side work (planned, with the first such task):** compaction summaries, background memory review, an auto-permission classifier, session titles and digest summaries don't need the main model, and some sit in the user's path (classifying a tool call must be fast). An optional `[agent] helper_model` (a model on the active provider) runs them; unset, they use the main model at `low` effort, which per Anthropic's guidance is the first thing to measure: a strong model at low effort often matches a smaller model, and one model keeps one prompt cache. (Hermes uses an auxiliary model this way, §10.3.)
 - **Switching models:** the active provider's `models` lists what `/model` offers (a picker, or `/model <name>`); the choice is saved as the provider's `default_model` in `config.toml` (that one line is edited in place; comments and layout are kept). `/effort` works the same way for `[generation] effort` (a picker or `/effort <level>`); note that changing the top-level effort mid-session invalidates the cached messages once (Anthropic's per-message effort beta would avoid that; possible enhancement). Requests only carry params the model accepts (`Capabilities`): e.g. Haiku gets no `effort` and no refusal fallback, and an unsupported effort level is lowered to the nearest one the model has. The prompt cache is per model, so the first call after a switch misses it.
-- **Long sessions — compaction:** when the context nears the model's window (minus a reserve for the answer), Ivy summarizes older history itself with a model call, keeps the most recent part (~20k tokens) verbatim, and sends `summary + recent` from then on; the original messages stay in the session file, and later compactions update the summary. This works on every endpoint (compatibility first). Anthropic's server-side compaction (beta) is an enhancement where `Capabilities` allows it, not the baseline. Also `/compact [instructions]` to compact by hand. (Approach as in pi, §10.1.)
+- **Long sessions — compaction (planned; deferred from M0 until sessions get long):** when the context nears the model's window (minus a reserve for the answer), Ivy summarizes older history itself with a model call, keeps the most recent part (~20k tokens) verbatim, and sends `summary + recent` from then on; the original messages stay in the session file, and later compactions update the summary. This works on every endpoint (compatibility first). Anthropic's server-side compaction (beta) is an enhancement where `Capabilities` allows it, not the baseline. Also `/compact [instructions]` to compact by hand. (Approach as in pi, §10.1.)
   - **Memory flush first** (OpenClaw, §10.4): before compacting, one extra call on `helper_model` sees the part about to be summarized, with the memory tools and the routing rules, and saves what is worth keeping (or replies `NO_REPLY`). The writes show as tool calls. Summaries lose details; this is the natural first trigger for automatic memory capture.
   - **Cheap relief first** (DSH, §10.2): before any summary, shorten oversized old tool results to head + tail, and spill very large results to files the model can read back; no model call needed.
   - **Trigger:** `min(0.8 × window, window − max_output − reserve)`. The window comes from the Models API on the official endpoint, else a per-model setting or a conservative default.
@@ -168,7 +170,7 @@ Each user turn, the kernel asks every enabled plugin for `contextFor(turn)` and 
 ```
 <context>
 ## core
-Now: 2026-10-16 Fri 14:57 (Asia/Tokyo, UTC+09:00)
+Now: 2026-10-16 Friday 14:57 (Asia/Tokyo, UTC+09:00)
 ## memory
 Due: Dentist appointment at 15:00 (today)
 </context>
@@ -193,7 +195,7 @@ Due: Dentist appointment at 15:00 (today)
 - One JSONL file per session in `~/.ivy/sessions/YYYY-MM-DD-<id>.jsonl`. Each line is a full API message plus metadata (timestamp, plugin, token usage).
 - Crash-tolerant: unparseable lines (a write cut off mid-line) are skipped, the next write starts on a fresh line, and an assistant tool call whose results were never written is dropped on load so the history stays a valid request. A tool call and its results are written in a single append.
 - **Side effects survive crashes honestly** (DSH, §10.2; needed before M3): before running an `external` or `dangerous` tool, record that it started; if the session reloads without its result, the model is told the outcome is *unknown* (it may already have happened) instead of the call being dropped and possibly repeated, e.g. an email sent twice.
-- **System prompt snapshot:** record the system prompt in the session whenever it changes (start, `/new`, `/resume`), so every request can be rebuilt from the session file alone ("model-visible ⟺ logged", DSH).
+- **System prompt snapshot (planned):** record the system prompt in the session whenever it changes (start, `/new`, `/resume`), so every request can be rebuilt from the session file alone ("model-visible ⟺ logged", DSH).
 - Commands: `ivy -c` continues the most recently active session; `/resume` (or `ivy -r`) opens a picker of recent sessions (last active, first prompt, turn count); `/resume <id>` / `ivy -r <id>` jump directly; `/new` starts a new one. No separate list command.
 - **Background results and child sessions (M2, §5.9):** a backgrounded call's placeholder result is written at once and its real result appended later as a new message; a subagent's child session is its own file, linked to the parent by id.
 - Usage (tokens, cache hits, and a cost estimate that is recorded but not shown) is written per model call; `/usage` reports tokens.
@@ -222,7 +224,7 @@ deny  = ["shell__*"]
 
 - **Precedence** (`permissions.ts`): `deny` > `ask` > dangerous tools always ask > allow (`allow` rules, learned "Always" rules, plugin defaults, "for this session") > the risk level's default (`read` runs, everything else asks). A denied call is rejected without asking, and the model is told it was blocked by a rule.
 - **Risk levels are declared by plugins and not verified.** A plugin could label a risky tool `read`. The gate protects against the *model* misusing tools, not against a malicious plugin (§6.3). `ask` rules let the user force a confirmation for any tool, and `/status` lists every tool with its declared risk.
-- **Sources:** rules from `config.toml` (hand-written) plus learned rules in `~/.ivy/permissions.json`, which Ivy owns. Ivy never rewrites `config.toml` as a whole; the only in-place edits are `/model` and `/effort` saving their choice (§5.2).
+- **Sources:** rules from `config.toml` (hand-written) plus learned rules in `~/.ivy/permissions.json`, which Ivy owns. Ivy never rewrites `config.toml` as a whole; today the only in-place edits are `/model` and `/effort` saving their choice (§5.2), later also the M4 app's settings (§5.7).
 - **Dialog:** *Yes* / *Yes, for this session* / *Always (saves an allow rule to permissions.json)* / *No*, with the reason it asks (`write tool`, `ask rule`, ...) and the input (in full for `dangerous` tools). Where remembering would have no effect (`dangerous` tools, `ask` rules) only *Yes* / *No* are offered, and the kernel treats a remembered choice there as *Yes* whatever the interface sends.
 - **Plugin defaults:** a tool may set `defaultAllow: true` (low-impact tools such as memory saves; not allowed on `dangerous` tools); user `deny` and `ask` rules still win.
 - "For this session" choices are cleared on `/new` and `/resume`.
@@ -259,8 +261,13 @@ An interface turns user I/O into kernel calls. All interfaces share the same ker
   - Redraw (`refresh`): clear Ink's frame and the terminal, then remount `<Static>` with a new key so history reprints. Used by `/new`, `/clear`, `/resume`, Ctrl+L, Ctrl+O and (debounced 100 ms) terminal width changes. Approach borrowed from Gemini CLI.
   - Tool calls are one line each: ✓/✗, name and input, plus the first line of an error. Results are hidden (the answer uses them); Ctrl+O shows the latest turn's tool output (capped at 500 lines) and hides it again; the verbose view shows full input and a short result preview.
   - One-shot mode (`ivy "question"`) stays plain text for scripts and pipes.
-- **M4 — Daemon** (`ivy daemon`): runs scheduled jobs and sends results as macOS notifications or files. The CLI can talk to it to see job output.
-- **Later (maybe)** — Chat-app bot (Telegram/Slack) for phone access; local web UI.
+- **M4 — Daemon** (`ivy daemon`): runs scheduled jobs and sends results as macOS notifications or files. The CLI becomes one of its clients.
+  - **Owns sessions; interfaces are clients.** The daemon holds sessions, jobs and background tasks; the terminal, a chat-app bot or a GUI connect to it over one local protocol (typed messages, idempotency keys on writes; OpenClaw's gateway, §10.4, is the reference). This is what makes more interfaces cheap: none of them touches plugins.
+  - **A signed macOS app of its own**, at minimum a small menu-bar shell: macOS grants screen recording, accessibility, automation and disk access to the *responsible app*. Run from a terminal, those grants go to the terminal and so to everything run in it; as its own app with a stable signature, Ivy is granted them alone and can be switched off on its own (an unstable signature, e.g. ad-hoc per build, would ask again after every build). Tools that need such rights run in the daemon; commands it starts inherit them, so Ivy's Permission Gate stays the second check.
+  - The menu-bar shell also gives a global shortcut for quick capture and a place for notifications, which covers most of what a GUI would add.
+  - **Settings in the app, files stay the truth:** model, effort and provider; permission rules, including revoking *Always* ones (today only by editing `permissions.json`); plugins on/off and their settings; the memory files and pending entries. The app edits `config.toml` the way `/model` and `/effort` do (that line only, comments kept, validated, restored on failure), so hand edits and the app never disagree; the daemon reloads the config, and changes that need a new session say so.
+  - **API keys in the Keychain:** with a signed app of its own, the app can keep provider API keys in the macOS Keychain, so `config.toml` no longer holds them in plain text (§7).
+- **Later (maybe)** — Chat-app bot (Telegram/Slack) for phone access; a local web UI for rich content (previews to approve, managing memory) if the terminal falls short. Both are daemon clients.
 
 ### 5.8 Tracing & Verbose View
 
@@ -273,8 +280,8 @@ Part of the kernel from M0, so problems can be debugged from day one.
 - **`/status`** (any time, verbose or not): provider and endpoint, the current model's capabilities and why, system prompt parts with sizes, plugins (and disabled ones), session, trace, config and cache paths.
   - Deliberately not included: showing the model's thinking (`thinking.display`), since that changes the request; observing should not change what is being observed.
   - One-shot `ivy -v "..."` prints the same request/step/context lines to stderr.
-- `/trace` in the CLI shows the last turn's full request as the model saw it (system prompt, tools, context layers), so prompt and context changes can be checked directly.
-- `ivy replay <trace>` re-sends a recorded request, optionally with a changed system prompt, model or effort, to compare outputs. This is the starting point for evals (M2+).
+- *(Planned, M2)* `/trace` in the CLI shows the last turn's full request as the model saw it (system prompt, tools, context layers), so prompt and context changes can be checked directly.
+- *(Planned, M2)* `ivy replay <trace>` re-sends a recorded request, optionally with a changed system prompt, model or effort, to compare outputs. This is the starting point for evals (M2+).
 
 ### 5.9 Background Tasks & Subagents (M2)
 
@@ -435,7 +442,7 @@ What the model is told about them:
 └── logs/                # kernel & daemon logs
 ```
 
-The Anthropic API key may live in `config.toml` (plain text). Other secrets (OAuth tokens, plugin API keys) go into the macOS Keychain. If `~/.ivy` is backed up with git, exclude `config.toml` or keep the key out of it.
+The Anthropic API key may live in `config.toml` (plain text). Other secrets (OAuth tokens, plugin API keys) will go into the macOS Keychain once plugins need them. If `~/.ivy` is backed up with git, exclude `config.toml` or keep the key out of it. Once the M4 app exists, it can move provider keys into the Keychain too (§5.7).
 
 The data root is `$IVY_HOME`, default `~/.ivy`. During development `bun run ivy` sets it to `./.ivy` in the repo (git-ignored), so all dev data is local and easy to wipe.
 
@@ -478,7 +485,7 @@ Memory is what makes Ivy *personal*, so it gets its own design. v3 follows Herme
 - **Why hot and cold:** whole injection never misses and lets the model judge relevance across synonyms and languages; the caps keep it cheap and focused, and the archive holds a lifetime of entries without putting them in every request. On endpoints without prompt caching the hot files cost full price each call, which is why they are capped.
 - **Why `USER.md` apart from `MEMORY.md`:** it holds standing instructions about the user, so it has its own cap and stricter rules (Safety); `MEMORY.md` holds facts and errands.
 - **The profile is `USER.md`**, maintained by Ivy and editable by the user (there is no separate user-written profile: tell Ivy, or edit the file). Things Ivy must never change, such as hard rules, belong in `SOUL.md`, which Ivy never edits (§5.3).
-- **Usage is visible to the model** (Letta, Hermes): each hot file is injected under a header with its size, e.g. `## MEMORY.md (5,310 / 8,000 chars)`, and every write returns the current usage. The rules ask the model to consolidate from 80% on, so a failed write is the exception and tidying doesn't land in the middle of urgent work.
+- **Usage is visible to the model** (Letta, Hermes): each hot file is injected under a header with its size, e.g. `## MEMORY.md (5,310 / 8,000 chars)`, and every write that adds to or changes a hot file returns its current usage. The rules ask the model to consolidate from 80% on, so a failed write is the exception and tidying doesn't land in the middle of urgent work.
 - **Lowering a limit truncates nothing:** the file is still injected whole, the next write fails until it is consolidated, and `/memory` shows it as over the limit.
 - **Frozen per session:** both hot files are read when a session starts (startup, `/new`, `/resume`) through the plugin's `sessionPrompt` (§6.2, M1 step 4a), so hand edits apply after `/new`. Writes reach disk at once and the model knows what it just wrote (and `memory__search` reads the files as they are now), but the system prompt only changes at the next session, which keeps the cached prefix stable.
 
@@ -495,14 +502,14 @@ All three use the same format, one entry per line, so moving an entry is moving 
 
 ```markdown
 # Memory
-Maintained by Ivy; you can edit it. One entry per line.
+Facts, todos and notes in current use. Maintained by Ivy; you can edit it. One entry per line.
 
 - [todo 2026-10-17 due:2026-10-21] Dentist appointment at 15:00 #health #牙医
 - [fact 2026-10-12] Passport expires 2026-12 #passport #护照
 - [fact 2026-09-30] Mei likes sushi #寿司
 ```
 
-- Line prefix: the type (`fact`, `note` or `todo`; none in `USER.md`) and the date the line was written, last changed or last confirmed (`update` with no changes), set by the tool, so the model can tell an old entry from a fresh one ("lives in Tokyo", as of when?). About 11 characters per line, roughly a seventh of `MEMORY.md` at full size. Then, where they apply: `since:YYYY-MM-DD` when a fact is known to have started on a date ("moved to Osaka in September"); `ends:YYYY-MM-DD` on a temporary state with a known end ("in Paris until 10-25", "no hiking while the knee heals"), which code moves to the archive marked `until:` once the date passes; `due:YYYY-MM-DD` for todos and `done:YYYY-MM-DD` once done; in the archive, `until:YYYY-MM-DD` on a version that stopped being true and `replaced:YYYY-MM-DD` on one that was only reworded or corrected; and `ext` on an entry saved from outside content (Safety). A deadline is a `due`, never an `ends` or `until`: "finish by March" doesn't stop being true in March (Graphiti shipped that bug). Unknown prefixes and free text are kept as they are, so hand edits never break parsing.
+- Line prefix: the type (`fact`, `note` or `todo`; none in `USER.md`) and the date the line was written, last changed or last confirmed (`update` with no changes), set by the tool, so the model can tell an old entry from a fresh one ("lives in Tokyo", as of when?). Type and date take about 18 characters per line (13 in `USER.md`), roughly a fifth of `MEMORY.md` at ~80 characters per entry. Then, where they apply: `since:YYYY-MM-DD` when a fact is known to have started on a date ("moved to Osaka in September"); `ends:YYYY-MM-DD` on a temporary state with a known end ("in Paris until 10-25", "no hiking while the knee heals"), which code moves to the archive marked `until:` once the date passes; `due:YYYY-MM-DD` for todos and `done:YYYY-MM-DD` once done; in the archive, `until:YYYY-MM-DD` on a version that stopped being true and `replaced:YYYY-MM-DD` on one that was only reworded or corrected; and `ext` on an entry saved from outside content (Safety). A deadline is a `due`, never an `ends` or `until`: "finish by March" doesn't stop being true in March (Graphiti shipped that bug). Unknown prefixes and free text are kept as they are, so hand edits never break parsing.
 - `#tags` at the end, written in both languages with common synonyms (routing rules); they matter for searching the archive.
 - New entries are appended, so later lines are newer.
 - The files are the only state: tools read and write them on every call (they are small); nothing is cached.
@@ -547,7 +554,7 @@ Moving between hot and cold deletes nothing (the archive stays searchable), so t
 
 #### Per-turn context
 
-`contextFor` adds one line only when todos are due today or overdue (max 3): `Due: Dentist appointment at 15:00 (today)`. The todos are already in the prompt; the line makes sure they get brought up on the day.
+`contextFor` adds a `Due:` line for each todo in the hot files that is due today or overdue, at most 3: `Due: Dentist appointment at 15:00 (today)`, `Due: Taxes (overdue since 2026-10-01)`; nothing otherwise. The todos are already in the prompt; the line makes sure they get brought up on the day.
 
 #### Search
 
@@ -576,7 +583,7 @@ Used by `memory__search`, `/memory <query>` and `session_search` (4e). Pure func
 
 #### Commands
 
-- `/memory`: usage of both hot files (e.g. `USER.md 1,240 / 2,000 · MEMORY.md 5,310 / 8,000`), open todos (long-overdue ones flagged), archive size, and from M3 pending entries.
+- `/memory`: usage and size, e.g. `USER.md (1,240 / 2,000 chars) · MEMORY.md (5,310 / 8,000 chars) · ARCHIVE.md 42 entries`; open todos in `MEMORY.md` (long-overdue ones flagged); the files' folder; from M3, pending entries.
 - `/memory <query>`: search, as `memory__search`.
 
 #### Recall of past conversations (step 4e)
@@ -814,6 +821,8 @@ Goal: Ivy starts remembering. Built in this order; each step is shippable on its
 
 ### M4 — Daemon & Digest
 - `ivy daemon` (launchd service), scheduler, macOS notifications.
+- The daemon owns sessions and exposes one local protocol; the CLI becomes a client (§5.7).
+- Packaged as a signed macOS app (menu-bar shell) so system permissions are granted to Ivy, not to the terminal; settings in the app edit `config.toml` in place; provider keys can move to the Keychain (§5.7).
 - Jobs (as in Hermes): each run is a fresh agent with no chat history; schedules like `every 1d at 08:30` or cron syntax; results delivered to a notification, a file, or (later) a chat; a job can't create jobs; the unattended permission mode applies (writes allowed, external actions deferred to the user, dangerous denied).
 - From OpenClaw: a job with nothing worth reporting replies `NO_REPLY` and sends no notification; a job may have a cheap pre-check script ("any new mail?") and the model runs only when it says so.
 - `digest` plugin: morning brief combining calendar, inbox, todos, feeds.
@@ -860,7 +869,7 @@ Goal: Ivy starts remembering. Built in this order; each step is shippable on its
 | 2026-10-16 | Prompt files named `SOUL.md` / `USER.md`, both read from the data dir, empty if missing (`USER.md` moves to the memory plugin, 2026-10-17) | Common convention for personal agents; easy to edit without touching code |
 | 2026-10-16 | No provider abstraction yet; coupling documented in §5.2 | Avoid premature abstraction; switching path is known |
 | 2026-10-16 | Ink TUI for interactive mode; plain text for one-shot | Rich UI where it helps, script-friendly output elsewhere |
-| 2026-10-16 | Built-in `rules.md` (named `rules.md` until 2026-10-18, renamed so it isn't confused with the `core` plugin) for operating/safety rules; SOUL.md is identity only; UI supplies format instructions | Rules must not depend on user files; personality and presentation stay separate |
+| 2026-10-16 | Built-in `rules.md` (named `core.md` until 2026-10-18, renamed so it isn't confused with the `core` plugin) for operating/safety rules; SOUL.md is identity only; UI supplies format instructions | Rules must not depend on user files; personality and presentation stay separate |
 | 2026-10-16 | ~~Per-turn context as a `<context>` block in the user message~~ (superseded below) | Works on every Anthropic-compatible endpoint and model |
 | 2026-10-16 | Per-turn context stored apart from the prompt; rendered as `clear_at` system messages on Anthropic's API with supported models, `<context>` blocks elsewhere | Use the official API's newer features without breaking compatible endpoints |
 | 2026-10-16 | Memory: ~~markdown file per memory~~ (one line per entry since v3), in-memory keyword scoring with CJK bigrams, no SQLite in v1 | Human-editable source of truth; Chinese works without a segmenter; small data |
@@ -900,4 +909,6 @@ Goal: Ivy starts remembering. Built in this order; each step is shippable on its
 | 2026-10-18 | Memory: near-duplicate check vetoed by a differing number, date or rare word | Similar wording with a different value is a different fact (claude-mem, §10.5) |
 | 2026-10-18 | Subagents are briefed by the parent (fork optional), get a kernel-added contract and a minimal system prompt, and can't write memory | Clean context is the point; the contract keeps briefs from missing the essentials; background memory writes produce junk |
 | 2026-10-18 | Permission prompts offer *for this session* / *Always* only where they take effect (risk-default asks); the kernel enforces it and the prompt shows why it asks | An `ask` rule comes before every allow, so remembering there did nothing |
-| 2026-10-18 | System prompt built per session and frozen (M1 4a); plugins add sections via `sessionPrompt`; the kernel no longer loads `USER.md` | The memory files must be in the system prompt without breaking the cache within a session |
+| 2026-10-18 | System prompt built per session and frozen (M1 4a; implements the 2026-10-17 `sessionPrompt` decision); the kernel no longer loads `USER.md` | The memory files must be in the system prompt without breaking the cache within a session |
+| 2026-10-18 | M4 daemon owns sessions behind one local protocol (interfaces are clients) and ships as a signed macOS menu-bar app | More interfaces without touching plugins; macOS privacy grants go to Ivy alone instead of the terminal and everything run in it |
+| 2026-10-18 | The M4 app manages settings by editing `config.toml` in place (no second settings store) and can keep API keys in the Keychain | One source of truth that stays hand-editable; keys out of a plain-text file |

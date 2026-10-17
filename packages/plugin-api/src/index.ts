@@ -48,7 +48,7 @@ export interface PluginContext {
 /** What a plugin knows about the turn it is adding context to. */
 export interface TurnInfo {
   sessionId: string;
-  /** The new user message, e.g. to find relevant memories. */
+  /** The new user message, for context that depends on what was asked. */
   userText: string;
   now: Date;
 }
@@ -65,7 +65,7 @@ export interface CommandContext {
 
 /** A slash command the user can run directly, without the model. */
 export interface CommandDef {
-  /** e.g. "/remember". Lowercase letters, digits and dashes. */
+  /** e.g. "/memory". Lowercase letters, digits and dashes. */
   name: string;
   /** Shown in the / list: "<text>" for a required argument, "[query]" for an optional one. */
   args?: string;
@@ -92,7 +92,7 @@ export interface IvyPlugin {
    */
   sessionPrompt?(session: SessionInfo): Promise<string | null> | string | null;
   /**
-   * Text to add to this turn's `<context>` block (e.g. the time, relevant memories),
+   * Text to add to this turn's `<context>` block (e.g. the time, todos due today),
    * or null for nothing. Capped in size and time by the host; errors are skipped.
    */
   contextFor?(turn: TurnInfo): Promise<string | null> | string | null;

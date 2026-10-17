@@ -1,7 +1,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 
 /**
- * Per-turn context (time, relevant memories, ...) travels as a `<context>` text block
+ * Per-turn context (the time, todos due today, ...) travels as a `<context>` text block
  * at the start of the user message. That works on every Anthropic-compatible endpoint,
  * unlike mid-conversation system messages, and is stored in history like everything else.
  */
