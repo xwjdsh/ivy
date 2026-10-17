@@ -3,19 +3,6 @@ import { dirname } from "node:path";
 import type { RiskLevel } from "@ivy/plugin-api";
 import { createLogger } from "./log.ts";
 
-/**
- * Who may run a tool without asking. Checked in this order; the first match wins:
- *
- * 1. `deny` rules (config.toml): rejected, never asked.
- * 2. `ask` rules (config.toml): always asked, whatever the tool's declared risk. This is
- *    the user's answer to a plugin that labels a risky tool "read".
- * 3. `dangerous` tools: always asked; allow rules and "remember" choices don't apply.
- * 4. Allow: `allow` rules (config.toml), learned rules (permissions.json, from "Always"),
- *    plugin defaults (`defaultAllow` on low-impact tools), and "for this session" choices.
- * 5. The risk level's default: `read` runs, everything else is asked.
- *
- * Rules are tool-name globs; `*` matches anything ("memory__*").
- */
 export type Decision = "allow" | "deny" | "ask";
 
 /** What the user picked in a permission prompt. */
@@ -38,9 +25,22 @@ export interface DecisionWithReason {
   canRemember: boolean;
 }
 
+/**
+ * Who may run a tool without asking. Checked in this order; the first match wins:
+ *
+ * 1. `deny` rules (config.toml): rejected, never asked.
+ * 2. `ask` rules (config.toml): always asked, whatever the tool's declared risk. This is
+ *    the user's answer to a plugin that labels a risky tool "read".
+ * 3. `dangerous` tools: always asked; allow rules and "remember" choices don't apply.
+ * 4. Allow: `allow` rules (config.toml), learned rules (permissions.json, from "Always"),
+ *    plugin defaults (`defaultAllow` on low-impact tools), and "for this session" choices.
+ * 5. The risk level's default: `read` runs, everything else is asked.
+ *
+ * Rules are tool-name globs; `*` matches anything ("memory__*").
+ */
 export class Permissions {
   private readonly session = new Set<string>();
-  private learned: string[] = [];
+  private learned: string[];
   private readonly log = createLogger("permissions");
 
   constructor(
@@ -92,7 +92,7 @@ export class Permissions {
   }
 
   /** Rules in effect, for /status. */
-  summary(): { allow: string[]; ask: string[]; deny: string[]; learned: string[] } {
+  summary(): PermissionRules & { learned: string[] } {
     return { ...this.rules, learned: [...this.learned] };
   }
 

@@ -1,9 +1,8 @@
 import type Anthropic from "@anthropic-ai/sdk";
 
 /**
- * Per-turn context (the time, todos due today, ...) travels as a `<context>` text block
- * at the start of the user message. That works on every Anthropic-compatible endpoint,
- * unlike mid-conversation system messages, and is stored in history like everything else.
+ * Per-turn context (the time, todos due today, ...) is stored next to the user's message
+ * and rendered per request, as a system message or a `<context>` text block (ContextMode).
  */
 const OPEN = "<context>";
 const CLOSE = "</context>";
@@ -14,7 +13,7 @@ export function contextBlock(sections: Array<{ id: string; text: string }>): str
   return `${OPEN}\n${body}\n${CLOSE}`;
 }
 
-export function isContextBlock(text: string): boolean {
+function isContextBlock(text: string): boolean {
   return text.startsWith(OPEN);
 }
 
@@ -46,11 +45,20 @@ export function renderMessages(
   messages.forEach((m, i) => {
     const isPrompt = promptText(m) !== null;
     if (isPrompt) turnContext = contextOf(m);
-    const ctx = isPrompt ? contextOf(m) : undefined;
 
     if (mode === "block") {
+      // The context block goes first in the prompt it belongs to, before what the user typed.
+      const ctx = isPrompt ? turnContext : undefined;
       out.push(
-        ctx && typeof m.content === "string" ? { ...m, content: userContent(ctx, m.content) } : m,
+        ctx && typeof m.content === "string"
+          ? {
+              ...m,
+              content: [
+                { type: "text", text: ctx },
+                { type: "text", text: m.content },
+              ],
+            }
+          : m,
       );
       return;
     }
@@ -64,16 +72,6 @@ export function renderMessages(
     }
   });
   return out;
-}
-
-/** User message content: the context block (if any) first, then what the user typed. */
-function userContent(context: string, text: string): MessageParam["content"] {
-  return context
-    ? [
-        { type: "text", text: context },
-        { type: "text", text },
-      ]
-    : text;
 }
 
 /**

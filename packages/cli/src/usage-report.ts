@@ -16,6 +16,32 @@ export interface TokenCount {
   out: number;
 }
 
+export const NO_TOKENS: TokenCount = { in: 0, cached: 0, out: 0 };
+
+/** Token counts from a session's recorded totals. */
+export function tokensFromTotals(u: UsageTotals): TokenCount {
+  return {
+    in: u.inputTokens + u.cacheReadTokens + u.cacheWriteTokens,
+    cached: u.cacheReadTokens,
+    out: u.outputTokens,
+  };
+}
+
+/** Token counts from one API response's usage. */
+export function tokensFromUsage(u: {
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_input_tokens?: number | null;
+  cache_creation_input_tokens?: number | null;
+}): TokenCount {
+  const cached = u.cache_read_input_tokens ?? 0;
+  return {
+    in: u.input_tokens + cached + (u.cache_creation_input_tokens ?? 0),
+    cached,
+    out: u.output_tokens,
+  };
+}
+
 export const addTokens = (a: TokenCount, b: TokenCount): TokenCount => ({
   in: a.in + b.in,
   cached: a.cached + b.cached,

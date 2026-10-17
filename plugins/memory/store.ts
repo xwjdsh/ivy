@@ -1,6 +1,6 @@
 // Memory operations over the three files, as pure functions: they take the files' lines
 // and today's date and return the changed lines plus a result for the model. Reading and
-// writing the files, locking and the tools around them live in the plugin (step 4c).
+// writing the files, locking and the tools around them live in files.ts and index.ts.
 //
 // - USER.md and MEMORY.md are "hot": capped, injected whole into the system prompt.
 // - ARCHIVE.md is "cold": unbounded, reached through search.
@@ -17,11 +17,17 @@ import {
   normalizeTags,
   usage,
 } from "./format.ts";
-import { compare, type Hit, search, terms } from "./search.ts";
+import { compare, search, terms } from "./search.ts";
 
 export const FILES = ["user", "memory", "archive"] as const;
 export type FileName = (typeof FILES)[number];
 export type HotFile = Exclude<FileName, "archive">;
+
+export const FILE_NAMES: Record<FileName, string> = {
+  user: "USER.md",
+  memory: "MEMORY.md",
+  archive: "ARCHIVE.md",
+};
 
 export type Files = Record<FileName, Line[]>;
 export type Limits = Record<HotFile, number>;
@@ -29,7 +35,7 @@ export type Limits = Record<HotFile, number>;
 export interface Context {
   files: Files;
   limits: Limits;
-  /** YYYY-MM-DD in the user's timezone. */
+  /** YYYY-MM-DD in the machine's timezone. */
   today: string;
 }
 
@@ -190,7 +196,7 @@ export interface MoveResult extends Change {
 /** Move a line between files: archiving it, or bringing it back. */
 export function move(ctx: Context, match: string, to: FileName): MoveResult {
   const found = findOne(ctx.files, match);
-  if (found.file === to) throw new MemoryError(`That line is already in ${fileLabel(to)}.`);
+  if (found.file === to) throw new MemoryError(`That line is already in ${FILE_NAMES[to]}.`);
   const old = found.line.entry as Entry;
   if (to === "user" && old.type === "todo") {
     throw new MemoryError("Todos belong in MEMORY.md, where their due dates are tracked.");
@@ -274,25 +280,22 @@ export function find(files: Files, input: SearchInput): Found[] {
     ),
   );
   const query = input.query?.trim() ?? "";
-  const ranked: Array<Hit<(typeof items)[number]>> = query
+  const ranked = query
     ? search(items, query, limit)
     : items
-        .map((item, i) => ({ item, score: 0, i }))
+        .map((item, i) => ({ item, i }))
         .sort(
           (a, b) => (b.item.entry.date ?? "").localeCompare(a.item.entry.date ?? "") || b.i - a.i,
         )
-        .slice(0, limit);
-  return ranked.map(({ item }) => ({ file: item.file, line: item.line.raw }));
+        .slice(0, limit)
+        .map(({ item }) => item);
+  return ranked.map((item) => ({ file: item.file, line: item.line.raw }));
 }
 
 // ---------- helpers ----------
 
 export function usageOf(ctx: Context, file: HotFile, lines = ctx.files[file]): Usage {
   return { used: usage(lines), limit: ctx.limits[file] };
-}
-
-export function fileLabel(file: FileName): string {
-  return { user: "USER.md", memory: "MEMORY.md", archive: "ARCHIVE.md" }[file];
 }
 
 function cleanText(content: string): string {
@@ -314,14 +317,13 @@ function dateFields(input: { since?: string; ends?: string; due?: string }) {
 }
 
 /** Writing past a limit fails, unless the change doesn't grow a file that is already over. */
-function checkLimit(ctx: Context, file: FileName, next: Line[], before: Line[]): void {
-  if (file === "archive") return;
+function checkLimit(ctx: Context, file: HotFile, next: Line[], before: Line[]): void {
   const limit = ctx.limits[file];
   const used = usage(next);
   if (used <= limit || used <= usage(before)) return;
   const entries = next.filter((l) => l.entry).length;
   throw new MemoryError(
-    `${fileLabel(file)} is full: ${used} / ${limit} characters with this change, ${entries} entries. ` +
+    `${FILE_NAMES[file]} is full: ${used} / ${limit} characters with this change, ${entries} entries. ` +
       `Free at least ${used - limit} characters first: merge or shorten entries, or move ones not ` +
       "in current use to the archive. Then try again.",
   );
@@ -366,7 +368,7 @@ function findOne(files: Files, match: string): Located {
   }
   const shown = hits
     .slice(0, 5)
-    .map((h) => `  ${fileLabel(h.file)}: ${h.line.raw}`)
+    .map((h) => `  ${FILE_NAMES[h.file]}: ${h.line.raw}`)
     .join("\n");
   throw new MemoryError(
     `"${needle}" matches ${hits.length} entries; use a longer piece of the one you mean:\n${shown}`,

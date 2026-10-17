@@ -23,7 +23,6 @@ export interface PromptPart {
  */
 export class SystemPrompt {
   private current: { sessionId: string; parts: Promise<PromptPart[]> } | undefined;
-  private built: { sessionId: string; parts: PromptPart[] } | undefined;
 
   constructor(
     private readonly paths: Paths,
@@ -35,9 +34,6 @@ export class SystemPrompt {
   start(sessionId: string): Promise<PromptPart[]> {
     const parts = this.build(sessionId);
     this.current = { sessionId, parts };
-    void parts.then((p) => {
-      if (this.current?.parts === parts) this.built = { sessionId, parts: p }; // not a stale build
-    });
     return parts;
   }
 
@@ -47,12 +43,7 @@ export class SystemPrompt {
   }
 
   async textFor(sessionId: string): Promise<string> {
-    return joinParts(await this.partsFor(sessionId));
-  }
-
-  /** Sections already built for a session, without building them (for /status). */
-  builtFor(sessionId: string): PromptPart[] | undefined {
-    return this.built?.sessionId === sessionId ? this.built.parts : undefined;
+    return (await this.partsFor(sessionId)).map((p) => p.text).join("\n\n");
   }
 
   private async build(sessionId: string): Promise<PromptPart[]> {
@@ -78,10 +69,6 @@ export class SystemPrompt {
     }
     return parts;
   }
-}
-
-export function joinParts(parts: PromptPart[]): string {
-  return parts.map((p) => p.text).join("\n\n");
 }
 
 function readOptional(file: string): string {

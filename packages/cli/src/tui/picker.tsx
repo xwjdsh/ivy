@@ -15,8 +15,8 @@ export function Picker<T>({
   items: T[];
   initialIndex?: number;
   itemKey(item: T): string;
-  /** One line per item; `active` is the highlighted one. */
-  renderItem(item: T, active: boolean): ReactNode;
+  /** One line per item (the highlighted one gets the cursor and color). */
+  renderItem(item: T): ReactNode;
   onPick(item: T): void;
   onCancel(): void;
 }) {
@@ -44,7 +44,7 @@ export function Picker<T>({
           wrap="truncate"
         >
           {i === index ? "❯ " : "  "}
-          {renderItem(item, i === index)}
+          {renderItem(item)}
         </Text>
       ))}
       <Text dimColor>↑/↓ select · Enter choose · Esc cancel</Text>

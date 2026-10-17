@@ -86,6 +86,10 @@ export interface Paths {
   sessions: string;
   traces: string;
   data: string;
+  /** Allow rules saved from the permission prompt ("Always"); Ivy-owned. */
+  permissions: string;
+  /** Model capabilities: Models API facts and features learned unsupported. */
+  modelsCache: string;
 }
 
 export function resolvePaths(home = process.env.IVY_HOME ?? join(homedir(), ".ivy")): Paths {
@@ -97,6 +101,8 @@ export function resolvePaths(home = process.env.IVY_HOME ?? join(homedir(), ".iv
     sessions: join(home, "sessions"),
     traces: join(home, "traces"),
     data: join(home, "data"),
+    permissions: join(home, "permissions.json"),
+    modelsCache: join(home, "cache", "models.json"),
   };
 }
 

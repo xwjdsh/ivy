@@ -72,7 +72,7 @@ export function statusReport(
     `  session: ${sessionId} · ${sessionFile}`,
     `  traces: ${ivy.config.trace.enabled ? `${ivy.paths.traces}/${sessionId}` : "off"}`,
     `  config: ${ivy.paths.config}`,
-    `  capability cache: ${ivy.paths.home}/cache/models.json`,
+    `  capability cache: ${ivy.paths.modelsCache}`,
   ];
   return lines.join("\n");
 }

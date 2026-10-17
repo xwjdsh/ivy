@@ -6,7 +6,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseFile, serializeFile } from "./format.ts";
-import { FILES, type FileName, type Files } from "./store.ts";
+import { FILE_NAMES, FILES, type FileName, type Files } from "./store.ts";
 
 const HEADERS: Record<FileName, string> = {
   user: "# User\nAbout the user and how they like things done. Maintained by Ivy; you can edit it. One entry per line.\n\n",
@@ -16,18 +16,12 @@ const HEADERS: Record<FileName, string> = {
     "# Archive\nEntries no longer in current use, found by searching. `until:` = no longer true, `replaced:` = reworded. Maintained by Ivy; you can edit it.\n\n",
 };
 
-export const FILE_NAMES: Record<FileName, string> = {
-  user: "USER.md",
-  memory: "MEMORY.md",
-  archive: "ARCHIVE.md",
-};
-
 export class MemoryFiles {
   private queue: Promise<unknown> = Promise.resolve();
 
   constructor(readonly dir: string) {}
 
-  path(file: FileName): string {
+  private path(file: FileName): string {
     return join(this.dir, FILE_NAMES[file]);
   }
 

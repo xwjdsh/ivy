@@ -2,10 +2,10 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { RiskLevel } from "@ivy/plugin-api";
 import { type Capabilities, type OptionalFeature, rejectedFeature } from "./capabilities.ts";
 import type { Config } from "./config.ts";
-import { createLogger } from "./log.ts";
+import { createLogger, errorMessage } from "./log.ts";
 import { estimateCost, type ModelClient, type ModelMessage, type ModelRequest } from "./model.ts";
 import type { PermissionChoice, Permissions } from "./permissions.ts";
-import { errorMessage, type PluginHost } from "./plugins.ts";
+import type { PluginHost } from "./plugins.ts";
 import type { Session } from "./session.ts";
 import type { Tracer } from "./trace.ts";
 import { CONTEXT_SYSTEM_BETA, type ContextMode, renderMessages } from "./turn-context.ts";
@@ -251,7 +251,12 @@ export class Agent {
         caps.maxTokens ?? Number.POSITIVE_INFINITY,
       ),
       tools: plugins.apiTools(),
-      messages: renderMessages(session.messages, (m) => session.contextOf(m), this.contextMode()),
+      // System messages for context where the model and endpoint support them, else text blocks.
+      messages: renderMessages(
+        session.messages,
+        (m) => session.contextOf(m),
+        caps.systemMessages ? "system" : "block",
+      ),
       // Automatic caching: caches the longest stable prefix, which moves forward each turn.
       cache_control: { type: "ephemeral" },
     };
@@ -275,18 +280,13 @@ export class Agent {
         configured: this.opts.capabilities.effort,
         sent: request.output_config?.effort ?? undefined,
       },
-      contextMode: this.contextMode(),
+      contextMode: request.betas?.includes(CONTEXT_SYSTEM_BETA) ? "system" : "block",
       betas: request.betas ?? [],
       messages: request.messages.length,
       tools: request.tools?.length ?? 0,
       maxTokens: request.max_tokens,
       hasContext,
     };
-  }
-
-  /** System messages where the model and endpoint support them; text blocks elsewhere. */
-  contextMode(): ContextMode {
-    return this.opts.capabilities.for(this.modelName).systemMessages ? "system" : "block";
   }
 
   /** Ask permission sequentially (prompts can't overlap), then run approved tools in parallel. */

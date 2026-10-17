@@ -29,3 +29,8 @@ export function createLogger(scope: string): Logger {
   };
   return { debug: at("debug"), info: at("info"), warn: at("warn"), error: at("error") };
 }
+
+/** The message of anything thrown, without an "Error: " prefix. */
+export function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}

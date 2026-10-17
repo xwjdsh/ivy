@@ -7,7 +7,7 @@ const items = (...lines: string[]) =>
     raw,
     entry: parseLine(raw).entry as NonNullable<ReturnType<typeof parseLine>["entry"]>,
   }));
-const found = (hits: Array<{ item: { raw: string } }>) => hits.map((h) => h.item.raw);
+const found = (hits: Array<{ raw: string }>) => hits.map((h) => h.raw);
 
 test("terms: words, CJK bigrams, and a boundary at every script change", () => {
   expect(terms("Dentist at 15:00")).toEqual(["dentist", "at", "15", "00"]);

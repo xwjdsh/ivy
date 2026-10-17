@@ -11,7 +11,7 @@ import type {
   TurnInfo,
 } from "@ivy/plugin-api";
 import { z } from "zod";
-import { createLogger } from "./log.ts";
+import { createLogger, errorMessage } from "./log.ts";
 import { contextBlock } from "./turn-context.ts";
 
 /** Separator between plugin id and tool name. Dots are not allowed in API tool names. */
@@ -21,20 +21,20 @@ const COMMAND_RE = /^\/[a-z][a-z0-9-]*$/;
 
 /** Per-plugin limits for contextFor, so one plugin can't bloat or stall a turn. */
 export const CONTEXT_MAX_CHARS = 2000;
-export const CONTEXT_TIMEOUT_MS = 1000;
+const CONTEXT_TIMEOUT_MS = 1000;
 /**
  * Per-plugin limits for sessionPrompt. Room for the memory plugin's two hot files at their
  * largest settings (20,000 + 50,000 chars) plus headers: they must arrive whole.
  */
 export const SESSION_PROMPT_MAX_CHARS = 80_000;
-export const SESSION_PROMPT_TIMEOUT_MS = 2000;
+const SESSION_PROMPT_TIMEOUT_MS = 2000;
 
 export interface RegisteredCommand {
   pluginId: string;
   def: CommandDef;
 }
 
-export interface RegisteredTool {
+interface RegisteredTool {
   fullName: string;
   pluginId: string;
   def: ToolDef;
@@ -112,8 +112,13 @@ export class PluginHost {
     for (const plugin of this.plugins.values()) await plugin.teardown?.();
   }
 
+  /** Enabled plugins, sorted by id: a deterministic order keeps prompts byte-stable. */
   list(): IvyPlugin[] {
-    return [...this.plugins.values()];
+    return [...this.plugins.values()].sort((a, b) => a.id.localeCompare(b.id));
+  }
+
+  private sortedTools(): RegisteredTool[] {
+    return [...this.tools.values()].sort((a, b) => a.fullName.localeCompare(b.fullName));
   }
 
   /** Slash commands contributed by plugins, sorted by name. */
@@ -159,23 +164,17 @@ export class PluginHost {
     timeoutMs: number,
   ): Promise<Array<{ id: string; text: string }>> {
     const results = await Promise.all(
-      this.list()
-        .sort((a, b) => a.id.localeCompare(b.id))
-        .map(async (p) => {
-          try {
-            const text = await withTimeout(Promise.resolve(call(p) ?? null), timeoutMs);
-            return text?.trim() ? { id: p.id, text: cap(text.trim(), maxChars) } : null;
-          } catch (err) {
-            createLogger(p.id).warn(`${what} skipped`, errorMessage(err));
-            return null;
-          }
-        }),
+      this.list().map(async (p) => {
+        try {
+          const text = await withTimeout(Promise.resolve(call(p) ?? null), timeoutMs);
+          return text?.trim() ? { id: p.id, text: cap(text.trim(), maxChars) } : null;
+        } catch (err) {
+          createLogger(p.id).warn(`${what} skipped`, errorMessage(err));
+          return null;
+        }
+      }),
     );
     return results.filter((r) => r !== null);
-  }
-
-  getTool(fullName: string): RegisteredTool | undefined {
-    return this.tools.get(fullName);
   }
 
   /** Whether the owning plugin lets this tool run without asking (see ToolDef.defaultAllow). */
@@ -185,13 +184,11 @@ export class PluginHost {
 
   /** Every tool with its declared risk, sorted (for /status). */
   toolList(): Array<{ name: string; risk: RiskLevel; defaultAllow: boolean }> {
-    return [...this.tools.values()]
-      .sort((a, b) => a.fullName.localeCompare(b.fullName))
-      .map(({ fullName, def }) => ({
-        name: fullName,
-        risk: def.risk,
-        defaultAllow: !!def.defaultAllow,
-      }));
+    return this.sortedTools().map(({ fullName, def }) => ({
+      name: fullName,
+      risk: def.risk,
+      defaultAllow: !!def.defaultAllow,
+    }));
   }
 
   riskOf(fullName: string): RiskLevel | undefined {
@@ -200,21 +197,19 @@ export class PluginHost {
 
   /** Tool definitions for the API, sorted so the request prefix stays byte-stable for caching. */
   apiTools(): Anthropic.Beta.BetaTool[] {
-    return [...this.tools.values()]
-      .sort((a, b) => a.fullName.localeCompare(b.fullName))
-      .map(({ fullName, def }) => ({
-        name: fullName,
-        description: def.description,
-        input_schema: toInputSchema(def.input),
-        eager_input_streaming: true,
-      }));
+    return this.sortedTools().map(({ fullName, def }) => ({
+      name: fullName,
+      description: def.description,
+      input_schema: toInputSchema(def.input),
+      eager_input_streaming: true,
+    }));
   }
 
   /** Static plugin instructions, in a deterministic order. */
   instructions(): string[] {
-    return this.list()
-      .sort((a, b) => a.id.localeCompare(b.id))
-      .flatMap((p) => (p.instructions ? [`## Plugin: ${p.id}\n${p.instructions}`] : []));
+    return this.list().flatMap((p) =>
+      p.instructions ? [`## Plugin: ${p.id}\n${p.instructions}`] : [],
+    );
   }
 
   /** Validate input and run a tool. Never throws: failures become error results for the model. */
@@ -272,8 +267,4 @@ function toInputSchema(schema: z.ZodType): Anthropic.Beta.BetaTool.InputSchema {
     unknown
   >;
   return { ...json, type: "object" } as Anthropic.Beta.BetaTool.InputSchema;
-}
-
-export function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }

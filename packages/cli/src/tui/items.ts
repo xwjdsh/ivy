@@ -14,7 +14,7 @@ export type Item =
       result: string;
       isError: boolean;
     }
-  | { id: string; kind: "info"; text: string; tone?: "dim" | "warn" | "error" }
+  | { id: string; kind: "info"; text: string; tone?: "warn" | "error" }
   | { id: string; kind: "turn_end"; summary: string; note?: string; noteTone?: "warn" | "error" };
 
 let seq = 0;

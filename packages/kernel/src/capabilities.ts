@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type Anthropic from "@anthropic-ai/sdk";
-import type { Effort } from "./config.ts";
+import { EFFORT_LEVELS, type Effort } from "./config.ts";
 import { createLogger } from "./log.ts";
 
 /**
@@ -29,7 +29,6 @@ export interface ResolvedCapabilities {
 /** Optional request features that can be learned to be unsupported. */
 export type OptionalFeature = "effort" | "fallbacks" | "systemMessages";
 
-const EFFORT_ORDER: Effort[] = ["low", "medium", "high", "xhigh", "max"];
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
 /**
@@ -182,7 +181,7 @@ function factsOf(info: Anthropic.Models.ModelInfo): ModelFacts {
   return {
     effortSupported: effort?.supported,
     effortLevels: effort
-      ? EFFORT_ORDER.filter((level) => (effort[level] as { supported: boolean } | null)?.supported)
+      ? EFFORT_LEVELS.filter((level) => (effort[level] as { supported: boolean } | null)?.supported)
       : undefined,
     maxTokens: info.max_tokens ?? undefined,
   };
@@ -190,12 +189,12 @@ function factsOf(info: Anthropic.Models.ModelInfo): ModelFacts {
 
 /** The configured level if supported, else the closest lower one, else the lowest supported. */
 function nearestLevel(wanted: Effort, supported: Effort[]): Effort | undefined {
-  const index = EFFORT_ORDER.indexOf(wanted);
+  const index = EFFORT_LEVELS.indexOf(wanted);
   for (let i = index; i >= 0; i--) {
-    const level = EFFORT_ORDER[i];
+    const level = EFFORT_LEVELS[i];
     if (level && supported.includes(level)) return level;
   }
-  return EFFORT_ORDER.find((level) => supported.includes(level));
+  return EFFORT_LEVELS.find((level) => supported.includes(level));
 }
 
 /**

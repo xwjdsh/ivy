@@ -14,7 +14,7 @@ export const COMMANDS: CommandInfo[] = [
   { name: "/status", description: "Show provider, model capabilities, prompt parts and paths" },
   { name: "/verbose", description: "Toggle request/response details, hidden context and logs" },
   { name: "/help", description: "Show commands and keys" },
-  { name: "/exit", description: "Quit" },
+  { name: "/exit", description: "Quit (or /quit)" },
 ];
 
 /**
@@ -37,7 +37,7 @@ export function assertNoCommandClash(pluginCommands: CommandInfo[]): void {
 }
 
 /** Commands matching what the user has typed so far (only while typing the command word). */
-export function matchCommands(input: string, commands: CommandInfo[] = COMMANDS): CommandInfo[] {
+export function matchCommands(input: string, commands: CommandInfo[]): CommandInfo[] {
   if (!input.startsWith("/") || /\s/.test(input)) return [];
   return commands.filter((c) => c.name.startsWith(input));
 }

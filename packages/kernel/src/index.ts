@@ -14,7 +14,7 @@ export * from "./capabilities.ts";
 export * from "./config.ts";
 export * from "./config-edit.ts";
 export { type PromptPart, SystemPrompt } from "./context.ts";
-export { createLogger, type LogLevel, setLogLevel, setLogSink } from "./log.ts";
+export { createLogger, errorMessage, type LogLevel, setLogLevel, setLogSink } from "./log.ts";
 export * from "./model.ts";
 export * from "./permissions.ts";
 export * from "./plugins.ts";
@@ -56,7 +56,7 @@ export async function createIvy(opts: IvyOptions): Promise<Ivy> {
   const systemPrompt = new SystemPrompt(paths, plugins, opts.interfaceInstructions);
   const p = config.activeProvider;
   const capabilities = new Capabilities(
-    join(paths.home, "cache", "models.json"),
+    paths.modelsCache,
     p.base_url,
     isOfficialAnthropicApi(p.base_url),
     { effort: config.generation.effort, refusalFallback: p.refusal_fallback },
@@ -66,10 +66,8 @@ export async function createIvy(opts: IvyOptions): Promise<Ivy> {
   const lister = model.listModels?.bind(model);
   if (lister) void capabilities.refresh({ listModels: lister });
 
-  const permissions = new Permissions(
-    config.permissions,
-    join(paths.home, "permissions.json"),
-    (tool) => plugins.isDefaultAllowed(tool),
+  const permissions = new Permissions(config.permissions, paths.permissions, (tool) =>
+    plugins.isDefaultAllowed(tool),
   );
 
   const agent = new Agent({

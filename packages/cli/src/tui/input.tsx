@@ -83,7 +83,7 @@ export function Input({ history, commands, active, busy, width, onSubmit, onChan
 
   const submit = (current: E.EditorState) => {
     // Enter while the completion list is open picks the highlighted command:
-    // commands with a required argument ("<id>") are filled in, others run right away.
+    // commands with a required argument (a plugin's "/note <text>") are filled in, others run right away.
     const options = matchCommands(current.value, commands);
     const chosen = options[current.value === state.value ? selected : 0];
     if (chosen && chosen.name !== current.value) {

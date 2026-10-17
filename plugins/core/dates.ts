@@ -48,7 +48,8 @@ export function daysBetween(a: Date, b: Date): number {
   return Math.round((ub - ua) / DAY_MS);
 }
 
-export type Unit = "days" | "weeks" | "months" | "years" | "hours" | "minutes";
+export const UNITS = ["days", "weeks", "months", "years", "hours", "minutes"] as const;
+export type Unit = (typeof UNITS)[number];
 
 /** Add an amount; months/years clamp to the last day of the month (Jan 31 + 1 month = Feb 28/29). */
 export function addTo(d: Date, amount: number, unit: Unit): Date {
@@ -81,7 +82,7 @@ export function addTo(d: Date, amount: number, unit: Unit): Date {
   }
 }
 
-/** "2026-10-16 18:27 (Asia/Tokyo)" for an instant in any IANA timezone. */
+/** "2026-10-16 Friday 18:27 (Asia/Tokyo)" for an instant in any IANA timezone. */
 export function inTimezone(d: Date, timezone: string): string {
   let parts: Intl.DateTimeFormatPart[];
   try {

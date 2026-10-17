@@ -1,14 +1,16 @@
-import { readFileSync } from "node:fs";
 import { definePlugin, defineTool, type IvyPlugin, type ToolResult } from "@ivy/plugin-api";
 import { z } from "zod";
-import { body, FILE_NAMES, MemoryFiles } from "./files.ts";
-import { ENTRY_TYPES, type Entry } from "./format.ts";
+import { body, MemoryFiles } from "./files.ts";
+import { ENTRY_TYPES, type Entry, serializeFile } from "./format.ts";
 import INSTRUCTIONS from "./instructions.md" with { type: "text" };
 import {
   type Context,
+  FILE_NAMES,
   FILES,
   type Files,
+  type Found,
   find,
+  type HotFile,
   type Limits,
   MemoryError,
   move,
@@ -35,17 +37,17 @@ const configSchema = z.strictObject({
 });
 
 export function createMemoryPlugin(): IvyPlugin {
-  let files: MemoryFiles | undefined;
-  let limits: Limits = { user: 2000, memory: 8000 };
+  let state: { files: MemoryFiles; limits: Limits } | undefined;
 
-  const store = () => {
-    if (!files) throw new Error("memory plugin not set up");
-    return files;
+  const ready = () => {
+    if (!state) throw new Error("memory plugin not set up");
+    return state;
   };
-  const context = (current: Files, now = new Date()): Context => ({
+  const store = () => ready().files;
+  const context = (current: Files): Context => ({
     files: current,
-    limits,
-    today: localDate(now),
+    limits: ready().limits,
+    today: localDate(new Date()),
   });
   /** Run a change; MemoryError messages go back to the model as tool errors. */
   const tool = async (
@@ -73,8 +75,10 @@ export function createMemoryPlugin(): IvyPlugin {
     configSchema,
     setup(ctx) {
       const config = ctx.config as z.infer<typeof configSchema>;
-      limits = { user: config.user_limit, memory: config.memory_limit };
-      files = new MemoryFiles(ctx.dataDir);
+      state = {
+        files: new MemoryFiles(ctx.dataDir),
+        limits: { user: config.user_limit, memory: config.memory_limit },
+      };
     },
     instructions: INSTRUCTIONS.trim(),
 
@@ -190,14 +194,13 @@ export function createMemoryPlugin(): IvyPlugin {
 
     // Both hot files, frozen for the session. Rules that need no judgment run first.
     async sessionPrompt() {
-      await store().change((f) => {
+      const { current } = await store().change((f) => {
         const r = tidy(context(f));
-        return r.moved.length ? { files: r.files } : {};
+        return r.moved.length ? { files: r.files, current: r.files } : { current: f };
       });
-      const ctx = context(store().read());
-      const section = (file: "user" | "memory") => {
-        const path = store().path(file);
-        const text = body(file, readText(path));
+      const ctx = context(current);
+      const section = (file: HotFile) => {
+        const text = body(file, serializeFile(current[file]));
         return `## ${FILE_NAMES[file]} ${usageText(usageOf(ctx, file))}\n${text || "(empty)"}`;
       };
       return [
@@ -238,12 +241,12 @@ function usageText({ used, limit }: Usage): string {
   return `(${used.toLocaleString("en-US")} / ${limit.toLocaleString("en-US")} chars)`;
 }
 
-function fullness(file: "user" | "memory", { used, limit }: Usage): string {
+function fullness(file: HotFile, { used, limit }: Usage): string {
   if (used < limit * NEARLY_FULL) return "";
   return `\n${FILE_NAMES[file]} is ${Math.round((used / limit) * 100)}% full: consolidate soon (merge, shorten, or move entries not in current use to the archive).`;
 }
 
-function searchText(found: Array<{ file: keyof typeof FILE_NAMES; line: string }>): string {
+function searchText(found: Found[]): string {
   if (found.length === 0) return "No matching entries.";
   return [
     `${found.length} ${found.length === 1 ? "entry" : "entries"} (until: = no longer true, replaced: = reworded):`,
@@ -252,14 +255,13 @@ function searchText(found: Array<{ file: keyof typeof FILE_NAMES; line: string }
 }
 
 function dueTodos(files: Files, today: string): string[] {
+  // Todos live in MEMORY.md only (USER.md entries have no type).
   const out: string[] = [];
-  for (const file of ["user", "memory"] as const) {
-    for (const line of files[file]) {
-      const e = line.entry;
-      const due = e?.type === "todo" && !e.fields.done ? e.fields.due : undefined;
-      if (!e || !due || due > today) continue;
-      out.push(`${e.text} (${due === today ? "today" : `overdue since ${due}`})`);
-    }
+  for (const line of files.memory) {
+    const e = line.entry;
+    const due = e?.type === "todo" && !e.fields.done ? e.fields.due : undefined;
+    if (!e || !due || due > today) continue;
+    out.push(`${e.text} (${due === today ? "today" : `overdue since ${due}`})`);
   }
   return out.slice(0, MAX_DUE);
 }
@@ -279,14 +281,6 @@ function overview(ctx: Context, store: MemoryFiles): string {
     todos.length ? `Open todos:\n${todos.map(todoLine).join("\n")}` : "No open todos.",
     `Files: ${store.dir}`,
   ].join("\n");
-}
-
-function readText(path: string): string {
-  try {
-    return readFileSync(path, "utf8");
-  } catch {
-    return "";
-  }
 }
 
 /** YYYY-MM-DD in the machine's timezone. */

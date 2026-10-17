@@ -1,5 +1,6 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { type Config, type Effort, loadConfig, type Paths } from "./config.ts";
+import { errorMessage } from "./log.ts";
 
 /**
  * Small in-place edits to config.toml: one `key = value` line in one section is replaced
@@ -41,7 +42,7 @@ function saveEdit(
     return config;
   } catch (err) {
     writeFileSync(paths.config, original);
-    throw new Error(`Could not save ${what}: ${err instanceof Error ? err.message : String(err)}`);
+    throw new Error(`Could not save ${what}: ${errorMessage(err)}`);
   }
 }
 

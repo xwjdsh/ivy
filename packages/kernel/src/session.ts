@@ -94,7 +94,6 @@ export class Session {
       .slice(0, limit);
   }
 
-  /** Messages passed together are written in one call, so a tool call and its results land together. */
   /** Append what the user typed, with this turn's plugin context (if any) stored alongside. */
   appendPrompt(text: string, context: string): void {
     const message: MessageParam = { role: "user", content: text };
@@ -112,6 +111,7 @@ export class Session {
     return this.contexts.get(message);
   }
 
+  /** Messages passed together are written in one call, so a tool call and its results land together. */
   append(...messages: MessageParam[]): void {
     const ts = new Date().toISOString();
     this.messages.push(...messages);

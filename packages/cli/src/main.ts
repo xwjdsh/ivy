@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { join } from "node:path";
 import { parseArgs } from "node:util";
-import { createIvy, Session, setLogLevel } from "@ivy/kernel";
+import { createIvy, errorMessage, Session, setLogLevel } from "@ivy/kernel";
 import core from "@ivy/plugin-core";
 import memory from "@ivy/plugin-memory";
 import { render } from "ink";
@@ -118,7 +118,7 @@ async function main(): Promise<number> {
 main().then(
   (code) => process.exit(code),
   (err) => {
-    console.error(`\x1b[31m${err instanceof Error ? err.message : String(err)}\x1b[0m`);
+    console.error(`\x1b[31m${errorMessage(err)}\x1b[0m`);
     process.exit(1);
   },
 );

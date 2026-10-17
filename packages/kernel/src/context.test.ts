@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { definePlugin } from "@ivy/plugin-api";
 import { resolvePaths } from "./config.ts";
-import { joinParts, SystemPrompt } from "./context.ts";
+import { SystemPrompt } from "./context.ts";
 import { setLogSink } from "./log.ts";
 import { PluginHost, SESSION_PROMPT_MAX_CHARS } from "./plugins.ts";
 
@@ -82,9 +82,8 @@ test("frozen within a session; rebuilt when a session starts", async () => {
 
   version = 3;
   expect(await system.textFor("b")).toContain("profile v2");
-  expect(await system.start("b").then(joinParts)).toContain("profile v3"); // /resume rebuilds
-  expect(system.builtFor("b")?.map((p) => p.text)).toContain("profile v3");
-  expect(system.builtFor("a")).toBeUndefined();
+  await system.start("b"); // /resume rebuilds
+  expect(await system.textFor("b")).toContain("profile v3");
 });
 
 test("a failing or oversized session section is skipped or capped, never fatal", async () => {

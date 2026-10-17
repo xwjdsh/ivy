@@ -8,6 +8,7 @@ import {
   localTimezone,
   nowLine,
   parseDate,
+  UNITS,
   weekdayOf,
 } from "./dates.ts";
 
@@ -26,10 +27,7 @@ const dateCalc = defineTool({
     date: z.string().optional().describe("YYYY-MM-DD or ISO date-time; default: now"),
     to: z.string().optional().describe('For "diff": the other date'),
     amount: z.number().int().optional().describe('For "add": how many units, may be negative'),
-    unit: z
-      .enum(["days", "weeks", "months", "years", "hours", "minutes"])
-      .optional()
-      .describe('For "add"'),
+    unit: z.enum(UNITS).optional().describe('For "add"'),
     timezone: z.string().optional().describe('For "convert": target IANA timezone'),
   }),
   risk: "read",

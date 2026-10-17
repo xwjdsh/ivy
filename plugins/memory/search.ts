@@ -28,15 +28,6 @@ export function terms(text: string): string[] {
   return out;
 }
 
-export interface Searchable {
-  entry: Entry;
-}
-
-export interface Hit<T> {
-  item: T;
-  score: number;
-}
-
 const K1 = 1.2;
 const B = 0.75;
 const TAG_WEIGHT = 2;
@@ -49,7 +40,7 @@ const MIN_PREFIX = 3;
  * words it starts ("dent" → "dentist") at half weight, and a single CJK character matches
  * any text containing it. Ties go to the entry with the later date, then the later line.
  */
-export function search<T extends Searchable>(items: T[], query: string, limit = 10): Hit<T>[] {
+export function search<T extends { entry: Entry }>(items: T[], query: string, limit = 10): T[] {
   const queryTerms = [...new Set(terms(query))];
   if (queryTerms.length === 0) return [];
   const docs = items.map((item) => docTerms(item.entry));
@@ -77,7 +68,7 @@ export function search<T extends Searchable>(items: T[], query: string, limit = 
     .filter((h) => h.score > 0)
     .sort((a, b) => b.score - a.score || newer(a.item.entry, b.item.entry) || b.i - a.i)
     .slice(0, limit)
-    .map(({ item, score }) => ({ item, score }));
+    .map(({ item }) => item);
 }
 
 /** Positive when b is dated later than a. */
@@ -109,13 +100,10 @@ function matchWeight(q: string, counts: Map<string, number>): number {
   return partial;
 }
 
-export type Similarity =
-  | { kind: "duplicate"; overlap: number }
-  | { kind: "similar"; overlap: number }
-  | { kind: "different"; overlap: number };
+type Similarity = { kind: "duplicate" | "similar" | "different"; overlap: number };
 
-export const DUPLICATE_AT = 0.9;
-export const SIMILAR_AT = 0.5;
+const DUPLICATE_AT = 0.9;
+const SIMILAR_AT = 0.5;
 
 /**
  * Compare a new text with an existing line. Overlap is the Jaccard index of their terms.

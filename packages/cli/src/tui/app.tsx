@@ -3,6 +3,7 @@ import {
   createLogger,
   EFFORT_LEVELS,
   type Effort,
+  errorMessage,
   type Ivy,
   type PermissionChoice,
   type RequestInfo,
@@ -21,7 +22,15 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { availableCommands, type CommandInfo, matchCommands } from "../commands.ts";
 import type { InputHistory } from "../history.ts";
 import { renderMarkdown, splitFinished } from "../markdown.ts";
-import { addTokens, formatTokens, type TokenCount, usageReport } from "../usage-report.ts";
+import {
+  addTokens,
+  formatTokens,
+  NO_TOKENS,
+  type TokenCount,
+  tokensFromTotals,
+  tokensFromUsage,
+  usageReport,
+} from "../usage-report.ts";
 import { formatCall, statusReport } from "../verbose-format.ts";
 import { Input } from "./input.tsx";
 import { historyItems, type Item, itemId } from "./items.ts";
@@ -109,15 +118,8 @@ export function App({
   const [sessionId, setSessionId] = useState(initialSession.id);
 
   // Token counts: input includes cache reads/writes, i.e. the full prompt sent each call.
-  const NO_TOKENS: TokenCount = { in: 0, cached: 0, out: 0 };
-  const sessionTokens = (id: string): TokenCount => {
-    const u = summarizeUsage(ivy.paths.sessions, { sessionId: id });
-    return {
-      in: u.inputTokens + u.cacheReadTokens + u.cacheWriteTokens,
-      cached: u.cacheReadTokens,
-      out: u.outputTokens,
-    };
-  };
+  const sessionTokens = (id: string): TokenCount =>
+    tokensFromTotals(summarizeUsage(ivy.paths.sessions, { sessionId: id }));
   const [tokens, setTokens] = useState(() => sessionTokens(initialSession.id));
   const turnTokens = useRef(NO_TOKENS);
 
@@ -238,13 +240,7 @@ export function App({
       case "step": {
         // The step's message is complete: print the rest of its text before any step details.
         flushText(true);
-        const u = e.usage;
-        const cached = u.cache_read_input_tokens ?? 0;
-        const step: TokenCount = {
-          in: u.input_tokens + cached + (u.cache_creation_input_tokens ?? 0),
-          cached,
-          out: u.output_tokens,
-        };
+        const step = tokensFromUsage(e.usage);
         turnTokens.current = addTokens(turnTokens.current, step);
         setTokens((t) => addTokens(t, step));
         if (verboseRef.current) {
@@ -278,7 +274,7 @@ export function App({
         tracer: tracerRef.current,
       });
     } catch (err) {
-      result = { stopReason: "error", steps: 0, costUsd: 0, error: String(err) };
+      result = { stopReason: "error", steps: 0, costUsd: 0, error: errorMessage(err) };
     }
     flushText(true);
     setPendingTools([]);
@@ -319,7 +315,7 @@ export function App({
       push({
         id: itemId(),
         kind: "info",
-        text: err instanceof Error ? err.message : String(err),
+        text: errorMessage(err),
         tone: "error",
       });
     }
@@ -357,7 +353,7 @@ export function App({
       saveEffort(ivy.paths, level);
       push({ id: itemId(), kind: "info", text: `Effort: ${level} (saved to config.toml).${note}` });
     } catch (err) {
-      const reason = err instanceof Error ? err.message : String(err);
+      const reason = errorMessage(err);
       push({
         id: itemId(),
         kind: "info",
@@ -374,7 +370,7 @@ export function App({
       saveDefaultModel(ivy.paths, ivy.config.activeProvider.name, name);
       push({ id: itemId(), kind: "info", text: `Model: ${name} (saved to config.toml)` });
     } catch (err) {
-      const reason = err instanceof Error ? err.message : String(err);
+      const reason = errorMessage(err);
       push({
         id: itemId(),
         kind: "info",
@@ -414,13 +410,10 @@ export function App({
           );
         } else if (!name) {
           setModelPickerOpen(true);
-        } else if (ivy.config.activeProvider.models.includes(name)) {
+        } else if (models.includes(name)) {
           switchModel(name);
         } else {
-          info(
-            `Unknown model ${name}. Available: ${ivy.config.activeProvider.models.join(", ")}`,
-            "error",
-          );
+          info(`Unknown model ${name}. Available: ${models.join(", ")}`, "error");
         }
         return;
       }
@@ -481,8 +474,7 @@ export function App({
             (out) => {
               if (out) info(out);
             },
-            (err) =>
-              info(`${cmd} failed: ${err instanceof Error ? err.message : String(err)}`, "error"),
+            (err) => info(`${cmd} failed: ${errorMessage(err)}`, "error"),
           );
       }
     }
@@ -535,7 +527,7 @@ export function App({
     pendingTools.length * 2 +
     (permission ? permissionPromptHeight(permission.call) : 0) +
     (picker ? picker.length + 4 : 0) +
-    (modelPickerOpen ? ivy.config.activeProvider.models.length + 4 : 0) +
+    (modelPickerOpen ? models.length + 4 : 0) +
     (effortPickerOpen ? EFFORT_LEVELS.length + 4 : 0) +
     completions.length;
   const maxLiveLines = Math.max(3, rows - reserved);
@@ -579,9 +571,9 @@ export function App({
       {modelPickerOpen && (
         <Picker
           title={`Switch model on ${ivy.config.activeProvider.name} (saved as default)`}
-          items={ivy.config.activeProvider.models}
+          items={models}
           itemKey={(name) => name}
-          initialIndex={Math.max(0, ivy.config.activeProvider.models.indexOf(model))}
+          initialIndex={Math.max(0, models.indexOf(model))}
           renderItem={(name) => (name === model ? `${name}  (current)` : name)}
           onPick={(name) => {
             setModelPickerOpen(false);
@@ -627,7 +619,7 @@ export function App({
       <StatusBar
         provider={ivy.config.activeProvider.name}
         model={model}
-        effort={effort && ivy.capabilities.for(model).effort}
+        effort={ivy.capabilities.for(model).effort}
         sessionId={sessionId}
         tokens={formatTokens(tokens)}
         verbose={verboseOn}

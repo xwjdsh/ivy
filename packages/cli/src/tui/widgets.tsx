@@ -112,7 +112,7 @@ export function PermissionPrompt({
 }
 
 /** Lines of tool output shown when collapsed. */
-export const TOOL_PREVIEW_LINES = 3;
+const TOOL_PREVIEW_LINES = 3;
 /** Hard cap even when expanded, so one huge result can't flood the scrollback. */
 const TOOL_EXPANDED_MAX_LINES = 500;
 
@@ -240,7 +240,7 @@ export function ItemView({
         <Box marginTop={1}>
           <Text
             color={item.tone === "error" ? "red" : item.tone === "warn" ? "yellow" : undefined}
-            dimColor={item.tone === "dim" || item.tone === undefined}
+            dimColor={item.tone === undefined}
           >
             {item.text}
           </Text>
