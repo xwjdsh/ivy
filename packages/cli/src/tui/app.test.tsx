@@ -480,6 +480,42 @@ test("plugin context reaches the model but isn't shown, live or after /resume", 
   expect(frame()).not.toContain("likes tea");
 });
 
+test("a plugin's session section is frozen for the session and re-read on /new", async () => {
+  let version = 1;
+  const profile = definePlugin({
+    id: "profile",
+    version: "0",
+    description: "",
+    sessionPrompt: () => `Profile v${version}`,
+  });
+  const { type, model } = await start(
+    [
+      { stop: "end_turn", content: [text("one")] },
+      { stop: "end_turn", content: [text("two")] },
+      { stop: "end_turn", content: [text("three")] },
+    ],
+    undefined,
+    [profile],
+  );
+  const system = (i: number) => JSON.stringify(model.requests[i]?.system);
+  await type("hi");
+  await type(ENTER);
+  await eventually(() => expect(model.requests).toHaveLength(1));
+  version = 2;
+  await type("again");
+  await type(ENTER);
+  await eventually(() => expect(model.requests).toHaveLength(2));
+  expect(system(0)).toContain("Profile v1");
+  expect(system(1)).toBe(system(0)); // same bytes within a session
+
+  await type("/new");
+  await type(ENTER);
+  await type("fresh");
+  await type(ENTER);
+  await eventually(() => expect(model.requests).toHaveLength(3));
+  expect(system(2)).toContain("Profile v2");
+});
+
 test("a disabled plugin contributes no command and no context", async () => {
   const { type, frame, model } = await start(
     [{ stop: "end_turn", content: [text("ok")] }],

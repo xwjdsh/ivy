@@ -1,4 +1,4 @@
-import type { AgentEvent, Ivy, RequestInfo } from "@ivy/kernel";
+import type { AgentEvent, Ivy, PromptPart, RequestInfo } from "@ivy/kernel";
 import { compact } from "./usage-report.ts";
 
 type StepEvent = Extract<AgentEvent, { type: "step" }>;
@@ -41,9 +41,9 @@ export function statusReport(
   model: string,
   sessionId: string,
   sessionFile: string,
+  prompt: PromptPart[],
 ): string {
   const p = ivy.config.activeProvider;
-  const prompt = ivy.systemPromptParts;
   const total = prompt.reduce((n, part) => n + part.text.length, 0);
   const plugins = ivy.plugins.list().map((plugin) => {
     const tools = plugin.tools?.length ?? 0;

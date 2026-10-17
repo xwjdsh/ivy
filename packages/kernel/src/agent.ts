@@ -71,7 +71,8 @@ export interface AgentOptions {
   config: Config;
   model: ModelClient;
   plugins: PluginHost;
-  systemPrompt: string;
+  /** The system prompt for a session, frozen once the session starts (see SystemPrompt). */
+  systemPrompt(sessionId: string): Promise<string>;
   /** What the current model supports on the active endpoint. */
   capabilities: Capabilities;
   /** Who may run which tool without asking. */
@@ -122,6 +123,7 @@ export class Agent {
    */
   async runTurn(session: Session, userText: string, turn: TurnOptions): Promise<TurnResult> {
     const { config } = this.opts;
+    const system = await this.opts.systemPrompt(session.id);
     const context = await this.opts.plugins.turnContext({
       sessionId: session.id,
       userText,
@@ -134,7 +136,7 @@ export class Agent {
     let parseRetries = 0;
 
     for (let step = 1; step <= config.agent.max_steps; step++) {
-      const request = this.buildRequest(session);
+      const request = this.buildRequest(session, system);
       turn.onEvent({ type: "request", step, info: this.describe(request, context !== "") });
       const startedAt = new Date();
       let message: ModelMessage;
@@ -239,8 +241,8 @@ export class Agent {
     return { stopReason: "max_steps", steps: config.agent.max_steps, costUsd };
   }
 
-  private buildRequest(session: Session): ModelRequest {
-    const { config, plugins, systemPrompt } = this.opts;
+  private buildRequest(session: Session, systemPrompt: string): ModelRequest {
+    const { config, plugins } = this.opts;
     const caps = this.opts.capabilities.for(this.modelName);
     const request: ModelRequest = {
       model: this.modelName,

@@ -3,7 +3,7 @@ import type { IvyPlugin } from "@ivy/plugin-api";
 import { Agent, type ToolCallRequest } from "./agent.ts";
 import { Capabilities } from "./capabilities.ts";
 import { type Config, loadConfig, type Paths, resolvePaths } from "./config.ts";
-import { buildSystemPrompt, systemPromptParts } from "./context.ts";
+import { SystemPrompt } from "./context.ts";
 import { AnthropicModelClient, isOfficialAnthropicApi, type ModelClient } from "./model.ts";
 import { type PermissionChoice, Permissions } from "./permissions.ts";
 import { PluginHost } from "./plugins.ts";
@@ -13,6 +13,7 @@ export * from "./agent.ts";
 export * from "./capabilities.ts";
 export * from "./config.ts";
 export * from "./config-edit.ts";
+export { type PromptPart, SystemPrompt } from "./context.ts";
 export { createLogger, type LogLevel, setLogLevel, setLogSink } from "./log.ts";
 export * from "./model.ts";
 export * from "./permissions.ts";
@@ -36,9 +37,8 @@ export interface Ivy {
   plugins: PluginHost;
   config: Config;
   paths: Paths;
-  systemPrompt: string;
-  /** The system prompt's sections with names (verbose view). */
-  systemPromptParts: Array<{ name: string; text: string }>;
+  /** Built per session: call `start(id)` when a session starts or is switched to. */
+  systemPrompt: SystemPrompt;
   capabilities: Capabilities;
   permissions: Permissions;
   /** Tracer for a session, or undefined when tracing is off. */
@@ -53,7 +53,7 @@ export async function createIvy(opts: IvyOptions): Promise<Ivy> {
   const plugins = new PluginHost(paths.data, config.plugins);
   for (const plugin of opts.plugins) await plugins.register(plugin);
 
-  const systemPrompt = buildSystemPrompt(paths, plugins, opts.interfaceInstructions);
+  const systemPrompt = new SystemPrompt(paths, plugins, opts.interfaceInstructions);
   const p = config.activeProvider;
   const capabilities = new Capabilities(
     join(paths.home, "cache", "models.json"),
@@ -78,19 +78,17 @@ export async function createIvy(opts: IvyOptions): Promise<Ivy> {
     capabilities,
     permissions,
     plugins,
-    systemPrompt,
+    systemPrompt: (sessionId) => systemPrompt.textFor(sessionId),
     confirm: opts.confirm,
   });
   const tracer = (sessionId: string) =>
     config.trace.enabled ? new Tracer(join(paths.traces, sessionId)) : undefined;
-  const parts = systemPromptParts(paths, plugins, opts.interfaceInstructions);
   return {
     agent,
     plugins,
     config,
     paths,
     systemPrompt,
-    systemPromptParts: parts,
     capabilities,
     permissions,
     tracer,

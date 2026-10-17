@@ -88,6 +88,7 @@ async function main(): Promise<number> {
   }
 
   try {
+    await ivy.systemPrompt.start(session.id);
     if (!interactive) {
       const result = await runPlain(ivy, session, ivy.tracer(session.id), prompt, verbose);
       return result.stopReason === "error" ? 1 : 0;

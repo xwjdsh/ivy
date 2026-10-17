@@ -10,7 +10,7 @@ bun test && bun run typecheck && bun run lint
 bun run build          # single binary at dist/ivy (prompts are embedded)
 ```
 
-In dev, all data (config, `SOUL.md`, `USER.md`, sessions, traces) lives in `./.ivy/`; delete it to start fresh.
+In dev, all data (config, `SOUL.md`, sessions, traces, plugin data) lives in `./.ivy/`; delete it to start fresh.
 
 ## License
 

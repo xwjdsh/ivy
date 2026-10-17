@@ -5,6 +5,7 @@ import type {
   CommandDef,
   IvyPlugin,
   RiskLevel,
+  SessionInfo,
   ToolContext,
   ToolDef,
   TurnInfo,
@@ -21,6 +22,9 @@ const COMMAND_RE = /^\/[a-z][a-z0-9-]*$/;
 /** Per-plugin limits for contextFor, so one plugin can't bloat or stall a turn. */
 export const CONTEXT_MAX_CHARS = 2000;
 export const CONTEXT_TIMEOUT_MS = 1000;
+/** Per-plugin limits for sessionPrompt; room for a full memory profile (up to 20,000 chars). */
+export const SESSION_PROMPT_MAX_CHARS = 24_000;
+export const SESSION_PROMPT_TIMEOUT_MS = 2000;
 
 export interface RegisteredCommand {
   pluginId: string;
@@ -122,25 +126,48 @@ export class PluginHost {
    * Each is capped in size and time; a failing or slow plugin is skipped, never the turn.
    */
   async turnContext(turn: TurnInfo): Promise<string> {
-    const providers = this.list()
-      .filter((p) => p.contextFor)
-      .sort((a, b) => a.id.localeCompare(b.id));
-    const results = await Promise.all(
-      providers.map(async (p) => {
-        const log = createLogger(p.id);
-        try {
-          const text = await withTimeout(
-            Promise.resolve(p.contextFor?.(turn) ?? null),
-            CONTEXT_TIMEOUT_MS,
-          );
-          return text?.trim() ? { id: p.id, text: cap(text.trim(), CONTEXT_MAX_CHARS) } : null;
-        } catch (err) {
-          log.warn("contextFor skipped", errorMessage(err));
-          return null;
-        }
-      }),
+    const parts = await this.collect(
+      "contextFor",
+      (p) => p.contextFor?.(turn),
+      CONTEXT_MAX_CHARS,
+      CONTEXT_TIMEOUT_MS,
     );
-    return contextBlock(results.filter((r) => r !== null));
+    return contextBlock(parts);
+  }
+
+  /**
+   * Every plugin's system prompt section for a session, in plugin-id order. Same rules as
+   * turnContext: capped in size and time, a failing or slow plugin is skipped.
+   */
+  sessionPrompts(session: SessionInfo): Promise<Array<{ id: string; text: string }>> {
+    return this.collect(
+      "sessionPrompt",
+      (p) => p.sessionPrompt?.(session),
+      SESSION_PROMPT_MAX_CHARS,
+      SESSION_PROMPT_TIMEOUT_MS,
+    );
+  }
+
+  private async collect(
+    what: string,
+    call: (p: IvyPlugin) => Promise<string | null> | string | null | undefined,
+    maxChars: number,
+    timeoutMs: number,
+  ): Promise<Array<{ id: string; text: string }>> {
+    const results = await Promise.all(
+      this.list()
+        .sort((a, b) => a.id.localeCompare(b.id))
+        .map(async (p) => {
+          try {
+            const text = await withTimeout(Promise.resolve(call(p) ?? null), timeoutMs);
+            return text?.trim() ? { id: p.id, text: cap(text.trim(), maxChars) } : null;
+          } catch (err) {
+            createLogger(p.id).warn(`${what} skipped`, errorMessage(err));
+            return null;
+          }
+        }),
+    );
+    return results.filter((r) => r !== null);
   }
 
   getTool(fullName: string): RegisteredTool | undefined {

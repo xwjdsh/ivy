@@ -338,9 +338,9 @@ export interface IvyPlugin {
   tools?: ToolDef[];
   instructions?: string;      // static, appended to the system prompt
   contextFor?(turn: TurnInfo): Promise<string | null> | string | null;
+  sessionPrompt?(session: { id: string }): Promise<string | null> | string | null;  // frozen per session
   commands?: CommandDef[];
   // Planned:
-  sessionPrompt?(session: { id: string }): Promise<string | null> | string | null;  // M1 4a, frozen per session
   jobs?: JobDef[];            // M4
   hooks?: Partial<PluginHooks>;
 }
@@ -472,7 +472,7 @@ Why two layers: keyword retrieval alone misses preferences that must apply every
 
 **The profile is `USER.md`**, maintained by Ivy and editable by the user (there is no separate user-written profile: tell Ivy, or edit the file). Things Ivy must never change, such as hard rules, belong in `SOUL.md`, which Ivy never edits (§5.3). Lowering `profile_limit` below the current size truncates nothing: the profile is still injected whole, the next write fails until it is consolidated, and `/memory` shows it as over the limit.
 
-**Frozen per session:** the profile snapshot is taken when a session starts (startup, `/new`, `/resume`); hand edits to `USER.md` therefore apply after `/new`, no restart needed. Writes reach disk at once and the model knows what it just wrote, but the system prompt only changes at the next session. That keeps the cached prefix stable within a session (§5.2). This needs a small kernel addition: a plugin may contribute a per-session system prompt section (`sessionPrompt`, §6.2), re-evaluated on session start.
+**Frozen per session:** the profile snapshot is taken when a session starts (startup, `/new`, `/resume`); hand edits to `USER.md` therefore apply after `/new`, no restart needed. Writes reach disk at once and the model knows what it just wrote, but the system prompt only changes at the next session. That keeps the cached prefix stable within a session (§5.2). This uses the plugin `sessionPrompt` (§6.2): computed on session start, frozen for the session (M1 step 4a). `SOUL.md` follows the same rule.
 
 #### What goes where (routing rules, given to the model in the plugin's instructions)
 
@@ -741,7 +741,8 @@ Goal: Ivy starts remembering. Built in this order; each step is shippable on its
    *Done when:* a tool allowed with *Always* isn't asked about after a restart, and a `deny` rule beats every allow.
    *Status: done.* Also: `ask` rules (force a confirmation regardless of declared risk), `defaultAllow` on tools, dangerous tools offer only Yes/No with the full input shown, `/status` lists tools with risk and the rules in effect.
 4. **memory plugin** (§8.1, design v2), in parts:
-   - 4a. Kernel: plugin `sessionPrompt`, re-evaluated on session start/switch (the system prompt is rebuilt then, frozen within a session); remove the kernel's `USER.md` loader (an existing `~/.ivy/USER.md` is moved into the profile).
+   - 4a. Kernel: plugin `sessionPrompt`, re-evaluated on session start/switch (the system prompt is rebuilt then, frozen within a session); remove the kernel's `USER.md` loader.
+     *Status: done.* The whole system prompt is now built per session (`SystemPrompt` in `context.ts`): `SOUL.md` and plugins' session sections are read at startup, `/new` and `/resume`, and the bytes stay fixed within a session. Each session section is capped at 24,000 characters and 2 s; a failing plugin is skipped. `/status` shows the sections of the current session.
    - 4b. Store and scorer: profile and note files, parsing, word + CJK-bigram scoring; pure and unit-tested.
    - 4c. Plugin: tools, routing instructions, profile in the session prompt, per-turn recall, `/memory`.
    - 4d. Safety scan on write and load.
@@ -749,7 +750,7 @@ Goal: Ivy starts remembering. Built in this order; each step is shippable on its
    *Done when:* the four checks at the end of §8.1 pass with a real model.
 5. *(Optional)* Progress notes while the model works (`thinking.display: "updates"`), only where the provider supports it.
 
-`USER.md` was a user-written file loaded by the kernel in M0; in 4a it becomes the memory plugin's profile (`data/memory/USER.md`), and the kernel loader and `examples/USER.md` are removed.
+`USER.md` was a user-written file loaded by the kernel in M0. In 4a the kernel loader and `examples/USER.md` were removed; from 4c the file is the memory plugin's profile (`data/memory/USER.md`).
 
 - **Done when (milestone):** Ivy remembers facts and todos across sessions and uses them without being asked.
 

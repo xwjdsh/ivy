@@ -53,6 +53,11 @@ export interface TurnInfo {
   now: Date;
 }
 
+/** What a plugin knows about the session it adds a system prompt section to. */
+export interface SessionInfo {
+  id: string;
+}
+
 export interface CommandContext {
   sessionId: string;
   log: Logger;
@@ -80,6 +85,12 @@ export interface IvyPlugin {
   tools?: ToolDef[];
   /** Static text appended to the system prompt. Must be deterministic (prompt caching). */
   instructions?: string;
+  /**
+   * A system prompt section for one session (e.g. the user's profile), or null for nothing.
+   * Computed when the session starts (startup, /new, /resume) and frozen for the rest of it,
+   * so the prompt cache holds. Capped in size and time by the host; errors are skipped.
+   */
+  sessionPrompt?(session: SessionInfo): Promise<string | null> | string | null;
   /**
    * Text to add to this turn's `<context>` block (e.g. the time, relevant memories),
    * or null for nothing. Capped in size and time by the host; errors are skipped.

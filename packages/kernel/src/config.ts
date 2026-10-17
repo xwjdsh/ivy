@@ -83,8 +83,6 @@ export interface Paths {
   config: string;
   /** SOUL.md: who Ivy is (personality, tone, rules). */
   soul: string;
-  /** USER.md: who the user is. */
-  user: string;
   sessions: string;
   traces: string;
   data: string;
@@ -96,7 +94,6 @@ export function resolvePaths(home = process.env.IVY_HOME ?? join(homedir(), ".iv
     home,
     config: join(home, "config.toml"),
     soul: join(home, "SOUL.md"),
-    user: join(home, "USER.md"),
     sessions: join(home, "sessions"),
     traces: join(home, "traces"),
     data: join(home, "data"),

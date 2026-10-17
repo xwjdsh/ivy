@@ -106,7 +106,15 @@ describe("Agent.runTurn", () => {
     const permissions = new Permissions(config.permissions, join(dir, "permissions.json"), (tool) =>
       plugins.isDefaultAllowed(tool),
     );
-    return new Agent({ config, model, plugins, systemPrompt, confirm, capabilities, permissions });
+    return new Agent({
+      config,
+      model,
+      plugins,
+      systemPrompt: async () => systemPrompt,
+      confirm,
+      capabilities,
+      permissions,
+    });
   }
 
   const run = (agent: Agent, input: string, signal = new AbortController().signal) =>

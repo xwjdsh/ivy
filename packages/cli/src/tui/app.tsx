@@ -294,6 +294,7 @@ export function App({
     sessionRef.current = next;
     tracerRef.current = ivy.tracer(next.id);
     ivy.permissions.clearSession();
+    void ivy.systemPrompt.start(next.id); // re-read SOUL.md and plugins' session sections
     setSessionId(next.id);
     setTokens(sessionTokens(next.id));
   };
@@ -424,9 +425,13 @@ export function App({
         else info(`Unknown effort ${level}. Levels: ${EFFORT_LEVELS.join(", ")}`, "error");
         return;
       }
-      case "/status":
-        info(statusReport(ivy, model, sessionRef.current.id, sessionRef.current.file));
+      case "/status": {
+        const { id, file } = sessionRef.current;
+        void ivy.systemPrompt
+          .partsFor(id)
+          .then((parts) => info(statusReport(ivy, model, id, file, parts)));
         return;
+      }
       case "/verbose": {
         const on = !verboseRef.current;
         verboseRef.current = on;
