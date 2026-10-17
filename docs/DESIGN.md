@@ -1,6 +1,6 @@
 # Ivy — Design Document
 
-> Status: **Draft v0.1** (M0 done; next: M1) · Last updated: 2026-10-16
+> Status: **Draft v0.1** (M0 done; M1 steps 1–3 done, next: step 4, memory) · Last updated: 2026-10-17
 > This is a living document. Every milestone starts by updating it and ends by recording what changed in the [Decision Log](#13-decision-log).
 
 ---
@@ -82,11 +82,11 @@ Everything users care about (memory, email, calendar, coding help, news digests,
 ### Request flow (one user turn)
 
 1. The interface sends the user's message to the **Agent Loop** with a session id.
-2. The **Context Builder** assembles the request: the frozen system prompt, the tool list from all enabled plugins, the session history, and the new user message, prefixed with a `<context>` block built from plugins' per-turn context (e.g. the current time, relevant memories); see §5.3.
+2. The **Context Builder** assembles the request: the frozen system prompt, the tool list from all enabled plugins, the session history, and the new user message with the turn's context built from plugins' per-turn context (e.g. the current time, relevant memories); see §5.3.
 3. The **Model Client** streams the request to the model.
 4. If the model calls tools, the loop sends each call through the **Permission Gate**, then to the owning plugin, and appends all results in a single message.
 5. Steps 3–4 repeat until the model ends the turn (or a step/budget limit is hit).
-6. Every message is appended to the session's JSONL transcript. Plugins get an `afterTurn` hook (e.g. for memory extraction).
+6. Every message is appended to the session's JSONL transcript. (Automatic memory capture after turns is a backlog item, §8.1.)
 
 ## 5. Kernel Components
 
@@ -104,7 +104,7 @@ Everything users care about (memory, email, calendar, coding help, news digests,
 ### 5.2 Model Client
 
 - `@anthropic-ai/sdk`, wrapped in a thin module so the rest of the code never touches raw API shapes.
-- Speaks the Anthropic Messages API to whatever `[providers.*]` endpoint is active. With Anthropic's own API the default model is **`claude-opus-5-5`**, with adaptive thinking and `effort` set explicitly per route (e.g. `medium` for chat, `high` for coding tasks, `low` for background jobs like memory extraction or summaries). Configurable per plugin/job.
+- Speaks the Anthropic Messages API to whatever `[providers.*]` endpoint is active. With Anthropic's own API the default model is **`claude-opus-5-5`**, with adaptive thinking and one `effort` level from `[generation]` (switch with `/effort`). Side work such as summaries or background memory review will use an optional `helper_model`, by default the main model at low effort (§13).
 - Server-side refusal fallback (`fallbacks: "default"`) is on where supported (decided by `Capabilities`), as Anthropic recommends: if the model declines, Anthropic re-runs the request on a fallback model within the same call, and a notice names both models, so a swap is never silent. A provider can opt out with `refusal_fallback = false` (optional, default true).
 - **Compatible endpoints vary.** Effort, adaptive thinking, prompt caching, refusal fallback, `clear_at` system messages, compaction and server tools are Anthropic API features; a compatible endpoint or a non-Claude model may ignore or reject them.
 - **Capabilities** (`capabilities.ts`) decide per request which optional features a model gets on the active endpoint, from three sources:
@@ -133,8 +133,8 @@ Ivy speaks only the Anthropic Messages API (see Non-Goals): Claude directly, or 
 | `output_config.effort` | `Agent.buildRequest` | Unknown or named differently |
 | Top-level `cache_control` | `Agent.buildRequest` | Ignored or rejected |
 | `eager_input_streaming` on tools | `PluginHost.apiTools` | Ignored or rejected |
-| Price table | `model.ts` | Cost shows `?` |
-| Planned: compaction, server tools (web search) | — | Not available elsewhere |
+| Price table | `model.ts` | Recorded cost is unknown (cost is never shown in the UI) |
+| Planned: server-side compaction, server tools (web search) | — | Not available elsewhere (client-side compaction is the baseline) |
 
 Other models on the same provider only need `/model`, or a different `default_model` (note: Claude Haiku supports neither `effort` nor fallbacks).
 
@@ -151,7 +151,7 @@ Builds each request from layers, ordered from most stable to least stable (for c
 | Tools | All enabled plugins, sorted | When plugins change |
 | System prompt | built-in `core.md` (operating & safety rules) + `~/.ivy/SOUL.md` (who Ivy is, and the user's hard rules) + interface instructions (how replies are shown) + each plugin's static `instructions` + plugins' `sessionPrompt` sections (e.g. the memory profile) | Per session at most |
 | History | Session transcript | Append-only |
-| Turn context | Plugins' `contextFor(turn)` (e.g. current time, relevant memories), as a `<context>` block at the start of the user message | Every turn |
+| Turn context | Plugins' `contextFor(turn)` (e.g. current time, relevant memories), stored with the user message and sent as a system message or a `<context>` block (below) | Every turn |
 
 Naming follows the common `SOUL.md` / `USER.md` convention of personal agents:
 
@@ -169,8 +169,8 @@ Each user turn, the kernel asks every enabled plugin for `contextFor(turn)` and 
 ## core
 Now: 2026-10-16 Fri 14:57 (Asia/Tokyo, UTC+09:00)
 ## memory
-- [preference] Prefers short answers in Chinese.
-- [todo, open] Renew passport before 2026-12.
+- [todo, due 2026-10-21] Dentist appointment at 15:00. (id 2026-10-17-a1b2c3)
+- [fact] Passport expires 2026-12. (id 2026-10-12-9f8e7d)
 </context>
 ```
 
@@ -180,7 +180,7 @@ Now: 2026-10-16 Fri 14:57 (Asia/Tokyo, UTC+09:00)
   - **block** — everything else (proxies, other models): a `<context>` text block before the user's text in the same message. Works on every Anthropic-compatible endpoint; old blocks stay in history and keep costing (cached) tokens.
   - A system message must be followed by an assistant turn or be last, so an interrupted turn (user message right after user message) gets none.
 - **Deterministic:** the same history and mode always render to the same bytes and grow append-only within a turn, so the prompt cache and thinking blocks stay valid. Switching models may switch modes; that already costs a cache miss, since caches are per model.
-- **Display:** the TUI, session previews and turn counts skip the `<context>` block; `-d` traces show it.
+- **Display:** the TUI, session previews and turn counts skip the `<context>` block; the verbose view (`-v`, `/verbose`) and traces show it.
 - **Trust:** `core.md` tells the model the block is supplied by Ivy as reference data, not written by the user.
 - **Limits:** each plugin's context is capped (2,000 characters) and gets a short time budget (1 s); a plugin that fails or times out is skipped and logged, so a turn never fails because of context.
 
@@ -195,7 +195,7 @@ Now: 2026-10-16 Fri 14:57 (Asia/Tokyo, UTC+09:00)
 - **Side effects survive crashes honestly** (DSH, §10.2; needed before M3): before running an `external` or `dangerous` tool, record that it started; if the session reloads without its result, the model is told the outcome is *unknown* (it may already have happened) instead of the call being dropped and possibly repeated, e.g. an email sent twice.
 - **System prompt snapshot:** record the system prompt in the session whenever it changes (start, `/new`, `/resume`, profile change between sessions), so every request can be rebuilt from the session file alone ("model-visible ⟺ logged", DSH).
 - Commands: `ivy -c` continues the most recently active session; `/resume` (or `ivy -r`) opens a picker of recent sessions (last active, first prompt, turn count); `/resume <id>` / `ivy -r <id>` jump directly; `/new` starts a new one. No separate list command.
-- Usage (tokens, cache hits, cost estimate) is recorded per turn so we can see what Ivy costs.
+- Usage (tokens, cache hits, and a cost estimate that is recorded but not shown) is written per model call; `/usage` reports tokens.
 
 ### 5.5 Permission Gate
 
@@ -205,8 +205,8 @@ Every tool declares a **risk level**:
 |---|---|---|
 | `read` | search memory, read a file, list emails | allow |
 | `write` | save a note, edit a local file, create a draft | ask (allowable by rule) |
-| `external` | send an email, post a message, accept an invite | always ask |
-| `dangerous` | shell commands, deleting data | always ask, show full command |
+| `external` | send an email, post a message, accept an invite | ask (allowable by rule or *Always*) |
+| `dangerous` | shell commands, deleting data | always ask (Yes/No only, no rule allows it), show full input |
 
 Rules are tool-name globs (`*` matches anything). Argument patterns such as `shell__run(git status*)` come with the shell plugin in M2.
 
@@ -241,22 +241,22 @@ deny  = ["shell__*"]
 
 Loads, configures and runs plugins; see §6 for the plugin contract. Responsibilities:
 
-- Discovery: built-in plugins in `plugins/`, user plugins in `~/.ivy/plugins/`.
+- Discovery: built-in plugins in `plugins/`; user plugins in `~/.ivy/plugins/` from M2.
 - Enable/disable and per-plugin config from `config.toml`: `[plugins.<id>]` holds the plugin's own settings (validated by its `configSchema`) plus `enabled = false` to turn it off. Built-in plugins are on by default.
 - Plugin slash commands appear in the `/` list and `/help` next to the built-in ones; a name clash with a built-in command is an error at startup.
 - Namespacing: tool names are `<plugin>__<tool>` to avoid collisions (API tool names allow only `[a-zA-Z0-9_-]`, no dots).
-- Per-plugin storage directory and secrets access.
+- Per-plugin data directory (`dataDir`); secrets access planned.
 - Scheduler for plugin jobs (cron syntax), active once the daemon exists (M4).
-- **MCP bridge:** any MCP server listed in config is wrapped as a plugin automatically, so existing MCP servers (Gmail, Calendar, GitHub, ...) are usable with no new code.
+- **MCP bridge** (M2): any MCP server listed in config is wrapped as a plugin automatically, so existing MCP servers (Gmail, Calendar, GitHub, ...) are usable with no new code.
 
 ### 5.7 Interfaces
 
 An interface turns user I/O into kernel calls. All interfaces share the same kernel API, so adding one does not touch plugins.
 
-- **M0 — TUI** (`ivy`, built with Ink): streamed answers rendered as Markdown, spinner with phase and elapsed time, one-line tool calls with folded results, multi-line input (Shift/Option+Enter or trailing `\`) with persistent history and `/` command completion, permission dialog (once / for this session / deny), status bar (model, effort, session, session token totals); each turn ends with steps, time and tokens. No money anywhere in the UI (verbose included): `/usage` shows token usage for this session, today, the last 7 days and all time (an estimated cost is still recorded in session files, but not shown). Esc or Ctrl-C interrupts; Ctrl-C twice or Ctrl-D quits. The real terminal cursor follows the input caret so IME composition (e.g. Chinese) appears in place.
+- **M0 — TUI** (`ivy`, built with Ink): streamed answers rendered as Markdown, spinner with phase and elapsed time, one-line tool calls with folded results, multi-line input (Shift/Option+Enter or trailing `\`) with persistent history and `/` command completion, permission dialog (once / for this session / always / deny; Yes/No only for dangerous tools), status bar (provider, model, effort, session, session token totals, `verbose` when on); each turn ends with steps, time and tokens. No money anywhere in the UI (verbose included): `/usage` shows token usage for this session, today, the last 7 days and all time (an estimated cost is still recorded in session files, but not shown). Esc or Ctrl-C interrupts; Ctrl-C twice or Ctrl-D quits. The real terminal cursor follows the input caret so IME composition (e.g. Chinese) appears in place.
   - Finished paragraphs move into Ink's `<Static>` (printed once, kept in scrollback); only the growing tail re-renders. The live area is capped below the terminal height (older lines shown as "… N more lines above"), because once Ink's dynamic output is taller than the screen it redraws everything on each update and flickers.
   - Redraw (`refresh`): clear Ink's frame and the terminal, then remount `<Static>` with a new key so history reprints. Used by `/new`, `/clear`, `/resume`, Ctrl+L, Ctrl+O and (debounced 100 ms) terminal width changes. Approach borrowed from Gemini CLI.
-  - Tool calls are one line each: ✓/✗, name and input, plus the first line of an error. Results are hidden (the answer uses them); Ctrl+O shows the latest turn's tool output (capped at 500 lines) and hides it again; the verbose view shows full input and a 3-line result preview.
+  - Tool calls are one line each: ✓/✗, name and input, plus the first line of an error. Results are hidden (the answer uses them); Ctrl+O shows the latest turn's tool output (capped at 500 lines) and hides it again; the verbose view shows full input and a short result preview.
   - One-shot mode (`ivy "question"`) stays plain text for scripts and pipes.
 - **M4 — Daemon** (`ivy daemon`): runs scheduled jobs and sends results as macOS notifications or files. The CLI can talk to it to see job output.
 - **Later (maybe)** — Chat-app bot (Telegram/Slack) for phone access; local web UI.
@@ -287,29 +287,30 @@ Part of the kernel from M0, so problems can be debugged from day one.
 | `contextFor(turn)` | Dynamic text added per turn | Top 5 notes relevant to the message, due todos |
 | `commands` | Slash commands for the user | `/today`, `/memory [query]` |
 | `jobs` | Scheduled tasks (daemon) | Morning brief at 08:30 on weekdays |
-| `hooks` | Lifecycle callbacks | `onSessionStart`, `afterTurn`, `beforeToolCall` |
+| `hooks` | Lifecycle callbacks (planned, added when a plugin needs one) | `onSessionStart`, `beforeToolCall` |
 
 ### 6.2 Plugin contract (sketch)
 
 ```ts
-// packages/plugin-api — the only thing a plugin imports from Ivy
+// packages/plugin-api — the only thing a plugin imports from Ivy (simplified)
 import type { z } from "zod";
 
 export interface IvyPlugin {
   id: string;                 // "memory", "gmail", ...
   version: string;
   description: string;
-  configSchema?: z.ZodType;   // validated from config.toml [plugins.<id>]
+  configSchema?: z.ZodType;   // validates config.toml [plugins.<id>]
 
-  setup(ctx: PluginContext): Promise<void> | void;
+  setup?(ctx: PluginContext): Promise<void> | void;
   teardown?(): Promise<void> | void;
 
   tools?: ToolDef[];
-  instructions?: string;
-  sessionPrompt?(session: { id: string }): Promise<string | null> | string | null;  // frozen per session
+  instructions?: string;      // static, appended to the system prompt
   contextFor?(turn: TurnInfo): Promise<string | null> | string | null;
   commands?: CommandDef[];
-  jobs?: JobDef[];
+  // Planned:
+  sessionPrompt?(session: { id: string }): Promise<string | null> | string | null;  // M1 4a, frozen per session
+  jobs?: JobDef[];            // M4
   hooks?: Partial<PluginHooks>;
 }
 
@@ -318,16 +319,15 @@ export interface ToolDef<I = unknown> {
   description: string;
   input: z.ZodType<I>;        // converted to JSON Schema; validated before run
   risk: "read" | "write" | "external" | "dangerous";
-  run(input: I, ctx: ToolContext): Promise<ToolResult>;
+  defaultAllow?: boolean;     // run without asking (low-impact tools; never "dangerous")
+  run(input: I, ctx: ToolContext): Promise<ToolResult> | ToolResult;
 }
 
 export interface PluginContext {
-  config: unknown;            // parsed with configSchema
-  storage: PluginStorage;     // ~/.ivy/data/<pluginId>/ (files + optional SQLite)
-  secrets: SecretStore;       // macOS Keychain-backed
+  config: unknown;            // [plugins.<id>] parsed with configSchema
+  dataDir: string;            // ~/.ivy/data/<pluginId>/
   log: Logger;
-  llm: LlmClient;             // for plugins that need their own model calls (e.g. summarizing)
-  kernel: KernelApi;          // send notifications, call other plugins' tools, etc.
+  // Planned: secrets (macOS Keychain), llm (own model calls, via helper_model), kernel (notify, call other tools)
 }
 
 export interface TurnInfo {
@@ -340,7 +340,7 @@ export interface CommandDef {
   name: string;               // "/memory"
   args?: string;              // "<text>" (required) or "[query]" (optional), as in the / list
   description: string;
-  run(args: string, ctx: CommandContext): Promise<string | void> | string | void;  // returned text is shown to the user
+  run(args: string, ctx: CommandContext): Promise<string | undefined> | string | undefined;  // returned text is shown to the user
 }
 
 export interface JobDef {
@@ -357,7 +357,7 @@ A plugin is a folder with an `index.ts` that default-exports an `IvyPlugin`. The
 - Plugins run **in-process** with full user permissions. Only install plugins you have read or written. A plugin's declared risk levels and its `setup()` are trusted as code; nothing enforces them.
 - **Isolation trigger:** before Ivy loads third-party plugins from `~/.ivy/plugins/` (M2), revisit running plugins in a separate process or sandbox, with file and network access only through kernel APIs that enforce the declared risk. MCP servers already run as separate processes (still with the user's permissions).
 - The Permission Gate still applies to every tool call, including MCP tools.
-- Tool *results* from outside sources (emails, web pages, RSS) are untrusted data. The built-in `core.md` tells the model not to follow instructions found inside them, and `external`/`dangerous` tools always require confirmation, which limits prompt-injection damage.
+- Tool *results* from outside sources (emails, web pages, RSS) are untrusted data. The built-in `core.md` tells the model not to follow instructions found inside them, and `write`/`external` tools ask unless the user allowed them, `dangerous` ones every time, which limits prompt-injection damage.
 
 ## 7. Data & Storage Layout
 
@@ -549,18 +549,21 @@ Bun workspace monorepo:
 
 ```
 ivy/
-├── docs/
-│   ├── DESIGN.md            # this file
-│   └── adr/                 # one file per significant decision (optional)
+├── .github/workflows/ci.yml # lint, typecheck, test, build
+├── docs/DESIGN.md           # this file
+├── examples/                # starter config.toml and SOUL.md for the data dir
+├── scripts/build.ts         # `bun run build`: single binary in dist/
 ├── evals/                   # eval cases and runner (from M2)
 ├── packages/
-│   ├── kernel/              # loop, model client, context, sessions, permissions, plugin host
+│   ├── kernel/              # loop, model client, capabilities, context, sessions, permissions, plugin host, traces
+│   │   └── src/prompts/core.md
 │   ├── plugin-api/          # public types for plugin authors
-│   └── cli/                 # `ivy` command (TUI + one-shot)
+│   └── cli/                 # `ivy` command: Ink TUI (src/tui/), one-shot plain mode, slash commands
 ├── plugins/
-│   ├── core/
-│   ├── memory/
+│   ├── core/                # time context + date_calc
+│   ├── memory/              # M1 step 4
 │   └── ...
+├── biome.json
 ├── package.json
 ├── tsconfig.json
 └── bun.lock
@@ -639,9 +642,9 @@ Each milestone ends with a few days of real use and an update to this doc.
 ### M0 — Hello, Ivy (walking skeleton)
 - Bun workspace, `ivy` CLI, config loading, API auth.
 - Streaming chat with the model, multi-turn, JSONL sessions (`/new`, `/resume`).
-- Agent loop with the `core` plugin (`now` tool) to prove tool calling end-to-end.
-- Token usage & cost shown per turn.
-- Tracing v1: raw request/response files + `--verbose` live view (§5.8).
+- Agent loop with the `core` plugin (`now` tool, later replaced by per-turn context, M1 step 2) to prove tool calling end-to-end.
+- Token usage shown per turn (cost was planned, then dropped from the UI).
+- Tracing v1: raw request/response files + verbose live view (`-v`, §5.8).
 - **Done when:** I can chat with Ivy in the terminal and resume yesterday's session.
 - **Status: done (2026-10-16).** Shipped beyond the plan: Ink TUI (see §5.7), `/usage`, `bun run build` single binary, CI.
 - **Deferred:** `/trace` and `ivy replay` (§5.8) → M2 with evals; compaction for long sessions → when sessions get long (client-side baseline, §5.2); large-paste placeholders and a custom Markdown renderer → backlog; progress updates while thinking (`thinking.display: "updates"`) → M1.
@@ -733,7 +736,7 @@ Goal: Ivy starts remembering. Built in this order; each step is shippable on its
 | 2026-10-16 | Scope is the Anthropic Messages API, not Claude: any model behind an Anthropic-compatible endpoint | The user runs a local proxy with a non-Claude model |
 | 2026-10-16 | Config: `[providers.*]` + `[agent] provider` selector, `[generation]`, strict keys | Room for proxies / other API kinds; typos and stale keys fail loudly |
 | 2026-10-16 | Dev data in `./.ivy` | Easy to inspect and wipe during development |
-| 2026-10-16 | Prompt files named `SOUL.md` / `USER.md`, both read from the data dir, empty if missing | Common convention for personal agents; easy to edit without touching code |
+| 2026-10-16 | Prompt files named `SOUL.md` / `USER.md`, both read from the data dir, empty if missing (`USER.md` moves to the memory plugin, 2026-10-17) | Common convention for personal agents; easy to edit without touching code |
 | 2026-10-16 | No provider abstraction yet; coupling documented in §5.2 | Avoid premature abstraction; switching path is known |
 | 2026-10-16 | Ink TUI for interactive mode; plain text for one-shot | Rich UI where it helps, script-friendly output elsewhere |
 | 2026-10-16 | Built-in `core.md` for operating/safety rules; SOUL.md is identity only; UI supplies format instructions | Rules must not depend on user files; personality and presentation stay separate |
@@ -746,6 +749,7 @@ Goal: Ivy starts remembering. Built in this order; each step is shippable on its
 | 2026-10-16 | Capabilities from the Models API + learned-on-400 + defaults for older models, instead of hard-coded model lists | New models work without code changes; endpoints that reject a feature degrade automatically |
 | 2026-10-16 | Refusal fallback on by default wherever supported (Anthropic's recommendation), with a notice naming both models; `refusal_fallback = false` opts out | Capabilities decide where it's safe; the user can still choose to see refusals |
 | 2026-10-16 | `/model` and `/effort` save the choice (`default_model`, `[generation] effort`), editing that one line of `config.toml` in place (validated, restored on failure) | The user wants the switch to stick; a line edit keeps comments and layout |
+| 2026-10-16 | Use the beta Messages API (`client.beta.messages`) | Needed for `fallbacks: "default"` now and compaction later |
 | 2026-10-17 | Compaction is client-side (any endpoint); server-side compaction only an enhancement | Compatibility first; as in pi |
 | 2026-10-17 | Adopt from pi: steering/follow-up (M2), deferred MCP tools (M2); backlog: synchronized output, session branching | See §10.1 |
 | 2026-10-17 | Memory v2: capped profile (always on, frozen per session) + searchable notes; no `/remember`; safety scan; session search | Keyword recall alone misses preferences that must always apply; a cap alone can't hold todos and facts (Hermes, §10.3) |
@@ -756,4 +760,3 @@ Goal: Ivy starts remembering. Built in this order; each step is shippable on its
 | 2026-10-17 | `[plugins.memory] profile_limit` configurable (500–20,000, default 2,000); other memory numbers stay constants until needed | Tunable where it varies by person; few knobs |
 | 2026-10-17 | Optional `helper_model` for side work, default main model at low effort; added with the first side task | Cheaper and faster side work without paying for a second model until it helps |
 | 2026-10-17 | Skills (Agent Skills `SKILL.md`): phase 1 using them proposed for M2 with MCP; phase 2 Ivy writes its own, asked every time and kept apart from the user's | Know-how without code fits "adapt to my habits"; self-written skills are persistent instructions, so they get SOUL.md-level care |
-| 2026-10-16 | Use the beta Messages API (`client.beta.messages`) | Needed for `fallbacks: "default"` now and compaction later |
