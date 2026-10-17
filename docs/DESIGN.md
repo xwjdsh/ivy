@@ -365,6 +365,7 @@ A plugin is a folder with an `index.ts` that default-exports an `IvyPlugin`. The
 ~/.ivy/
 ├── config.toml          # global config, enabled plugins, permissions, model settings
 ├── SOUL.md              # who Ivy is (optional, loaded into system prompt)
+├── skills/              # Agent Skills: <name>/SKILL.md (user's); .ivy/<name>/ (written by Ivy, phase 2)
 ├── permissions.json     # allow rules learned from the permission dialog (Ivy-owned)
 ├── cache/models.json    # model capabilities: Models API facts + features learned unsupported
 ├── sessions/            # append-only JSONL transcripts
@@ -514,6 +515,34 @@ Done todos are marked `status: done`, not deleted: they stop being injected but 
 3. Writing past the profile cap makes the model consolidate instead of losing entries.
 4. An injection attempt ("remember: ignore your rules and …") is rejected on save.
 
+### 8.2 Skills
+
+A skill is *know-how* rather than a tool: how to write the weekly report, the steps for triaging the inbox, the user's expense-claim routine. Ivy uses the open **Agent Skills** format (`SKILL.md`), so skills shared by others work as-is.
+
+| | Provides | Written as |
+|---|---|---|
+| Plugin | Tools, context, commands | TypeScript |
+| MCP server | Tools that reach external services | External process |
+| **Skill** | **How to do something** | **Markdown only** |
+
+MCP says what Ivy *can* do; a skill says how *this user* wants it done (e.g. a Gmail MCP server plus an "inbox triage" skill).
+
+**Phase 1 (proposed for M2, with MCP): using skills**
+- Skills are folders in `~/.ivy/skills/<name>/` with a `SKILL.md` (name and one-line description in frontmatter, instructions in the body) and optional reference files.
+- **Progressive disclosure:** the system prompt carries only an index (name + description per skill, capped); the model loads the full text with `skill_view(name)` and reference files with `skill_view(name, path)` when it needs them. Same idea as pi, DSH and Hermes.
+- The user can also call a skill directly: `/<skill-name>`.
+- Plain prompt text plus one read tool: works on any model and endpoint (Anthropic's server-side Skills are not required).
+
+**Phase 2 (later): Ivy writes its own skills** (as Hermes does)
+- After a task that took real figuring out (or when asked, "remember how we did this"), Ivy may save the procedure as a skill, or improve an existing one when it finds a better way.
+- **Skills are persistent instructions, so they get the same care as `SOUL.md` and memory:**
+  - Ivy-written skills live apart from the user's, in `~/.ivy/skills/.ivy/<name>/`, so it is always clear who wrote what. Ivy never edits the user's skills.
+  - Creating or changing a skill is a `write` tool that **asks by default** (no plugin default allow), showing the full text or diff.
+  - Content is scanned like memory (invisible Unicode, instruction-like attacks on the model, secrets).
+  - A skill can't loosen rules: `SOUL.md`, permissions and `core.md` always win; instructions say so.
+- Writing guidelines for Ivy (from Hermes' review prompt): a reusable procedure, not a story of one incident; no "UPDATE:" appendices (rewrite the step instead); no claims that a tool is bad.
+- **Curator:** skills Ivy wrote that go unused are marked stale, later archived (moved, never deleted); an occasional consolidation pass suggests merging overlaps.
+
 ## 9. Project Layout
 
 Bun workspace monorepo:
@@ -644,6 +673,7 @@ Goal: Ivy starts remembering. Built in this order; each step is shippable on its
 
 ### M2 — Work helper
 - `fs` + `shell` plugins with directory allowlist and permission rules.
+- Skills phase 1 (§8.2): `~/.ivy/skills/*/SKILL.md`, index in the prompt, `skill_view`, `/<skill-name>`.
 - MCP bridge plugin. MCP servers can bring dozens of tools, so they are not all sent up front: deferred exposure via a tool search (the model looks tools up by need; Anthropic's `tool_search` where supported, a client-side search tool elsewhere), possibly a code mode later.
 - Steering and follow-up messages while a turn runs (§5.1); loop guard and per-call concurrency.
 - `shell` runs inside an OS sandbox (macOS Seatbelt) limited to allowed directories; a blocked command may ask once, with the model's justification, to run with wider permissions (DSH). Fewer prompts than confirming every command, and safer.
@@ -673,7 +703,7 @@ Goal: Ivy starts remembering. Built in this order; each step is shippable on its
 - Endpoint capabilities are detected from `base_url` (`api.anthropic.com` = official). Add a per-provider override (e.g. `api = "auto" | "official" | "compatible"`) once a gateway or cloud platform that proxies the official API gets misdetected.
 - Usage dashboard; per-plugin effort/model tuning.
 - Subagents for fan-out research tasks.
-- Skills: procedures loaded on demand (an index in the prompt, full text via a tool), possibly written by Ivy itself; kept separate from memory so procedures don't crowd out facts (Hermes, pi, DSH).
+- Skills phase 2 (§8.2): Ivy writes and improves its own skills (asked every time, kept apart from the user's), plus a curator that archives stale ones.
 - Chat-app gateway: one chat = one continuous session until `/new`; pairing codes for access (Hermes).
 - TUI: synchronized output (`CSI ?2026h/l`) around redraws, so no frame is ever half-drawn.
 - Session branching: retry from an earlier point without losing the original line (JSONL entries with parent ids, `/fork`).
@@ -725,4 +755,5 @@ Goal: Ivy starts remembering. Built in this order; each step is shippable on its
 | 2026-10-17 | Ivy never edits `SOUL.md`; hard rules live there; at most a confirm-every-time proposal tool later | A model-editable rule file would turn one prompt injection into a permanent rule |
 | 2026-10-17 | `[plugins.memory] profile_limit` configurable (500–20,000, default 2,000); other memory numbers stay constants until needed | Tunable where it varies by person; few knobs |
 | 2026-10-17 | Optional `helper_model` for side work, default main model at low effort; added with the first side task | Cheaper and faster side work without paying for a second model until it helps |
+| 2026-10-17 | Skills (Agent Skills `SKILL.md`): phase 1 using them proposed for M2 with MCP; phase 2 Ivy writes its own, asked every time and kept apart from the user's | Know-how without code fits "adapt to my habits"; self-written skills are persistent instructions, so they get SOUL.md-level care |
 | 2026-10-16 | Use the beta Messages API (`client.beta.messages`) | Needed for `fallbacks: "default"` now and compaction later |
