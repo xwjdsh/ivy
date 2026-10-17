@@ -1,6 +1,6 @@
 # Ivy — Design Document
 
-> Status: **Draft v0.1** (M0 done; M1 steps 1–3 and 4a done, next: 4b, memory store and search) · Last updated: 2026-10-18
+> Status: **Draft v0.1** (M0 done; M1 steps 1–3, 4a and 4b done, next: 4c, the memory plugin) · Last updated: 2026-10-18
 > This is a living document. Every milestone starts by updating it and ends by recording what changed in the [Decision Log](#13-decision-log).
 
 ---
@@ -781,6 +781,7 @@ Goal: Ivy starts remembering. Built in this order; each step is shippable on its
    - 4a. Kernel: plugin `sessionPrompt`, re-evaluated on session start/switch (the system prompt is rebuilt then, frozen within a session); remove the kernel's `USER.md` loader.
      *Status: done.* The whole system prompt is now built per session (`SystemPrompt` in `context.ts`): `SOUL.md` and plugins' session sections are read at startup, `/new` and `/resume`, and the bytes stay fixed within a session. Each session section is capped at 24,000 characters and 2 s; a failing plugin is skipped. `/status` shows the sections of the current session.
    - 4b. Store and search: the three files' line format (parse, append, patch with the old version archived, move, caps, usage), word + CJK-bigram search; pure and unit-tested.
+     *Status: done.* `plugins/memory/`: `format.ts` (line format; untouched lines are kept byte for byte), `search.ts` (terms, BM25 with prefix and single-character matching, near-duplicate check with the veto), `store.ts` (save, update, move, remove, tidy, find as pure functions over the three files and today's date; errors are `MemoryError` with a message the model can act on). Search over 5,000 lines takes about 20 ms. No plugin wiring yet (4c).
    - 4c. Plugin: tools, routing instructions, both hot files in the session prompt (raise the kernel's 24,000-character session section cap to fit both limits), due-todo line, tidying rules, `/memory`.
    - 4d. Safety scan on write and load.
    - 4e. `session_search` over past sessions.

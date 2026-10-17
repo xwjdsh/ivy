@@ -57,6 +57,10 @@
         "zod": "^4.6.7",
       },
     },
+    "plugins/memory": {
+      "name": "@ivy/plugin-memory",
+      "version": "0.0.1",
+    },
   },
   "packages": {
     "@alcalzone/ansi-tokenize": ["@alcalzone/ansi-tokenize@0.3.1", "", { "dependencies": { "ansi-styles": "^6.2.1", "is-fullwidth-code-point": "^5.0.0" } }, "sha512-cUD0PT0YX+rImRhfn7BfMRduP/tX/Zqt/N0dHlAyn2RlcJssCb5KsCJkhln61eh9vuJDkH8wKn3L8zJzzWXPFg=="],
@@ -92,6 +96,8 @@
     "@ivy/plugin-api": ["@ivy/plugin-api@workspace:packages/plugin-api"],
 
     "@ivy/plugin-core": ["@ivy/plugin-core@workspace:plugins/core"],
+
+    "@ivy/plugin-memory": ["@ivy/plugin-memory@workspace:plugins/memory"],
 
     "@opentelemetry/api": ["@opentelemetry/api@1.9.1", "", {}, "sha512-gLyJlPHPZYdAk1JENA9LeHejZe1Ti77/pTeFm/nMXmQH/HFZlcS/O2XJB+L8fkbrNSqhdtlvjBVjxwUYanNH5Q=="],
 
