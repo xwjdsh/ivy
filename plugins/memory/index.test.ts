@@ -149,7 +149,8 @@ test("context lists todos due today or overdue, at most three", async () => {
   await call("save", { file: "memory", content: "Taxes", due: "2026-01-01" });
   await call("save", { file: "memory", content: "Later", due: "2999-01-01" });
   const ctx = plugin.contextFor?.({ sessionId: "s", userText: "", now: new Date() });
-  expect(ctx).toBe("Due: Dentist (today)\nDue: Taxes (overdue since 2026-01-01)");
+  expect(ctx).toContain("mention them to the user once in this conversation");
+  expect(ctx).toContain("- Dentist (today)\n- Taxes (overdue since 2026-01-01)");
 });
 
 test("/memory shows usage and open todos, or searches", async () => {
@@ -200,4 +201,18 @@ test("hand-written lines: hidden characters are left out, the rest is kept but f
   // A write rewrites the file: the hand-written lines must survive it.
   await call("save", { file: "memory", content: "Ken likes ramen" });
   for (const line of [hidden, mine, key]) expect(file("MEMORY.md")).toContain(line);
+});
+
+test("a todo's time is kept in due and shown in the reminder", async () => {
+  const r = text(
+    await call("save", { file: "memory", content: "Pick up the parcel", due: `${today} 17:00` }),
+  );
+  expect(r).toContain(`due:${today}T17:00] Pick up the parcel`);
+  const ctx = plugin.contextFor?.({ sessionId: "s", userText: "", now: new Date() });
+  expect(ctx).toContain("- Pick up the parcel (today at 17:00)");
+  expect(await call("save", { file: "memory", content: "x", due: `${today} 25:00` })).toMatchObject(
+    {
+      isError: true,
+    },
+  );
 });

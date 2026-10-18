@@ -13,8 +13,10 @@ import {
   type EntryType,
   entryLine,
   isDate,
+  isDue,
   type Line,
   normalizeTags,
+  splitTags,
   usage,
 } from "./format.ts";
 import { scan } from "./safety.ts";
@@ -71,7 +73,8 @@ export type SaveResult =
   | { status: "duplicate"; line: string };
 
 export function save(ctx: Context, input: SaveInput): SaveResult {
-  const text = cleanText(input.content);
+  // Tags typed into the text count as tags (models do that), not as part of the fact.
+  const { text, tags } = contentAndTags(input.content, input.tags ?? []);
   // USER.md entries have no type; a type passed for it is ignored, not an error.
   const type = input.file === "user" ? undefined : (input.type ?? (input.due ? "todo" : "fact"));
   if (input.due && type !== "todo") throw new MemoryError("`due` is only for todos.");
@@ -82,7 +85,7 @@ export function save(ctx: Context, input: SaveInput): SaveResult {
     ext: false,
     unknown: [],
     text,
-    tags: normalizeTags(input.tags ?? []),
+    tags,
   };
 
   const lines = ctx.files[input.file];
@@ -152,16 +155,24 @@ export function update(ctx: Context, input: UpdateInput): UpdateResult {
   }
 
   if (fields.due && old.type !== "todo") throw new MemoryError("`due` is only for todos.");
-  const text = input.content === undefined ? old.text : cleanText(input.content);
-  // A changed fact is a new fact: the old one's start and end don't carry over.
+  const given =
+    input.content === undefined ? undefined : contentAndTags(input.content, input.tags ?? []);
+  const text = given?.text ?? old.text;
+  // A changed fact is a new fact: the old one's start, end and tags don't carry over.
   const { since: _since, ends: _ends, ...kept } = old.fields;
+  const tags =
+    given && (input.changed || input.tags !== undefined || given.tags.length > 0)
+      ? given.tags
+      : input.tags !== undefined
+        ? normalizeTags(input.tags)
+        : old.tags;
   const updated = checkSafe(
     entryLine({
       ...old,
       date: ctx.today,
       fields: { ...(input.changed ? kept : old.fields), ...fields },
       text,
-      tags: input.tags === undefined ? old.tags : normalizeTags(input.tags),
+      tags,
     }),
   );
   files[found.file][found.index] = updated;
@@ -312,6 +323,12 @@ function checkSafe(line: Line): Line {
   return line;
 }
 
+/** The entry text and its tags: those passed in plus any `#tags` typed at the end of the text. */
+function contentAndTags(content: string, tags: string[]): { text: string; tags: string[] } {
+  const split = splitTags(cleanText(content));
+  return { text: cleanText(split.text), tags: normalizeTags([...tags, ...split.tags]) };
+}
+
 function cleanText(content: string): string {
   const text = content.trim();
   if (!text) throw new MemoryError("The entry is empty.");
@@ -321,11 +338,21 @@ function cleanText(content: string): string {
 
 function dateFields(input: { since?: string; ends?: string; due?: string }) {
   const fields: Partial<Record<DateField, string>> = {};
-  for (const key of ["since", "ends", "due"] as const) {
+  for (const key of ["since", "ends"] as const) {
     const value = input[key];
     if (value === undefined) continue;
     if (!isDate(value)) throw new MemoryError(`\`${key}\` must be a date like 2026-10-23.`);
     fields[key] = value;
+  }
+  if (input.due !== undefined) {
+    // A time belongs in `due`, not in the text where it gets lost: "2026-10-23 17:00".
+    const due = input.due.trim().replace(" ", "T");
+    if (!isDue(due)) {
+      throw new MemoryError(
+        "`due` must be a date like 2026-10-23, or with a time: 2026-10-23 17:00.",
+      );
+    }
+    fields.due = due;
   }
   return fields;
 }
@@ -336,10 +363,13 @@ function checkLimit(ctx: Context, file: HotFile, next: Line[], before: Line[]): 
   const used = usage(next);
   if (used <= limit || used <= usage(before)) return;
   const entries = next.filter((l) => l.entry).length;
+  // Aim well below the limit: freeing just enough makes the next save fail again.
+  const target = Math.floor(limit * 0.8);
   throw new MemoryError(
     `${FILE_NAMES[file]} is full: ${used} / ${limit} characters with this change, ${entries} entries. ` +
-      `Free at least ${used - limit} characters first: merge or shorten entries, or move ones not ` +
-      "in current use to the archive. Then try again.",
+      `Free room first, ideally down to about ${target} characters (at least ${used - limit}): move ` +
+      "entries not in current use (past events, things rarely needed) to the archive in one go; merge " +
+      "duplicates; shorten only as a last resort. Then try again.",
   );
 }
 

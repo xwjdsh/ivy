@@ -9,15 +9,15 @@ Saving:
 - Save only what the user said or what was done in this conversation, never something you only read in memory.
 - Write the fact itself, not an instruction to yourself: "Dentist at 15:00", not "remind the user about the dentist".
 - Be specific: keep times, numbers, names, brands and qualifiers ("GameCube", not "a game console"; "Mei's father", not "dad"). One fact per entry. Store it in the language the user used; keep names exactly as written.
-- Dates are absolute: "next Friday" becomes its date (the current date is in the turn's context). A deadline is `due` (todos only); `ends` is for a state with a known end ("in Paris until 10-25"); `since` is when a fact started.
+- Dates are absolute: "next Friday" becomes its date (the current date is in the turn's context). A deadline is `due` (todos only), with the time when there is one (`2026-10-18 17:00`); `ends` is for a state with a known end ("in Paris until 10-25"); `since` is when a fact started.
 - Tags: add the key terms in the other language (Chinese/English) and common synonyms, so search finds the entry either way.
 - Before adding, check the hot files and search the archive; update an existing entry instead of adding a near-duplicate.
 
 Changing:
 - memory__update with `match` (a piece of the line). When a fact itself changed (both can't be true, or it ended or was replaced), pass changed: true; new activity or extra detail is not a change, just reword it. The old version is kept in the archive either way.
 - When the user restates an entry or says it still holds, call memory__update with only `match` to confirm it (its date becomes today).
-- Mark finished todos done; they move to the archive. Move entries no longer in current use to the archive, and archived ones back when they matter again.
-- When a hot file is over 80% full or a save fails as full: merge entries (keep the richer wording), shorten them, or move ones not in current use to the archive.
+- When the turn's context lists due todos, mention them once in the conversation, briefly, even if the question is about something else. Mark finished todos done; they move to the archive. Move entries no longer in current use to the archive, and archived ones back when they matter again.
+- When a hot file is over 80% full or a save fails as full, make real room, down to about 80%: first move entries not in current use (past events, things rarely needed) to the archive, then merge duplicates (keep the richer wording); shorten only as a last resort. Nothing is lost: the archive stays searchable.
 
 Past conversations: what was said but never saved (a command, a decision, a name) can be found with memory__session_search.
 

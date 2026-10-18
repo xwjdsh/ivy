@@ -1,6 +1,6 @@
 # Ivy — Design Document
 
-> Status: **Draft v0.1** (M0 done; M1 steps 1–4 done, next: the M1 acceptance checks) · Last updated: 2026-10-18
+> Status: **Draft v0.1** (M0 done; M1 built and its acceptance checks passed; next: a few days of real use, then M2) · Last updated: 2026-10-18
 > This is a living document. Every milestone starts by updating it and ends by recording what changed in the [Decision Log](#13-decision-log).
 
 ---
@@ -437,7 +437,7 @@ Facts, todos and notes in current use. Maintained by Ivy; you can edit it. One e
 - [fact 2026-09-30] Mei likes sushi #寿司
 ```
 
-- Line prefix: the type (`fact`, `note` or `todo`; none in `USER.md`) and the date the line was written, last changed or last confirmed (`update` with no changes), set by the tool, so the model can tell an old entry from a fresh one ("lives in Tokyo", as of when?). Then, where they apply: `since:YYYY-MM-DD` when a fact is known to have started on a date ("moved to Osaka in September"); `ends:YYYY-MM-DD` on a temporary state with a known end ("in Paris until 10-25", "no hiking while the knee heals"), which code moves to the archive marked `until:` once the date passes; `due:YYYY-MM-DD` for todos and `done:YYYY-MM-DD` once done; in the archive, `until:YYYY-MM-DD` on a version that stopped being true and `replaced:YYYY-MM-DD` on one that was only reworded or corrected; and `ext` on an entry saved from outside content (Safety). A deadline is a `due`, never an `ends` or `until`: "finish by March" doesn't stop being true in March (Graphiti shipped that bug). Unknown prefixes and free text are kept as they are, so hand edits never break parsing.
+- Line prefix: the type (`fact`, `note` or `todo`; none in `USER.md`) and the date the line was written, last changed or last confirmed (`update` with no changes), set by the tool, so the model can tell an old entry from a fresh one ("lives in Tokyo", as of when?). Then, where they apply: `since:YYYY-MM-DD` when a fact is known to have started on a date ("moved to Osaka in September"); `ends:YYYY-MM-DD` on a temporary state with a known end ("in Paris until 10-25", "no hiking while the knee heals"), which code moves to the archive marked `until:` once the date passes; `due:YYYY-MM-DD` for todos (or `due:YYYY-MM-DDTHH:MM` with a time) and `done:YYYY-MM-DD` once done; in the archive, `until:YYYY-MM-DD` on a version that stopped being true and `replaced:YYYY-MM-DD` on one that was only reworded or corrected; and `ext` on an entry saved from outside content (Safety). A deadline is a `due`, never an `ends` or `until`: "finish by March" doesn't stop being true in March (Graphiti shipped that bug). Unknown prefixes and free text are kept as they are, so hand edits never break parsing.
 - `#tags` at the end, written in both languages with common synonyms (routing rules); they matter for searching the archive.
 - New entries are appended, so later lines are newer.
 - The files are the only state: tools read and write them on every call (they are small); nothing is cached.
@@ -611,7 +611,7 @@ Goal: Ivy starts remembering. Built in this order; each step is shippable on its
    - 4c. The plugin: tools, rules, hot files in the session prompt, due-today line, `/memory`. *Done;* a real two-session run applied a saved preference unprompted, and led to two fixes (`type` ignored for `USER.md`; "write the fact itself, not a reminder", after the model dropped a time).
    - 4d. Safety scan, strict on write and lenient on load. *Done;* a real model's attempt to save an injected instruction was rejected, and it refused an API key on its own.
    - 4e. `session_search` over past sessions. *Done;* a real model asked "what did you advise when I wanted you to store my OpenAI key?" found the earlier session and quoted the advice.
-   *Done when:* the five checks at the end of §8.1 pass with a real model.
+   *Done when:* the five checks at the end of §8.1 pass with a real model. *Passed (2026-10-18)* in a clean data folder, one session per step. Against a control with no memory, the brevity preference cut the answer to about a third and dropped its table; a fact saved in Chinese shaped an English answer; an archived fact was found by search; a due todo was mentioned in unrelated sessions; past the cap, the model archived past events instead of losing entries; an injection was refused; a changed home moved the old one to the archive. The runs led to four fixes: a todo's time is a structured part of `due` (the model kept dropping it from the text), the due line asks the model to mention it, the over-cap error points to archiving down to ~80% (the model had shaved a few characters off entry after entry), and tags typed into the text become tags while a changed fact starts with fresh ones.
 5. *(Optional)* Progress notes while the model works, where the provider supports it.
 
 - **Done when (milestone):** Ivy remembers facts and todos across sessions and uses them without being asked.

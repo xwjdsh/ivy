@@ -43,6 +43,12 @@ export function isDate(value: string): boolean {
   return DATE_RE.test(value) && !Number.isNaN(Date.parse(value));
 }
 
+/** A due value: a date, or a date and time ("2026-10-18T17:00") when the todo has one. */
+export function isDue(value: string): boolean {
+  const m = /^(\d{4}-\d{2}-\d{2})(T([01]\d|2[0-3]):[0-5]\d)?$/.exec(value);
+  return !!m && isDate(m[1] as string);
+}
+
 export function parseLine(raw: string): Line {
   const m = ENTRY_RE.exec(raw.trimEnd());
   if (!m) return { raw };
@@ -53,7 +59,11 @@ export function parseLine(raw: string): Line {
       entry.type = token as EntryType;
     } else if (isDate(token) && !entry.date) {
       entry.date = token;
-    } else if (value !== undefined && isDateField(key) && isDate(value)) {
+    } else if (
+      value !== undefined &&
+      isDateField(key) &&
+      (key === "due" ? isDue(value) : isDate(value))
+    ) {
       entry.fields[key] = value;
     } else if (token === "ext") {
       entry.ext = true;
@@ -61,13 +71,21 @@ export function parseLine(raw: string): Line {
       entry.unknown.push(token);
     }
   }
-  let text = (m[2] ?? "").trim();
+  const { text, tags } = splitTags(m[2] ?? "");
+  entry.text = text;
+  entry.tags = tags;
+  return { raw, entry };
+}
+
+/** Trailing `#tags` split off a text: "Lives in Osaka #home #大阪" → text and ["home", "大阪"]. */
+export function splitTags(input: string): { text: string; tags: string[] } {
+  let text = input.trim();
+  const tags: string[] = [];
   for (let t = TAG_RE.exec(` ${text}`); t; t = TAG_RE.exec(` ${text}`)) {
-    entry.tags.unshift(t[1] as string);
+    tags.unshift(t[1] as string);
     text = ` ${text}`.slice(0, t.index).trim();
   }
-  entry.text = text;
-  return { raw, entry };
+  return { text, tags };
 }
 
 export function formatEntry(entry: Entry): string {

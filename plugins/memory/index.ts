@@ -106,7 +106,7 @@ export function createMemoryPlugin(): IvyPlugin {
           type: z.enum(ENTRY_TYPES).optional(),
           since: dateString.optional(),
           ends: dateString.optional(),
-          due: dateString.optional(),
+          due: z.string().optional().describe("YYYY-MM-DD, or YYYY-MM-DD HH:MM when it has a time"),
           tags: z.array(z.string()).optional(),
           distinct: z
             .boolean()
@@ -140,7 +140,7 @@ export function createMemoryPlugin(): IvyPlugin {
           changed: z.boolean().optional(),
           since: dateString.optional(),
           ends: dateString.optional(),
-          due: dateString.optional(),
+          due: z.string().optional().describe("YYYY-MM-DD, or YYYY-MM-DD HH:MM when it has a time"),
           done: z.boolean().optional(),
           tags: z.array(z.string()).optional(),
         }),
@@ -250,7 +250,10 @@ export function createMemoryPlugin(): IvyPlugin {
 
     contextFor({ now }) {
       const due = dueTodos(screen(store().read()).files, localDate(now));
-      return due.length ? due.map((d) => `Due: ${d}`).join("\n") : null;
+      // Phrased as a task: a reminder only helps if the model actually says it.
+      return due.length
+        ? `Todos due (mention them to the user once in this conversation, briefly, whatever the question):\n${due.map((d) => `- ${d}`).join("\n")}`
+        : null;
     },
 
     commands: [
@@ -297,8 +300,11 @@ function dueTodos(files: Files, today: string): string[] {
   for (const line of files.memory) {
     const e = line.entry;
     const due = e?.type === "todo" && !e.fields.done ? e.fields.due : undefined;
-    if (!e || !due || due > today) continue;
-    out.push(`${e.text} (${due === today ? "today" : `overdue since ${due}`})`);
+    const day = due?.slice(0, 10);
+    if (!e || !due || !day || day > today) continue;
+    const time = due.slice(11);
+    const when = day === today ? `today${time ? ` at ${time}` : ""}` : `overdue since ${day}`;
+    out.push(`${e.text} (${when})`);
   }
   return out.slice(0, MAX_DUE);
 }
@@ -310,8 +316,9 @@ function overview(ctx: Context, store: MemoryFiles): string {
   const archived = ctx.files.archive.filter((l) => l.entry).length;
   const todoLine = (e: Entry) => {
     const due = e.fields.due;
-    const late = due && daysBetween(due, ctx.today) > LONG_OVERDUE_DAYS ? "  (long overdue)" : "";
-    return `  ${due ? `${due}  ` : ""}${e.text}${late}`;
+    const late =
+      due && daysBetween(due.slice(0, 10), ctx.today) > LONG_OVERDUE_DAYS ? "  (long overdue)" : "";
+    return `  ${due ? `${due.replace("T", " ")}  ` : ""}${e.text}${late}`;
   };
   return [
     `USER.md ${usageText(usageOf(ctx, "user"))} · MEMORY.md ${usageText(usageOf(ctx, "memory"))} · ARCHIVE.md ${archived} entries`,

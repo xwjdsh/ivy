@@ -66,3 +66,12 @@ test("tags are normalized", () => {
     "health",
   ]);
 });
+
+test("due may carry a time; other dates may not", () => {
+  expect(parseLine("- [todo 2026-10-18 due:2026-10-18T17:00] Parcel").entry?.fields.due).toBe(
+    "2026-10-18T17:00",
+  );
+  expect(parseLine("- [fact 2026-10-18 since:2026-10-18T17:00] X").entry?.unknown).toEqual([
+    "since:2026-10-18T17:00",
+  ]);
+});
