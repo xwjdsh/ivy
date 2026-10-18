@@ -1,8 +1,10 @@
+import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import type { IvyPlugin } from "@ivy/plugin-api";
 import { Agent, type ToolCallRequest } from "./agent.ts";
 import { Capabilities } from "./capabilities.ts";
 import { type Config, loadConfig, type Paths, resolvePaths } from "./config.ts";
+import { saveAllowRule } from "./config-edit.ts";
 import { SystemPrompt } from "./context.ts";
 import { AnthropicModelClient, isOfficialAnthropicApi, type ModelClient } from "./model.ts";
 import { type PermissionChoice, Permissions } from "./permissions.ts";
@@ -15,6 +17,9 @@ export * from "./capabilities.ts";
 export * from "./config.ts";
 export * from "./config-edit.ts";
 export { type PromptPart, SystemPrompt } from "./context.ts";
+
+import { createLogger, errorMessage } from "./log.ts";
+
 export { createLogger, errorMessage, type LogLevel, setLogLevel, setLogSink } from "./log.ts";
 export * from "./model.ts";
 export * from "./permissions.ts";
@@ -49,6 +54,7 @@ export interface Ivy {
 /** Wire up the kernel: config, plugins, system prompt and agent. */
 export async function createIvy(opts: IvyOptions): Promise<Ivy> {
   const paths = opts.paths ?? resolvePaths();
+  migrateLegacyPermissions(paths);
   const config = loadConfig(paths);
   pruneTraces(paths.traces, config.trace.retention_days);
   const plugins = new PluginHost(paths.data, config.plugins, sessionHistory(paths.sessions));
@@ -67,8 +73,10 @@ export async function createIvy(opts: IvyOptions): Promise<Ivy> {
   const lister = model.listModels?.bind(model);
   if (lister) void capabilities.refresh({ listModels: lister });
 
-  const permissions = new Permissions(config.permissions, paths.permissions, (tool) =>
-    plugins.isDefaultAllowed(tool),
+  const permissions = new Permissions(
+    config.permissions,
+    (tool) => saveAllowRule(paths, tool),
+    (tool) => plugins.isDefaultAllowed(tool),
   );
 
   const agent = new Agent({
@@ -92,6 +100,34 @@ export async function createIvy(opts: IvyOptions): Promise<Ivy> {
     permissions,
     tracer,
   };
+}
+
+/**
+ * *Always* rules used to live in permissions.json, out of sight when reading the config.
+ * Move them into `[permissions] allow` once, then remove the file.
+ */
+function migrateLegacyPermissions(paths: Paths): void {
+  if (!existsSync(paths.legacyPermissions) || !existsSync(paths.config)) return;
+  const log = createLogger("permissions");
+  try {
+    const data = JSON.parse(readFileSync(paths.legacyPermissions, "utf8")) as { allow?: unknown };
+    const rules = Array.isArray(data.allow) ? data.allow.filter((x) => typeof x === "string") : [];
+    let allow = loadConfig(paths).permissions.allow;
+    for (const tool of rules) {
+      if (!allow.includes(tool)) allow = saveAllowRule(paths, tool).permissions.allow;
+    }
+    unlinkSync(paths.legacyPermissions);
+    if (rules.length) {
+      log.warn(
+        `moved ${rules.length} "Always" rule(s) from permissions.json into config.toml [permissions] allow`,
+      );
+    }
+  } catch (err) {
+    log.warn(
+      "could not move permissions.json into config.toml; it is left as it was",
+      errorMessage(err),
+    );
+  }
 }
 
 /** The client for the active provider's API kind. */

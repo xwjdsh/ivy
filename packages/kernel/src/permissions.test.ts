@@ -1,11 +1,13 @@
 import { expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { setLogSink } from "./log.ts";
 import { matchesAny, Permissions } from "./permissions.ts";
 
-const file = () => join(mkdtempSync(join(tmpdir(), "ivy-perm-")), "permissions.json");
+/** A saver that records what *Always* would write to config.toml. */
+const saver = () => {
+  const saved: string[] = [];
+  return { saved, save: (tool: string) => void saved.push(tool) };
+};
+const noSave = () => {};
 const rules = (r: Partial<{ allow: string[]; ask: string[]; deny: string[] }> = {}) => ({
   allow: [],
   ask: [],
@@ -21,7 +23,7 @@ test("globs match whole tool names", () => {
 });
 
 test("risk defaults: read runs, the rest asks", () => {
-  const p = new Permissions(rules(), file());
+  const p = new Permissions(rules(), noSave);
   expect(p.decide("t__r", "read").decision).toBe("allow");
   for (const risk of ["write", "external", "dangerous"] as const) {
     expect(p.decide("t__x", risk).decision).toBe("ask");
@@ -31,7 +33,7 @@ test("risk defaults: read runs, the rest asks", () => {
 test("deny beats every allow; ask beats allow and a read label", () => {
   const p = new Permissions(
     rules({ allow: ["t__*"], ask: ["t__sneaky"], deny: ["t__send"] }),
-    file(),
+    noSave,
     () => true,
   );
   expect(p.decide("t__send", "read")).toMatchObject({ decision: "deny", reason: "deny rule" });
@@ -40,7 +42,7 @@ test("deny beats every allow; ask beats allow and a read label", () => {
 });
 
 test("only risk-default asks can be remembered", () => {
-  const p = new Permissions(rules({ ask: ["t__sneaky"] }), file());
+  const p = new Permissions(rules({ ask: ["t__sneaky"] }), noSave);
   expect(p.decide("t__x", "write")).toEqual({
     decision: "ask",
     reason: "write tool",
@@ -51,8 +53,8 @@ test("only risk-default asks can be remembered", () => {
 });
 
 test("'always' is ignored where it would have no effect, whatever the interface sent", () => {
-  const f = file();
-  const p = new Permissions(rules({ allow: ["shell__*"], ask: ["t__sneaky"] }), f, () => true);
+  const s = saver();
+  const p = new Permissions(rules({ allow: ["shell__*"], ask: ["t__sneaky"] }), s.save, () => true);
   for (const [tool, risk] of [
     ["shell__run", "dangerous"],
     ["t__sneaky", "read"],
@@ -62,11 +64,11 @@ test("'always' is ignored where it would have no effect, whatever the interface 
     expect(p.remember(tool, "session", asked)).toBe(true);
     expect(p.decide(tool, risk).decision).toBe("ask"); // still asked next time
   }
-  expect(existsSync(f)).toBe(false); // nothing was saved
+  expect(s.saved).toEqual([]); // nothing was saved
 });
 
 test("plugin defaults allow, but user rules still win", () => {
-  const p = new Permissions(rules({ deny: ["memory__save"] }), file(), (t) =>
+  const p = new Permissions(rules({ deny: ["memory__save"] }), noSave, (t) =>
     t.startsWith("memory__"),
   );
   expect(p.decide("memory__update", "write")).toMatchObject({
@@ -76,40 +78,35 @@ test("plugin defaults allow, but user rules still win", () => {
   expect(p.decide("memory__save", "write").decision).toBe("deny");
 });
 
-test("'always' is saved and survives a restart; 'session' doesn't", () => {
-  const f = file();
-  const first = new Permissions(rules(), f);
-  const ask = first.decide("t__any", "write");
-  expect(first.remember("t__save", "always", ask)).toBe(true);
-  expect(first.remember("t__draft", "session", ask)).toBe(true);
-  expect(first.remember("t__send", "deny", ask)).toBe(false);
-  expect(JSON.parse(readFileSync(f, "utf8"))).toEqual({ allow: ["t__save"] });
-
-  const restarted = new Permissions(rules(), f);
-  expect(restarted.decide("t__save", "write")).toMatchObject({
-    decision: "allow",
-    reason: "allowed always",
-  });
-  expect(restarted.decide("t__draft", "write").decision).toBe("ask");
+test("'always' adds an allow rule (saved to config.toml); 'session' doesn't", () => {
+  const s = saver();
+  const p = new Permissions(rules(), s.save);
+  const ask = p.decide("t__any", "write");
+  expect(p.remember("t__save", "always", ask)).toBe(true);
+  expect(p.remember("t__draft", "session", ask)).toBe(true);
+  expect(p.remember("t__send", "deny", ask)).toBe(false);
+  expect(s.saved).toEqual(["t__save"]);
+  expect(p.decide("t__save", "write")).toMatchObject({ decision: "allow", reason: "allow rule" });
+  expect(p.summary().allow).toEqual(["t__save"]);
+  // Already covered by a rule: nothing more is saved.
+  p.remember("t__save", "always", ask);
+  expect(s.saved).toEqual(["t__save"]);
 });
 
-test("session choices end with clearSession; an unreadable file is ignored", () => {
-  const f = file();
-  writeFileSync(f, "not json");
-  setLogSink(() => {}); // the warning about the bad file is expected here
-  const p = new Permissions(rules(), f);
+test("a failed save still allows the tool for this run", () => {
+  const p = new Permissions(rules(), () => {
+    throw new Error("config.toml is read-only");
+  });
+  setLogSink(() => {}); // the warning is expected here
+  expect(p.remember("t__save", "always", p.decide("t__save", "write"))).toBe(true);
   setLogSink(null);
+  expect(p.decide("t__save", "write").decision).toBe("allow");
+});
+
+test("session choices end with clearSession", () => {
+  const p = new Permissions(rules(), noSave);
   p.remember("t__draft", "session", p.decide("t__draft", "write"));
   expect(p.decide("t__draft", "write").decision).toBe("allow");
   p.clearSession();
   expect(p.decide("t__draft", "write").decision).toBe("ask");
-});
-
-test("saving keeps rules another Ivy process saved meanwhile", () => {
-  const f = file();
-  const a = new Permissions(rules(), f);
-  const b = new Permissions(rules(), f);
-  a.remember("t__one", "always", a.decide("t__one", "write"));
-  b.remember("t__two", "always", b.decide("t__two", "write"));
-  expect(JSON.parse(readFileSync(f, "utf8"))).toEqual({ allow: ["t__one", "t__two"] });
 });

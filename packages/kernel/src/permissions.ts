@@ -1,7 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
 import type { RiskLevel } from "@ivy/plugin-api";
-import { createLogger } from "./log.ts";
+import { createLogger, errorMessage } from "./log.ts";
 
 export type Decision = "allow" | "deny" | "ask";
 
@@ -32,26 +30,23 @@ export interface DecisionWithReason {
  * 2. `ask` rules (config.toml): always asked, whatever the tool's declared risk. This is
  *    the user's answer to a plugin that labels a risky tool "read".
  * 3. `dangerous` tools: always asked; allow rules and "remember" choices don't apply.
- * 4. Allow: `allow` rules (config.toml), learned rules (permissions.json, from "Always"),
- *    plugin defaults (`defaultAllow` on low-impact tools), and "for this session" choices.
+ * 4. Allow: `allow` rules (config.toml; *Always* in the prompt adds one there), plugin
+ *    defaults (`defaultAllow` on low-impact tools), and "for this session" choices.
  * 5. The risk level's default: `read` runs, everything else is asked.
  *
  * Rules are tool-name globs; `*` matches anything ("memory__*").
  */
 export class Permissions {
   private readonly session = new Set<string>();
-  private learned: string[];
   private readonly log = createLogger("permissions");
 
   constructor(
     private readonly rules: PermissionRules,
-    /** ~/.ivy/permissions.json: allow rules saved from the dialog; Ivy-owned. */
-    private readonly learnedFile: string,
+    /** Saves an *Always* choice, i.e. adds an allow rule to config.toml. */
+    private readonly saveAllow: (tool: string) => void = () => {},
     /** Whether the owning plugin marks this tool as safe to run without asking. */
     private readonly pluginDefault: (tool: string) => boolean = () => false,
-  ) {
-    this.learned = this.load();
-  }
+  ) {}
 
   decide(tool: string, risk: RiskLevel): DecisionWithReason {
     const fixed = (decision: Decision, reason: string) => ({
@@ -63,7 +58,6 @@ export class Permissions {
     if (matchesAny(tool, this.rules.ask)) return fixed("ask", "ask rule");
     if (risk === "dangerous") return fixed("ask", "dangerous tool");
     if (matchesAny(tool, this.rules.allow)) return fixed("allow", "allow rule");
-    if (matchesAny(tool, this.learned)) return fixed("allow", "allowed always");
     if (this.pluginDefault(tool)) return fixed("allow", "plugin default");
     if (this.session.has(tool)) return fixed("allow", "allowed for this session");
     if (risk === "read") return fixed("allow", "read-only");
@@ -79,9 +73,14 @@ export class Permissions {
     if (choice === "deny") return false;
     if (!asked.canRemember) return true;
     if (choice === "session") this.session.add(tool);
-    if (choice === "always" && !this.learned.includes(tool)) {
-      this.learned.push(tool);
-      this.save();
+    if (choice === "always" && !matchesAny(tool, this.rules.allow)) {
+      this.rules.allow.push(tool);
+      try {
+        this.saveAllow(tool);
+      } catch (err) {
+        // Still allowed for this run; the user sees why it wasn't saved in the log.
+        this.log.warn(`could not save the allow rule for ${tool}`, errorMessage(err));
+      }
     }
     return true;
   }
@@ -92,30 +91,8 @@ export class Permissions {
   }
 
   /** Rules in effect, for /status. */
-  summary(): PermissionRules & { learned: string[] } {
-    return { ...this.rules, learned: [...this.learned] };
-  }
-
-  private load(): string[] {
-    try {
-      if (!existsSync(this.learnedFile)) return [];
-      const data = JSON.parse(readFileSync(this.learnedFile, "utf8")) as { allow?: unknown };
-      return Array.isArray(data.allow) ? data.allow.filter((x) => typeof x === "string") : [];
-    } catch (err) {
-      this.log.warn(`ignoring unreadable ${this.learnedFile}`, String(err));
-      return [];
-    }
-  }
-
-  /** Merge with the file first, so rules saved meanwhile by another Ivy process survive. */
-  private save(): void {
-    this.learned = [...new Set([...this.load(), ...this.learned])];
-    try {
-      mkdirSync(dirname(this.learnedFile), { recursive: true });
-      writeFileSync(this.learnedFile, `${JSON.stringify({ allow: this.learned }, null, 2)}\n`);
-    } catch (err) {
-      this.log.warn(`could not save ${this.learnedFile}`, String(err));
-    }
+  summary(): PermissionRules {
+    return { allow: [...this.rules.allow], ask: [...this.rules.ask], deny: [...this.rules.deny] };
   }
 }
 

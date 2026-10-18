@@ -51,7 +51,7 @@ export function StatusBar(props: {
 const CHOICES: Array<{ value: PermissionChoice; label: string; key: string; remember?: true }> = [
   { value: "once", label: "Yes", key: "y" },
   { value: "session", label: "Yes, for the rest of this session", key: "s", remember: true },
-  { value: "always", label: "Always (saved to permissions.json)", key: "a", remember: true },
+  { value: "always", label: "Always (saved to config.toml)", key: "a", remember: true },
   { value: "deny", label: "No", key: "n" },
 ];
 

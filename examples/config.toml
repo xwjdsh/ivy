@@ -26,7 +26,7 @@ max_tokens = 64000
 
 # Who may run which tool without asking. Tool-name globs; checked in this order:
 # deny (blocked) > ask (always asked, whatever risk the plugin declares) > allow.
-# "Always" in the permission dialog saves to permissions.json instead (Ivy-owned).
+# "Always" in the permission dialog adds a rule to `allow` here (comments and layout kept).
 [permissions]
 allow = []                        # e.g. ["memory__*"]
 ask = []                          # e.g. a tool you don't trust to be read-only

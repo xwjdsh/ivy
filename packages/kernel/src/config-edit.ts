@@ -28,6 +28,16 @@ export function saveEffort(paths: Paths, effort: Effort): Config {
   );
 }
 
+/** Save an *Always* from the permission prompt: add `tool` to `[permissions] allow`. */
+export function saveAllowRule(paths: Paths, tool: string): Config {
+  return saveEdit(
+    paths,
+    (toml) => withListItem(toml, ["permissions"], "allow", tool),
+    (c) => c.permissions.allow.includes(tool),
+    "the allow rule",
+  );
+}
+
 function saveEdit(
   paths: Paths,
   edit: (toml: string) => string,
@@ -93,4 +103,90 @@ function headerPath(line: string): string[] | null {
 
 function sameTable(path: string[] | null, section: string[]): boolean {
   return path !== null && path.length === section.length && path.every((p, i) => p === section[i]);
+}
+
+/**
+ * Pure text edit: add `value` to the string list `key` inside `[section.path]`, keeping the
+ * list's layout and comments: inserted before the closing `]`, on its own line when the
+ * list spans several lines. A missing key is added after the header, a missing table at
+ * the end. Doesn't check for duplicates; callers do.
+ */
+export function withListItem(toml: string, section: string[], key: string, value: string): string {
+  const lines = toml.split("\n");
+  const item = JSON.stringify(value);
+  const header = lines.findIndex((line) => sameTable(headerPath(line), section));
+  if (header === -1) {
+    const body = toml.endsWith("\n") || toml === "" ? toml : `${toml}\n`;
+    return `${body}${body.trim() ? "\n" : ""}[${section.join(".")}]\n${key} = [${item}]\n`;
+  }
+  let end = lines.findIndex((line, i) => i > header && headerPath(line) !== null);
+  if (end === -1) end = lines.length;
+  const start = lines.findIndex(
+    (line, i) => i > header && i < end && new RegExp(`^\\s*${key}\\s*=\\s*\\[`).test(line),
+  );
+  if (start === -1) {
+    lines.splice(header + 1, 0, `${key} = [${item}]`);
+    return lines.join("\n");
+  }
+
+  const close = closingBracket(lines, start);
+  if (!close) throw new Error(`Can't find the end of ${key} in [${section.join(".")}]`);
+  const line = lines[close.line] as string;
+  const before = line.slice(0, close.col);
+  const open = close.line === start ? before.indexOf("[") : -1;
+  const inside = close.line === start ? before.slice(open + 1) : before;
+
+  if (inside.trim() !== "" || close.line === start) {
+    // Items on the same line as `]`: insert there ("a"] → "a", "new"]).
+    const trimmed = before.trimEnd();
+    const empty = inside.trim() === "";
+    const sep = empty || trimmed.endsWith(",") ? (empty ? "" : " ") : ", ";
+    lines[close.line] = `${trimmed}${sep}${item}${line.slice(close.col)}`;
+    return lines.join("\n");
+  }
+  // `]` on its own line: add a line above it, after a comma on the last item if needed.
+  let last = close.line - 1;
+  while (last > start && codeOf(lines[last] as string).trim() === "") last--;
+  const lastLine = lines[last] as string;
+  const code = codeOf(lastLine).trimEnd();
+  if (last > start && !code.endsWith(",")) {
+    lines[last] = `${code},${lastLine.slice(code.length)}`;
+  }
+  const indent = last > start ? (/^\s*/.exec(lastLine)?.[0] ?? "  ") : "  ";
+  lines.splice(close.line, 0, `${indent}${item},`);
+  return lines.join("\n");
+}
+
+/** Where the list opened on line `start` closes: brackets in strings and comments don't count. */
+function closingBracket(lines: string[], start: number): { line: number; col: number } | null {
+  let depth = 0;
+  for (let i = start; i < lines.length; i++) {
+    const text = lines[i] as string;
+    let quote: string | null = null;
+    for (let j = 0; j < text.length; j++) {
+      const ch = text[j];
+      if (quote) {
+        if (ch === "\\" && quote === '"') j++;
+        else if (ch === quote) quote = null;
+      } else if (ch === '"' || ch === "'") quote = ch;
+      else if (ch === "#") break;
+      else if (ch === "[") depth++;
+      else if (ch === "]" && --depth === 0) return { line: i, col: j };
+    }
+  }
+  return null;
+}
+
+/** A line without its comment (a `#` outside strings). */
+function codeOf(line: string): string {
+  let quote: string | null = null;
+  for (let j = 0; j < line.length; j++) {
+    const ch = line[j];
+    if (quote) {
+      if (ch === "\\" && quote === '"') j++;
+      else if (ch === quote) quote = null;
+    } else if (ch === '"' || ch === "'") quote = ch;
+    else if (ch === "#") return line.slice(0, j);
+  }
+  return line;
 }

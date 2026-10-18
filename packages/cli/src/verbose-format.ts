@@ -83,7 +83,6 @@ function permissionSummary(ivy: Ivy): string {
     p.deny.length ? `deny ${p.deny.join(" ")}` : "",
     p.ask.length ? `ask ${p.ask.join(" ")}` : "",
     p.allow.length ? `allow ${p.allow.join(" ")}` : "",
-    p.learned.length ? `always (permissions.json) ${p.learned.join(" ")}` : "",
   ].filter(Boolean);
   return parts.join(" · ") || "defaults only";
 }

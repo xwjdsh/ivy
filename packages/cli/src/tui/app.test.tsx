@@ -625,7 +625,7 @@ test("/status shows provider, capabilities, prompt parts, plugins and paths", as
   expect(f).toContain("config: ");
 });
 
-test("'Always' is saved to permissions.json; a restart doesn't ask again", async () => {
+test("'Always' is saved to config.toml; a restart doesn't ask again", async () => {
   const script = (): Step[] => [
     { stop: "tool_use", content: [toolUse("a", "t__save")] },
     { stop: "end_turn", content: [text("saved it")] },
@@ -633,12 +633,12 @@ test("'Always' is saved to permissions.json; a restart doesn't ask again", async
   const first = await start(script());
   await first.type("save it");
   await first.type(ENTER);
-  await eventually(() => expect(first.frame()).toContain("Always (saved to permissions.json)"));
+  await eventually(() => expect(first.frame()).toContain("Always (saved to config.toml)"));
   await first.type("a");
   await eventually(() => expect(first.frame()).toContain("saved it"));
-  expect(JSON.parse(readFileSync(join(home, "permissions.json"), "utf8"))).toEqual({
-    allow: ["t__save"],
-  });
+  expect(readFileSync(join(home, "config.toml"), "utf8")).toContain(
+    '[permissions]\nallow = ["t__save"]',
+  );
   first.ui.unmount();
 
   const second = await start(script());

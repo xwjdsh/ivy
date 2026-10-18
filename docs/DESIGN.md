@@ -218,8 +218,8 @@ deny  = ["shell__*"]
 
 - **Precedence:** `deny` > `ask` > dangerous tools always ask > allow (`allow` rules, learned "Always" rules, plugin defaults, "for this session") > the risk level's default (`read` runs, everything else asks). A denied call is rejected without asking, and the model is told it was blocked by a rule.
 - **Risk levels are declared by plugins and not verified.** A plugin could label a risky tool `read`. The gate protects against the *model* misusing tools, not against a malicious plugin (§6.3). `ask` rules let the user force a confirmation for any tool, and `/status` lists every tool with its declared risk.
-- **Sources:** rules from `config.toml` (hand-written) plus learned rules in `~/.ivy/permissions.json`, which Ivy owns. Ivy never rewrites `config.toml` as a whole; today the only in-place edits are `/model` and `/effort` saving their choice (§5.2), later also the M4 app's settings (§5.7).
-- **Dialog:** *Yes* / *Yes, for this session* / *Always (saves an allow rule to permissions.json)* / *No*, with the reason it asks (`write tool`, `ask rule`, ...) and the input (in full for `dangerous` tools). Where remembering would have no effect (`dangerous` tools, `ask` rules) only *Yes* / *No* are offered, and the kernel treats a remembered choice there as *Yes* whatever the interface sends.
+- **Sources:** all rules live in `config.toml`, so reading the config shows everything that runs without asking. *Always* in the prompt adds the tool to `[permissions] allow` in place (inserted before the list's `]`, layout and comments kept, validated, restored on failure). Ivy never rewrites `config.toml` as a whole; its in-place edits are *Always*, `/model` and `/effort` (§5.2), later the M4 app's settings (§5.7).
+- **Dialog:** *Yes* / *Yes, for this session* / *Always (adds an allow rule to config.toml)* / *No*, with the reason it asks (`write tool`, `ask rule`, ...) and the input (in full for `dangerous` tools). Where remembering would have no effect (`dangerous` tools, `ask` rules) only *Yes* / *No* are offered, and the kernel treats a remembered choice there as *Yes* whatever the interface sends.
 - **Plugin defaults:** a tool may set `defaultAllow: true` (low-impact tools such as memory saves; not allowed on `dangerous` tools); user `deny` and `ask` rules still win.
 - "For this session" choices are cleared on `/new` and `/resume`.
 - **Permission modes (later):** a session-wide switch that resolves "ask" by risk level. M4 needs one (unattended jobs: writes run, external actions wait for the user, dangerous ones are denied), which is why the four risk levels stay distinct.
@@ -361,7 +361,6 @@ Ivy reuses other agents' work through open standards, not their plugin formats:
 ├── config.toml          # global config, enabled plugins, permissions, model settings
 ├── SOUL.md              # who Ivy is (optional, loaded into system prompt)
 ├── skills/              # Agent Skills: <name>/SKILL.md (M2)
-├── permissions.json     # allow rules learned from the permission dialog (Ivy-owned)
 ├── cache/models.json    # model capabilities: Models API facts + features learned unsupported
 ├── sessions/            # append-only JSONL transcripts
 ├── data/<pluginId>/     # per-plugin storage
@@ -626,7 +625,7 @@ Goal: Ivy starts remembering. Built in this order; each step is shippable on its
 
 1. **Plugin host v1:** per-turn context from plugins, plugin slash commands, `[plugins.<id>]` config and `enabled`. *Done.*
 2. **core plugin:** the current time in every turn's context, `date_calc`. *Done.*
-3. **Permission rules:** allow/ask/deny globs, *Always* saved to `permissions.json`, plugin default allows (§5.5). *Done.*
+3. **Permission rules:** allow/ask/deny globs, *Always* saved as an allow rule in `config.toml`, plugin default allows (§5.5). *Done.*
 4. **memory plugin** (§8.1): a per-session system prompt with plugin sections (4a), line format, search and store (4b), the plugin itself (4c), the safety scan (4d), `session_search` (4e). *Done.*
    *Done when:* the five checks at the end of §8.1 pass with a real model. *Passed (2026-10-18);* they now run as evals (`bun run eval`). Real runs found what unit tests couldn't (a dropped time, a reminder never voiced, a claimed save that never happened, tags breaking through a proxy); each became a rule or a tool change in §8.1 and an eval case. Models differ markedly on the same cases, so run the evals before switching models.
 5. *(Optional)* Progress notes while the model works, where the provider supports it.
@@ -677,7 +676,7 @@ Real forks in the road only; the sections hold the details. Superseded decisions
 | 2026-10-16 | Project content in English; Claude writes the code, the user reviews | User's choice; small, reviewable changes |
 | 2026-10-16 | Scope is the Anthropic Messages API, not Claude: any model behind a compatible endpoint; no provider abstraction yet (coupling listed in §5.2) | The user runs non-Claude models through a proxy; the path to another API is known |
 | 2026-10-16 | Compatibility first, Anthropic features as enhancements (principle 7, G7); capabilities from the Models API, learned-on-400 and defaults for older models | New models and endpoints work without code changes |
-| 2026-10-16 | Credentials and endpoint only from `config.toml`; strict keys; learned permission rules in `permissions.json` | One source of truth; typos fail loudly; the user's config is never rewritten |
+| 2026-10-16 | Credentials and endpoint only from `config.toml`; strict keys; learned permission rules ~~in `permissions.json`~~ in `config.toml` since 2026-10-18 | One source of truth; typos fail loudly. Rules were first kept apart so the config was never touched; once in-place edits proved safe (`/model`), rules out of sight when reading the config were the bigger problem |
 | 2026-10-16 | Built-in `rules.md` (named `core.md` until 2026-10-18) for operating and safety rules; `SOUL.md` is identity and hard rules, written by the user only | Rules can't depend on user files; a model-editable rule file would turn one injection into a permanent rule |
 | 2026-10-16 | Per-turn context stored apart from the prompt; rendered as `clear_at` system messages where supported, `<context>` blocks elsewhere | Newer API features without breaking compatible endpoints |
 | 2026-10-16 | Use the beta Messages API | Needed for refusal fallback now and compaction later |

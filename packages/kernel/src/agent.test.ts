@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Anthropic from "@anthropic-ai/sdk";
@@ -8,6 +8,7 @@ import { z } from "zod";
 import { Agent, type AgentEvent, type ToolCallRequest } from "./agent.ts";
 import { Capabilities } from "./capabilities.ts";
 import { loadConfig, resolvePaths } from "./config.ts";
+import { saveAllowRule } from "./config-edit.ts";
 import {
   isOfficialAnthropicApi,
   type ModelClient,
@@ -103,8 +104,10 @@ describe("Agent.runTurn", () => {
       isOfficialAnthropicApi(p.base_url),
       { effort: config.generation.effort, refusalFallback: p.refusal_fallback },
     );
-    const permissions = new Permissions(config.permissions, join(dir, "permissions.json"), (tool) =>
-      plugins.isDefaultAllowed(tool),
+    const permissions = new Permissions(
+      config.permissions,
+      (tool) => saveAllowRule(paths, tool),
+      (tool) => plugins.isDefaultAllowed(tool),
     );
     return new Agent({
       config,
@@ -259,8 +262,23 @@ describe("Agent.runTurn", () => {
     ];
     await run(await makeAgent(new FakeModel(script()), "write", confirm), "go");
     expect(asked).toBe(1);
+    const saved = readFileSync(join(dir, "config.toml"), "utf8");
+    expect(saved).toContain('[permissions]\nallow = ["t__echo"]');
+    // A fresh agent over the saved config (the helper rewrites config.toml, so pass it on).
     session = Session.create(join(dir, "sessions"), "m");
-    await run(await makeAgent(new FakeModel(script()), "write", confirm), "go again");
+    const extra = saved.slice(saved.indexOf("[permissions]"));
+    await run(
+      await makeAgent(
+        new FakeModel(script()),
+        "write",
+        confirm,
+        "sys",
+        [],
+        undefined,
+        `\n${extra}`,
+      ),
+      "go again",
+    );
     expect(asked).toBe(1);
   });
 
