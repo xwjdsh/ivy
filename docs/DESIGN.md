@@ -537,7 +537,7 @@ A skill is *know-how* rather than a tool: how this user writes the weekly report
 
 ## 9. Project Layout
 
-Bun workspace monorepo:
+Bun workspace monorepo. Packages and plugins only; their files are visible in the tree.
 
 ```
 ivy/
@@ -549,11 +549,11 @@ ivy/
 │   ├── kernel/              # loop, model client, capabilities, context, sessions, permissions, plugin host, traces
 │   │   └── src/prompts/rules.md  # built-in operating and safety rules
 │   ├── plugin-api/          # public types for plugin authors
-│   └── cli/                 # `ivy` command: Ink TUI (src/tui/), one-shot plain mode, slash commands
-├── evals/                   # real-model eval cases (`bun run eval`): memory.ts, the runner
+│   └── cli/                 # `ivy` command: TUI, one-shot plain mode, slash commands
+├── evals/                   # real-model eval cases and their runner (`bun run eval`)
 ├── plugins/
 │   ├── core/                # time context + date_calc
-│   ├── memory/              # USER.md / MEMORY.md / ARCHIVE.md: format, search, store, files, safety, sessions, plugin; the model's rules in instructions.md
+│   ├── memory/              # long-term memory (§8.1); the model's rules in instructions.md
 │   └── ...
 ├── biome.json
 ├── package.json
