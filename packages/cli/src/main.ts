@@ -8,14 +8,9 @@ import { render } from "ink";
 import { createElement } from "react";
 import { assertNoCommandClash } from "./commands.ts";
 import { InputHistory } from "./history.ts";
+import { PLAIN_INSTRUCTIONS, TUI_INSTRUCTIONS } from "./interface.ts";
 import { confirmPlain, runPlain } from "./plain.ts";
 import { App, type ConfirmBridge, type Screen } from "./tui/app.tsx";
-
-// Added to the system prompt so replies fit how they are shown.
-const TUI_INSTRUCTIONS =
-  "You are talking with the user in a terminal UI that renders Markdown (headings, lists, bold, code blocks). Prefer short paragraphs. Avoid wide tables; they wrap badly in a terminal.";
-const PLAIN_INSTRUCTIONS =
-  "Your reply is printed as plain text to a terminal, or piped into another program. Don't use Markdown formatting unless the user asks for it.";
 
 // Erase screen + scrollback, cursor home.
 const CLEAR_TERMINAL = "\x1b[2J\x1b[3J\x1b[H";

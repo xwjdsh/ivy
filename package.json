@@ -5,7 +5,8 @@
   "license": "MIT",
   "workspaces": [
     "packages/*",
-    "plugins/*"
+    "plugins/*",
+    "evals"
   ],
   "scripts": {
     "ivy": "IVY_HOME=.ivy bun packages/cli/src/main.ts",
@@ -13,7 +14,8 @@
     "test": "bun test",
     "typecheck": "tsc --noEmit -p .",
     "lint": "biome check .",
-    "format": "biome format --write ."
+    "format": "biome format --write .",
+    "eval": "bun evals/run.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.15",

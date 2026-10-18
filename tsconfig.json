@@ -18,6 +18,7 @@
     "packages/*/src/**/*.ts",
     "packages/*/src/**/*.tsx",
     "plugins/*/**/*.ts",
+    "evals/*.ts",
     "scripts/*.ts"
   ],
   "exclude": ["**/node_modules"]

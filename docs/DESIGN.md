@@ -542,12 +542,12 @@ ivy/
 ├── docs/DESIGN.md           # this file
 ├── examples/                # starter config.toml and SOUL.md for the data dir
 ├── scripts/build.ts         # `bun run build`: single binary in dist/
-├── evals/                   # eval cases and runner (from M2)
 ├── packages/
 │   ├── kernel/              # loop, model client, capabilities, context, sessions, permissions, plugin host, traces
 │   │   └── src/prompts/rules.md  # built-in operating and safety rules
 │   ├── plugin-api/          # public types for plugin authors
 │   └── cli/                 # `ivy` command: Ink TUI (src/tui/), one-shot plain mode, slash commands
+├── evals/                   # real-model eval cases (`bun run eval`): memory.ts, the runner
 ├── plugins/
 │   ├── core/                # time context + date_calc
 │   ├── memory/              # USER.md / MEMORY.md / ARCHIVE.md: format, search, store, files, plugin; the model's rules in instructions.md
@@ -611,7 +611,7 @@ Goal: Ivy starts remembering. Built in this order; each step is shippable on its
    - 4c. The plugin: tools, rules, hot files in the session prompt, due-today line, `/memory`. *Done;* a real two-session run applied a saved preference unprompted, and led to two fixes (`type` ignored for `USER.md`; "write the fact itself, not a reminder", after the model dropped a time).
    - 4d. Safety scan, strict on write and lenient on load. *Done;* a real model's attempt to save an injected instruction was rejected, and it refused an API key on its own.
    - 4e. `session_search` over past sessions. *Done;* a real model asked "what did you advise when I wanted you to store my OpenAI key?" found the earlier session and quoted the advice.
-   *Done when:* the five checks at the end of §8.1 pass with a real model. *Passed (2026-10-18)* in a clean data folder, one session per step. Against a control with no memory, the brevity preference cut the answer to about a third and dropped its table; a fact saved in Chinese shaped an English answer; an archived fact was found by search; a due todo was mentioned in unrelated sessions; past the cap, the model archived past events instead of losing entries; an injection was refused; a changed home moved the old one to the archive. The runs led to four fixes: a todo's time is a structured part of `due` (the model kept dropping it from the text), the due line asks the model to mention it, the over-cap error points to archiving down to ~80% (the model had shaved a few characters off entry after entry), and tags typed into the text become tags while a changed fact starts with fresh ones.
+   *Done when:* the five checks at the end of §8.1 pass with a real model. *Passed (2026-10-18)* in a clean data folder, one session per step. Against a control with no memory, the brevity preference cut the answer to about a third and dropped its table; a fact saved in Chinese shaped an English answer; an archived fact was found by search; a due todo was mentioned in unrelated sessions; past the cap, the model archived past events instead of losing entries; an injection was refused; a changed home moved the old one to the archive. The runs led to four fixes: a todo's time is a structured part of `due` (the model kept dropping it from the text), the due line asks the model to mention it, the over-cap error points to archiving down to ~80% (the model had shaved a few characters off entry after entry), and tags typed into the text become tags while a changed fact starts with fresh ones. The checks then became `evals/memory.ts` (`bun run eval`), which led to more fixes: tags are one comma-separated string (string arrays came out as broken JSON through a proxy), a rule against claiming a save that didn't happen, the archive named in the session prompt, and no `until:` before a fact's `since:`. On 2026-10-18 `copilot/claude-sonnet-5.5` passed 8/8 and `codex/gpt-6-luna` 7/8: it sometimes doesn't save a plainly stated fact and doesn't search the archive for questions about the past.
 5. *(Optional)* Progress notes while the model works, where the provider supports it.
 
 - **Done when (milestone):** Ivy remembers facts and todos across sessions and uses them without being asked.
@@ -620,7 +620,7 @@ Goal: Ivy starts remembering. Built in this order; each step is shippable on its
 - `fs` + `shell` plugins (allowed directories; the shell sandboxed), the baseline for work and coding on any model; `claude-code` as an optional delegate.
 - Skills (§8.2) and the MCP bridge (tools exposed on demand, not all up front).
 - Background tasks, subagents and steering (§5.9).
-- Evals v1: real cases (from traces and recorded sessions) runnable against any configured model, so prompt and model changes are measured, not guessed (G7). Memory cases include changed facts and contradictions, which public benchmarks barely test.
+- Evals: more cases (tools, work tasks) and replays of recorded sessions without an API key. Started in M1: `bun run eval` runs cases from `evals/` against any configured model (`--model`, `--provider`), each in a fresh data folder; the memory set covers the five checks plus regressions, including changed facts and contradictions, which public benchmarks barely test.
 - Plugin API versioned; user plugins from `~/.ivy/plugins/`.
 - **Done when:** I use Ivy for at least one real work task per day.
 

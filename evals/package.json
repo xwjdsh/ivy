@@ -1,0 +1,11 @@
+{
+  "name": "@ivy/evals",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@ivy/kernel": "workspace:*",
+    "@ivy/plugin-core": "workspace:*",
+    "@ivy/plugin-memory": "workspace:*"
+  }
+}
