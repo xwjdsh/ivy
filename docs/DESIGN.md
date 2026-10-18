@@ -382,7 +382,7 @@ The data root is `$IVY_HOME`, default `~/.ivy`. During development `bun run ivy`
 | `core` | M0 / M1 | Current time in every turn's context; date arithmetic | `date_calc` |
 | `memory` | M1 | Preferences, facts and todos as markdown files: capped hot files injected whole per session, a searchable archive (§8.1) | `save`, `update`, `move`, `delete`, `search`, `session_search` |
 | `fs` + `shell` | M2 | Read/edit files and run commands (CLI tools, §6.4) in allowed directories; the baseline for everyday work and coding on any model (pi shows four such tools suffice) | `read`, `write`, `edit`, `glob`, `grep`, `run` |
-| `claude-code` | M2 | Optional delegate for coding tasks, run as a subagent; `dangerous`, so asked every time. Claude only, so optional (principle 7) | `run` |
+| `coding-agent` | M2 | Optional delegate for coding tasks to any coding CLI that speaks the Agent Client Protocol (Claude Code and Codex through adapters, Gemini CLI natively), run as a subagent. The agent's own permission requests go through Ivy's gate. Optional: Ivy's `fs`/`shell` stay the baseline (principle 7) | `run` |
 | `mcp` bridge | M2 | Wraps configured MCP servers as plugins | (from servers) |
 | `gmail` / `calendar` | M3 | Triage, summarize, draft replies, today's agenda — via MCP servers or Google APIs | `search`, `read_thread`, `draft`, `agenda` |
 | `web` | M3 | Web search & fetch (Anthropic server tools on Anthropic's API; otherwise a client-side tool) | `search`, `fetch` |
@@ -575,7 +575,7 @@ ivy/
 | Tests | `bun test` | Built in |
 | Lint/format | Biome | One fast tool |
 
-**Alternative considered:** building on the Claude Agent SDK (Claude Code as a library). It gives file/shell tools and a loop for free, but it is coding-centric and makes the plugin model, context layering and permission UX harder to own. We build our own small kernel and may borrow ideas from it. Claude Code can still be a *delegate*: the `claude-code` plugin (§8) hands it coding tasks as a subagent.
+**Alternative considered:** building on the Claude Agent SDK (Claude Code as a library). It gives file/shell tools and a loop for free, but it is coding-centric and makes the plugin model, context layering and permission UX harder to own. We build our own small kernel and may borrow ideas from it. Coding CLIs such as Claude Code can still be *delegates*, over the Agent Client Protocol (§8).
 
 ### 10.1 Related work
 
@@ -585,6 +585,7 @@ Compared on 2026-10-17/18. What each project is, what Ivy took, and what it left
 - **[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)**: a large harness where everything, even the loop, is a plugin; OS sandbox for commands. Took: cheap compaction before summaries, "unknown outcome" for interrupted side effects, system prompt snapshots, a sandboxed shell. Left: a kernel-less design, approvals without rules.
 - **[Hermes Agent](https://github.com/nousresearch/hermes-agent)**: the closest to Ivy, a personal agent with SOUL.md/USER.md, capped memory injected whole and frozen per session, skills, cron jobs and chat gateways. Took: the capped, frozen hot files with over-cap errors that force consolidation; patches by unique substring (it dropped whole-entry replace after models wiped unrelated entries); the memory safety scan; session search with CJK bigrams; jobs as fresh agents; skills. Ivy adds the searchable archive, todos with due dates and tidying between hot and cold.
 - **[OpenClaw](https://github.com/openclaw/openclaw)**: a gateway daemon owning many chat apps and devices, with a plugin and skill registry. Took: memory flush before compaction, the gateway as the model for the M4 daemon, keeping outside content out of standing memory, `NO_REPLY` for jobs with nothing to report. Left: embeddings for memory, heartbeat turns inside the user's session, in-process third-party plugins from a registry (its registry hosted hundreds of malicious skills).
+- **[Orca](https://github.com/stablyai/orca)**: a desktop app that runs many coding CLIs side by side, each in its own git worktree. Took: delegating to coding CLIs over the Agent Client Protocol, with their permission requests routed into the host's own approval flow. Left: the rest (a full IDE).
 - **Agent memory projects** (Mem0, Letta, Zep/Graphiti, LangMem, Memobase, MemoryOS, A-MEM, Cognee, supermemory, Basic Memory, agentmemory, claude-mem, Claude Code, Codex, Anthropic's memory tool):
   - *Same core as Ivy:* capped memory injected whole with fail-and-consolidate (Hermes, Letta, Claude Code); plain markdown as the truth (Basic Memory, Claude Code).
   - *Evidence for simple:* on LoCoMo, full context beat Mem0 (72.9 vs 66.9, Mem0's own paper) and Letta scored 74.0 with files and grep.
@@ -615,7 +616,7 @@ Goal: Ivy starts remembering. Built in this order; each step is shippable on its
 - **Done when (milestone):** Ivy remembers facts and todos across sessions and uses them without being asked.
 
 ### M2 — Work helper
-- `fs` + `shell` plugins (allowed directories; the shell sandboxed), the baseline for work and coding on any model; `claude-code` as an optional delegate.
+- `fs` + `shell` plugins (allowed directories; the shell sandboxed), the baseline for work and coding on any model; coding CLIs as optional delegates over ACP.
 - Skills (§8.2) and the MCP bridge (tools exposed on demand, not all up front).
 - Background tasks, subagents and steering (§5.9).
 - Evals: more cases (tools, work tasks) and replays of recorded sessions without an API key. Started in M1: `bun run eval` runs cases from `evals/` against any configured model (`--model`, `--provider`), each in a fresh data folder; the memory set covers the five checks plus regressions, including changed facts and contradictions, which public benchmarks barely test.
@@ -671,7 +672,7 @@ Real forks in the road only; the sections hold the details. Superseded decisions
 | 2026-10-17 | Optional `helper_model` for side work, default the main model at low effort | Cheaper side work without a second model until it helps |
 | 2026-10-17 | Reuse other ecosystems through Agent Skills and MCP, not their plugin formats | Open standards are stable; other agents' plugins are tied to their runtimes |
 | 2026-10-17 | Tool calls never block the conversation; subagents are tools, briefed by the parent, never writing memory | Explicit intent only; clean contexts; no background junk in memory |
-| 2026-10-17 | `claude-code` only as an optional delegate; Ivy's own `fs`/`shell` are the baseline | Capabilities must not depend on one model or product |
+| 2026-10-17 | Coding CLIs only as optional delegates, ~~Claude Code alone~~ any CLI over the Agent Client Protocol (2026-10-18); Ivy's own `fs`/`shell` are the baseline | Capabilities must not depend on one model or product; one protocol instead of one adapter per CLI, with each CLI's permission requests routed through Ivy's gate |
 | 2026-10-18 | Memory history is kept, not overwritten: a re-save changes nothing, a changed fact archives the old one (`until:`/`replaced:`) under a strict bar for "changed" | Repeats are echoes of memory, not news; judging contradictions loosely retires true facts (§10.1) |
 | 2026-10-18 | Memory safety rests on provenance: outside content never reaches the always-injected files without the user; a regex scan, strict on write and lenient on load, is the backstop | A model checking the attacker's text can be talked round; the user's own lines deserve trust |
 | 2026-10-18 | Permission prompts offer *for this session* / *Always* only where they take effect, enforced in the kernel | An `ask` rule comes before every allow, so remembering there did nothing |
