@@ -349,10 +349,10 @@ Ivy reuses other agents' work through open standards, not their plugin formats:
 | Source | Reusable? | How |
 |---|---|---|
 | Code plugins of other agents (Hermes: Python; OpenClaw: TypeScript on its own runtime API) | No | Bound to another runtime; an adapter would chase their API and run third-party code in-process (§6.3). Not planned. |
-| Skills (`SKILL.md`, Agent Skills format; Hermes skills, ClawHub) | Mostly as-is | §8.2. Many assume a shell, so most become useful with the shell of the `workspace` plugin (M2). Third-party skills are instructions to the model: scanned like memory and confirmed on first use (ClawHub has hosted malicious skills). |
+| Skills (`SKILL.md`, Agent Skills format; Hermes skills, ClawHub) | Mostly as-is | §8.2. Many assume a shell, so most become useful with the `shell` plugin (M2). Third-party skills are instructions to the model: scanned like memory and confirmed on first use (ClawHub has hosted malicious skills). |
 | MCP servers | Yes | MCP bridge (M2); calls still go through the Permission Gate. |
 
-**Command-line tools:** through the sandboxed shell of the `workspace` plugin first (no code; bounded by the sandbox), with a skill when *this user's* way of using a tool matters, and as a thin plugin or MCP server only when reads and side effects need different risk levels. The model is told briefly which tools are installed; how to use them it mostly knows, or reads from `--help` and skills.
+**Command-line tools:** through the `shell` plugin first (no code), with a skill when *this user's* way of using a tool matters, and as a thin plugin or MCP server only when reads and side effects need different risk levels. The model is told briefly which tools are installed; how to use them it mostly knows, or reads from `--help` and skills.
 
 ## 7. Data & Storage Layout
 
@@ -380,8 +380,9 @@ The data root is `$IVY_HOME`, default `~/.ivy`. During development `bun run ivy`
 |---|---|---|---|
 | `core` | M0 / M1 | Current time in every turn's context; date arithmetic | `date_calc` |
 | `memory` | M1 | Preferences, facts and todos as markdown files: capped hot files injected whole per session, a searchable archive (§8.1) | `save`, `update`, `move`, `delete`, `search`, `session_search` |
-| `workspace` | M2 | Files and commands in allowed directories, the shell asked every time (sandboxed from M3, §8.3); the baseline for everyday work and coding on any model | `read`, `write`, `edit`, `glob`, `grep`, `run` |
-| `coding-agent` | M2 | Optional delegate for coding tasks to any coding CLI that speaks the Agent Client Protocol (Claude Code and Codex through adapters, Gemini CLI natively), run as a subagent. The agent's own permission requests go through Ivy's gate. Optional: Ivy's `workspace` plugin stays the baseline (principle 7) | `run` |
+| `fs` | M2 | Read, write and edit files in allowed directories (§8.3); with `shell`, the baseline for everyday work and coding on any model | `read`, `write`, `edit`, `glob`, `grep` |
+| `shell` | M2 | Run commands: asked every time in M2, sandboxed from M3 (§8.3) | `run` |
+| `coding-agent` | M2 | Optional delegate for coding tasks to any coding CLI that speaks the Agent Client Protocol (Claude Code and Codex through adapters, Gemini CLI natively), run as a subagent. The agent's own permission requests go through Ivy's gate. Optional: Ivy's `fs` and `shell` stay the baseline (principle 7) | `run` |
 | `mcp` bridge | M2 | Wraps configured MCP servers as plugins | (from servers) |
 | `gmail` / `calendar` | M3 | Triage, summarize, draft replies, today's agenda — via MCP servers or Google APIs | `search`, `read_thread`, `draft`, `agenda` |
 | `web` | M3 | Web search & fetch (Anthropic server tools on Anthropic's API; otherwise a client-side tool) | `search`, `fetch` |
@@ -534,9 +535,9 @@ A skill is *know-how* rather than a tool: how this user writes the weekly report
 - Third-party skills are instructions to the model: scanned like memory and confirmed when added.
 - **Later: Ivy writes its own skills** (as Hermes does). They are persistent instructions, so they get `SOUL.md`-level care: kept apart from the user's, written only with the user's approval each time, scanned, and never able to loosen `SOUL.md`, `rules.md` or permissions.
 
-### 8.3 Workspace plugin (M2)
+### 8.3 Files and commands: `fs` and `shell` (M2)
 
-Files and commands share one list of allowed directories (`[plugins.workspace] dirs`), so they are one plugin.
+Two plugins, so each can be turned off and given rules on its own (`deny = ["shell__*"]`), and a harmless `core` stays harmless. `fs` works in allowed directories (`[plugins.fs] dirs`). When the M3 sandbox needs the same list for `shell`, either plugin gets its own copy or the list becomes a kernel setting; decided then.
 
 **Shell in M2: asked every time.** `run` is `dangerous`: each command is shown in full and asked about; nothing else is needed while Ivy only acts on what the user asks directly.
 
@@ -635,7 +636,7 @@ Goal: Ivy starts remembering. Built in this order; each step is shippable on its
 - **Done when (milestone):** Ivy remembers facts and todos across sessions and uses them without being asked.
 
 ### M2 — Work helper
-- The `workspace` plugin (§8.3), the baseline for work and coding on any model; the shell asks before every command. Coding CLIs as optional delegates over ACP.
+- The `fs` and `shell` plugins (§8.3), the baseline for work and coding on any model; the shell asks before every command. Coding CLIs as optional delegates over ACP.
 - Skills (§8.2) and the MCP bridge (tools exposed on demand, not all up front).
 - Background tasks, subagents and steering (§5.9).
 - Evals: more cases (tools, work tasks) and replays of recorded sessions without an API key. Started in M1: `bun run eval` runs cases from `evals/` against any configured model (`--model`, `--provider`), each in a fresh data folder; the memory set covers the five checks plus regressions, including changed facts and contradictions, which public benchmarks barely test.
@@ -691,7 +692,7 @@ Real forks in the road only; the sections hold the details. Superseded decisions
 | 2026-10-17 | Optional `helper_model` for side work, default the main model at low effort | Cheaper side work without a second model until it helps |
 | 2026-10-17 | Reuse other ecosystems through Agent Skills and MCP, not their plugin formats | Open standards are stable; other agents' plugins are tied to their runtimes |
 | 2026-10-17 | Tool calls never block the conversation; subagents are tools, briefed by the parent, never writing memory | Explicit intent only; clean contexts; no background junk in memory |
-| 2026-10-17 | Coding CLIs only as optional delegates, ~~Claude Code alone~~ any CLI over the Agent Client Protocol (2026-10-18); Ivy's own `workspace` plugin is the baseline | Capabilities must not depend on one model or product; one protocol instead of one adapter per CLI, with each CLI's permission requests routed through Ivy's gate |
+| 2026-10-17 | Coding CLIs only as optional delegates, ~~Claude Code alone~~ any CLI over the Agent Client Protocol (2026-10-18); Ivy's own `fs` and `shell` are the baseline | Capabilities must not depend on one model or product; one protocol instead of one adapter per CLI, with each CLI's permission requests routed through Ivy's gate |
 | 2026-10-18 | Memory history is kept, not overwritten: a re-save changes nothing, a changed fact archives the old one (`until:`/`replaced:`) under a strict bar for "changed" | Repeats are echoes of memory, not news; judging contradictions loosely retires true facts (§10.1) |
 | 2026-10-18 | Memory safety rests on provenance: outside content never reaches the always-injected files without the user; a regex scan, strict on write and lenient on load, is the backstop | A model checking the attacker's text can be talked round; the user's own lines deserve trust |
 | 2026-10-18 | Permission prompts offer *for this session* / *Always* only where they take effect, enforced in the kernel | An `ask` rule comes before every allow, so remembering there did nothing |
