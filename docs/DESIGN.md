@@ -1,6 +1,6 @@
 # Ivy — Design Document
 
-> Status: **Draft v0.1** (M0 done; M1 steps 1–3 and 4a–4d done, next: 4e, session_search) · Last updated: 2026-10-18
+> Status: **Draft v0.1** (M0 done; M1 steps 1–4 done, next: the M1 acceptance checks) · Last updated: 2026-10-18
 > This is a living document. Every milestone starts by updating it and ends by recording what changed in the [Decision Log](#13-decision-log).
 
 ---
@@ -314,6 +314,7 @@ export interface PluginContext {
   config: unknown;            // [plugins.<id>] parsed with configSchema
   dataDir: string;            // ~/.ivy/data/<pluginId>/
   log: Logger;
+  history: ConversationHistory;  // past conversations as text, read-only
   // Planned: secrets (macOS Keychain), llm (own model calls, via helper_model), kernel (notify, call other tools)
 }
 
@@ -509,7 +510,7 @@ Used by `memory__search`, `/memory <query>` and `session_search` (4e). Pure func
 
 #### Recall of past conversations (step 4e)
 
-`session_search(query)`: searches past session files (user and assistant text, not tool noise) with the same scorer and returns a few messages around each hit with the session id and date. No model call. Answers "what did we decide about X last week?" without having saved it as memory. From Hermes: sessions from scheduled jobs are ranked below the user's own (they crowded them out there), and the current session is not hidden after `/new`.
+`session_search(query, since?, limit?)` finds what was said but never saved: a command, a decision, a name. It searches what the user and Ivy said (not tool output, thinking or per-turn context) in every session but the current one, with the same scorer as memory search. Hits are grouped by session, so one long conversation can't crowd out the rest, and each comes with a neighboring message. No model call. The kernel gives plugins a read-only view of past conversations as text (`history` in the plugin context), so the plugin doesn't depend on the session file format. All sessions are searched; a cache or an index (derived from the files, rebuildable) comes when it gets slow.
 
 #### Later (backlog)
 
@@ -609,7 +610,7 @@ Goal: Ivy starts remembering. Built in this order; each step is shippable on its
    - 4b. Line format, search and store operations, pure and unit-tested. *Done.*
    - 4c. The plugin: tools, rules, hot files in the session prompt, due-today line, `/memory`. *Done;* a real two-session run applied a saved preference unprompted, and led to two fixes (`type` ignored for `USER.md`; "write the fact itself, not a reminder", after the model dropped a time).
    - 4d. Safety scan, strict on write and lenient on load. *Done;* a real model's attempt to save an injected instruction was rejected, and it refused an API key on its own.
-   - 4e. `session_search` over past sessions.
+   - 4e. `session_search` over past sessions. *Done;* a real model asked "what did you advise when I wanted you to store my OpenAI key?" found the earlier session and quoted the advice.
    *Done when:* the five checks at the end of §8.1 pass with a real model.
 5. *(Optional)* Progress notes while the model works, where the provider supports it.
 
@@ -637,6 +638,7 @@ Goal: Ivy starts remembering. Built in this order; each step is shippable on its
 ### M5+ — Ideas backlog
 - Chat-app interface for phone access; a local web UI.
 - Automatic memory capture (§8.1); Ivy-written skills (§8.2).
+- Session summaries by `helper_model` (a title and key points per session), kept as session metadata, not memory: they help find a session and title `/resume`, while memory stays explicitly written.
 - Model fallbacks across providers, for one turn, never overriding an explicit `/model`.
 - Quarantined reading of outside content (Dual-LLM / CaMeL), which would replace taint tracking.
 - Session branching; synchronized terminal output; paste placeholders; a better Markdown renderer if needed.

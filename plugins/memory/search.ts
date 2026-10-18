@@ -7,6 +7,9 @@
 
 import type { Entry } from "./format.ts";
 
+/** What search reads: a memory entry, or any text with tags and a date. */
+export type Searchable = Pick<Entry, "text" | "tags" | "date">;
+
 const CJK = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
 // A CJK run, or a run of other letters and digits; never both, so scripts always split.
 const RUN =
@@ -40,7 +43,11 @@ const MIN_PREFIX = 3;
  * words it starts ("dent" → "dentist") at half weight, and a single CJK character matches
  * any text containing it. Ties go to the entry with the later date, then the later line.
  */
-export function search<T extends { entry: Entry }>(items: T[], query: string, limit = 10): T[] {
+export function search<T extends { entry: Searchable }>(
+  items: T[],
+  query: string,
+  limit = 10,
+): T[] {
   const queryTerms = [...new Set(terms(query))];
   if (queryTerms.length === 0) return [];
   const docs = items.map((item) => docTerms(item.entry));
@@ -72,11 +79,11 @@ export function search<T extends { entry: Entry }>(items: T[], query: string, li
 }
 
 /** Positive when b is dated later than a. */
-function newer(a: Entry, b: Entry): number {
+function newer(a: Searchable, b: Searchable): number {
   return (b.date ?? "").localeCompare(a.date ?? "");
 }
 
-function docTerms(entry: Entry): { counts: Map<string, number>; length: number } {
+function docTerms(entry: Searchable): { counts: Map<string, number>; length: number } {
   const counts = new Map<string, number>();
   const add = (t: string, w: number) => counts.set(t, (counts.get(t) ?? 0) + w);
   const text = terms(entry.text);

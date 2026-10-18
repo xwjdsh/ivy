@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { appendFileSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Session } from "./session.ts";
+import { Session, sessionHistory } from "./session.ts";
 
 test("sessions persist, reload and list newest first", async () => {
   const dir = mkdtempSync(join(tmpdir(), "ivy-sessions-"));
@@ -79,4 +79,41 @@ test("listing ignores the <context> block when counting turns and building the p
   s.append({ role: "assistant", content: "answer" });
   s.append({ role: "user", content: [{ type: "tool_result", tool_use_id: "x", content: "r" }] });
   expect(Session.list(dir)[0]).toMatchObject({ preview: "real question", turns: 1 });
+});
+
+test("history for plugins: only what was said, newest session first", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ivy-history-"));
+  const old = Session.create(dir, "m");
+  old.append(
+    { role: "user", content: "old question" },
+    { role: "assistant", content: "old answer" },
+  );
+  await Bun.sleep(5);
+  const s = Session.create(dir, "m");
+  s.appendPrompt("how do I cut a video?", "<context>\nNow: Friday\n</context>");
+  s.append(
+    {
+      role: "assistant",
+      content: [
+        { type: "thinking", thinking: "hmm", signature: "x" },
+        { type: "text", text: "Let me check." },
+        { type: "tool_use", id: "t1", name: "shell__run", input: { cmd: "ffmpeg -h" } },
+      ],
+    },
+    {
+      role: "user",
+      content: [{ type: "tool_result", tool_use_id: "t1", content: "long help text" }],
+    },
+    { role: "assistant", content: [{ type: "text", text: "Use ffmpeg -ss 0 -t 10." }] },
+  );
+  const history = sessionHistory(dir);
+  expect(history.sessions().map((x) => x.id)).toEqual([s.id, old.id]);
+  expect(history.messages(s.id).map((m) => [m.role, m.text])).toEqual([
+    ["user", "how do I cut a video?"],
+    ["assistant", "Let me check."],
+    ["assistant", "Use ffmpeg -ss 0 -t 10."],
+  ]);
+  expect(history.messages("../etc/passwd")).toEqual([]);
+  expect(history.messages("missing")).toEqual([]);
+  expect(sessionHistory(join(dir, "none")).sessions()).toEqual([]);
 });

@@ -1,6 +1,14 @@
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import type Anthropic from "@anthropic-ai/sdk";
+import type { ConversationHistory, PastMessage } from "@ivy/plugin-api";
 import { promptText } from "./turn-context.ts";
 
 type MessageParam = Anthropic.Beta.BetaMessageParam;
@@ -167,4 +175,42 @@ function withoutDanglingToolUse(messages: MessageParam[]): MessageParam[] {
     );
     return ids.every((id) => answered.has(id));
   });
+}
+
+/**
+ * Past conversations for plugins: what the user typed and what Ivy answered, read from
+ * the session files on each call. Tool traffic, thinking and per-turn context are left out.
+ */
+export function sessionHistory(dir: string): ConversationHistory {
+  return {
+    sessions() {
+      if (!existsSync(dir)) return [];
+      return readdirSync(dir)
+        .filter((f) => f.endsWith(".jsonl"))
+        .map((f) => ({
+          id: f.replace(/\.jsonl$/, ""),
+          updatedAt: statSync(join(dir, f)).mtime.toISOString(),
+        }))
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    },
+    messages(sessionId) {
+      const file = join(dir, `${sessionId}.jsonl`);
+      if (!/^[\w-]+$/.test(sessionId) || !existsSync(file)) return [];
+      return readRecords(file).flatMap((r): PastMessage[] => {
+        if (r.type !== "message" || r.message.role === "system") return [];
+        const { role } = r.message;
+        const text = role === "user" ? promptText(r.message) : assistantText(r.message);
+        return text ? [{ role, text, ts: r.ts }] : [];
+      });
+    },
+  };
+}
+
+function assistantText(message: MessageParam): string | null {
+  if (typeof message.content === "string") return message.content.trim() || null;
+  const text = message.content
+    .flatMap((b) => (b.type === "text" ? [b.text] : []))
+    .join("\n")
+    .trim();
+  return text || null;
 }

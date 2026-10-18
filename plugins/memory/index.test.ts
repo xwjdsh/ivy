@@ -13,7 +13,12 @@ const log = { debug() {}, info() {}, warn() {}, error() {} };
 async function start(settings: Record<string, unknown> = {}) {
   plugin = createMemoryPlugin();
   const config = plugin.configSchema?.parse(settings);
-  await plugin.setup?.({ config, dataDir: dir, log });
+  await plugin.setup?.({
+    config,
+    dataDir: dir,
+    log,
+    history: { sessions: () => [], messages: () => [] },
+  });
 }
 
 beforeEach(async () => {
@@ -24,7 +29,9 @@ beforeEach(async () => {
 const call = (name: string, input: object): Promise<ToolResult> => {
   const tool = plugin.tools?.find((t) => t.name === name);
   if (!tool) throw new Error(name);
-  return Promise.resolve(tool.run(input as never, { signal: new AbortController().signal, log }));
+  return Promise.resolve(
+    tool.run(input as never, { signal: new AbortController().signal, log, sessionId: "s" }),
+  );
 };
 const text = (r: ToolResult) => (typeof r === "string" ? r : r.content);
 const file = (name: string) => readFileSync(join(dir, name), "utf8");
@@ -100,7 +107,14 @@ test("delete asks by default; the other writes don't", () => {
   const allowed = Object.fromEntries(
     (plugin.tools ?? []).map((t) => [t.name, t.defaultAllow ?? false]),
   );
-  expect(allowed).toEqual({ save: true, update: true, move: true, delete: false, search: false });
+  expect(allowed).toEqual({
+    save: true,
+    update: true,
+    move: true,
+    delete: false,
+    search: false,
+    session_search: false,
+  });
 });
 
 test("search covers all three files and labels validity", async () => {

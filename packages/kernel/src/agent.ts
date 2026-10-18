@@ -230,7 +230,7 @@ export class Agent {
         return { stopReason: "max_tokens", steps: step, costUsd };
       }
 
-      const results = await this.runTools(toolUses, turn);
+      const results = await this.runTools(session.id, toolUses, turn);
       session.append(
         { role: "assistant", content: message.content },
         { role: "user", content: results },
@@ -290,7 +290,11 @@ export class Agent {
   }
 
   /** Ask permission sequentially (prompts can't overlap), then run approved tools in parallel. */
-  private async runTools(toolUses: ToolUseBlock[], turn: TurnOptions): Promise<ToolResultBlock[]> {
+  private async runTools(
+    sessionId: string,
+    toolUses: ToolUseBlock[],
+    turn: TurnOptions,
+  ): Promise<ToolResultBlock[]> {
     const { plugins, confirm, permissions } = this.opts;
     const toolLog = createLogger("tool");
 
@@ -333,7 +337,11 @@ export class Agent {
         const verdict = turn.signal.aborted ? "interrupted" : (verdicts[i] ?? "interrupted");
         const outcome =
           verdict === "run"
-            ? await plugins.call(use.name, use.input, { signal: turn.signal, log: toolLog })
+            ? await plugins.call(use.name, use.input, {
+                signal: turn.signal,
+                log: toolLog,
+                sessionId,
+              })
             : { content: messages[verdict](use.name), isError: true };
         turn.onEvent({ type: "tool_result", id: use.id, name: use.name, ...outcome });
         return {

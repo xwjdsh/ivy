@@ -19,4 +19,6 @@ Changing:
 - Mark finished todos done; they move to the archive. Move entries no longer in current use to the archive, and archived ones back when they matter again.
 - When a hot file is over 80% full or a save fails as full: merge entries (keep the richer wording), shorten them, or move ones not in current use to the archive.
 
+Past conversations: what was said but never saved (a command, a decision, a name) can be found with memory__session_search.
+
 Using memory: it may be out of date. Check what is cheap to verify before relying on it, and when an answer rests on an old entry, say so ("as of my note from March").

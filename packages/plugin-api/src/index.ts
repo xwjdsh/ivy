@@ -10,6 +10,8 @@ export type ToolResult = string | { content: string; isError?: boolean };
 export interface ToolContext {
   /** Aborted when the user interrupts the turn. */
   signal: AbortSignal;
+  /** The session the call belongs to. */
+  sessionId: string;
   log: Logger;
 }
 
@@ -43,6 +45,26 @@ export interface PluginContext {
   /** Private data directory: ~/.ivy/data/<pluginId>/ (created on demand). */
   dataDir: string;
   log: Logger;
+  /** Past conversations, read-only. */
+  history: ConversationHistory;
+}
+
+/** One message of a past conversation: what the user typed or what Ivy answered. */
+export interface PastMessage {
+  role: "user" | "assistant";
+  text: string;
+  /** ISO time it was written. */
+  ts: string;
+}
+
+/**
+ * Past conversations as text: tool calls and results, thinking and per-turn context are
+ * left out, so a plugin sees what was said without depending on the session file format.
+ */
+export interface ConversationHistory {
+  /** Session ids with their last activity, newest first. */
+  sessions(): Array<{ id: string; updatedAt: string }>;
+  messages(sessionId: string): PastMessage[];
 }
 
 /** What a plugin knows about the turn it is adding context to. */

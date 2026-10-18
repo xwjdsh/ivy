@@ -7,6 +7,7 @@ import { SystemPrompt } from "./context.ts";
 import { AnthropicModelClient, isOfficialAnthropicApi, type ModelClient } from "./model.ts";
 import { type PermissionChoice, Permissions } from "./permissions.ts";
 import { PluginHost } from "./plugins.ts";
+import { sessionHistory } from "./session.ts";
 import { pruneTraces, Tracer } from "./trace.ts";
 
 export * from "./agent.ts";
@@ -50,7 +51,7 @@ export async function createIvy(opts: IvyOptions): Promise<Ivy> {
   const paths = opts.paths ?? resolvePaths();
   const config = loadConfig(paths);
   pruneTraces(paths.traces, config.trace.retention_days);
-  const plugins = new PluginHost(paths.data, config.plugins);
+  const plugins = new PluginHost(paths.data, config.plugins, sessionHistory(paths.sessions));
   for (const plugin of opts.plugins) await plugins.register(plugin);
 
   const systemPrompt = new SystemPrompt(paths, plugins, opts.interfaceInstructions);

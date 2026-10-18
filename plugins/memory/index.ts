@@ -1,4 +1,5 @@
 import {
+  type ConversationHistory,
   definePlugin,
   defineTool,
   type IvyPlugin,
@@ -10,6 +11,7 @@ import { body, MemoryFiles } from "./files.ts";
 import { ENTRY_TYPES, type Entry, serializeFile } from "./format.ts";
 import INSTRUCTIONS from "./instructions.md" with { type: "text" };
 import { type Noted, screen } from "./safety.ts";
+import { searchSessions } from "./sessions.ts";
 import {
   type Context,
   FILE_NAMES,
@@ -44,7 +46,9 @@ const configSchema = z.strictObject({
 });
 
 export function createMemoryPlugin(): IvyPlugin {
-  let state: { files: MemoryFiles; limits: Limits; log: Logger } | undefined;
+  let state:
+    | { files: MemoryFiles; limits: Limits; log: Logger; history: ConversationHistory }
+    | undefined;
 
   const ready = () => {
     if (!state) throw new Error("memory plugin not set up");
@@ -86,6 +90,7 @@ export function createMemoryPlugin(): IvyPlugin {
         files: new MemoryFiles(ctx.dataDir),
         limits: { user: config.user_limit, memory: config.memory_limit },
         log: ctx.log,
+        history: ctx.history,
       };
     },
     instructions: INSTRUCTIONS.trim(),
@@ -197,6 +202,24 @@ export function createMemoryPlugin(): IvyPlugin {
         }),
         risk: "read",
         run: (input) => tool((ctx) => searchText(find(screen(ctx.files).files, input))),
+      }),
+      defineTool({
+        name: "session_search",
+        description:
+          "Search past conversations for what was said but never saved to memory: a command, a decision, a name. Searches what the user and Ivy said (not tool output) in every session except this one; `since` (YYYY-MM-DD) narrows it. Results are grouped by session, newest first among equals.",
+        input: z.object({
+          query: z.string(),
+          since: dateString.optional(),
+          limit: z
+            .number()
+            .int()
+            .min(1)
+            .max(10)
+            .optional()
+            .describe("Sessions to show (default 3)"),
+        }),
+        risk: "read",
+        run: (input, ctx) => searchSessions(ready().history, input, ctx.sessionId),
       }),
     ],
 

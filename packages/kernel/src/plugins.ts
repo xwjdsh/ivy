@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type Anthropic from "@anthropic-ai/sdk";
 import type {
   CommandDef,
+  ConversationHistory,
   IvyPlugin,
   RiskLevel,
   SessionInfo,
@@ -45,6 +46,8 @@ export interface ToolOutcome {
   isError: boolean;
 }
 
+const NO_HISTORY: ConversationHistory = { sessions: () => [], messages: () => [] };
+
 export class PluginHost {
   private readonly plugins = new Map<string, IvyPlugin>();
   private readonly tools = new Map<string, RegisteredTool>();
@@ -55,6 +58,7 @@ export class PluginHost {
   constructor(
     private readonly dataRoot: string,
     private readonly configs: Record<string, Record<string, unknown>>,
+    private readonly history: ConversationHistory = NO_HISTORY,
   ) {}
 
   async register(plugin: IvyPlugin): Promise<void> {
@@ -104,6 +108,7 @@ export class PluginHost {
       config,
       dataDir,
       log: createLogger(plugin.id),
+      history: this.history,
     });
     this.plugins.set(plugin.id, plugin);
   }
