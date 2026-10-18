@@ -380,7 +380,7 @@ The data root is `$IVY_HOME`, default `~/.ivy`. During development `bun run ivy`
 |---|---|---|---|
 | `core` | M0 / M1 | Current time in every turn's context; date arithmetic | `date_calc` |
 | `memory` | M1 | Preferences, facts and todos as markdown files: capped hot files injected whole per session, a searchable archive (§8.1) | `save`, `update`, `move`, `delete`, `search`, `session_search` |
-| `workspace` | M2 | Files and commands in allowed directories, the shell sandboxed (§8.3); the baseline for everyday work and coding on any model | `read`, `write`, `edit`, `glob`, `grep`, `run` |
+| `workspace` | M2 | Files and commands in allowed directories, the shell asked every time (sandboxed from M3, §8.3); the baseline for everyday work and coding on any model | `read`, `write`, `edit`, `glob`, `grep`, `run` |
 | `coding-agent` | M2 | Optional delegate for coding tasks to any coding CLI that speaks the Agent Client Protocol (Claude Code and Codex through adapters, Gemini CLI natively), run as a subagent. The agent's own permission requests go through Ivy's gate. Optional: Ivy's `workspace` plugin stays the baseline (principle 7) | `run` |
 | `mcp` bridge | M2 | Wraps configured MCP servers as plugins | (from servers) |
 | `gmail` / `calendar` | M3 | Triage, summarize, draft replies, today's agenda — via MCP servers or Google APIs | `search`, `read_thread`, `draft`, `agenda` |
@@ -538,7 +538,9 @@ A skill is *know-how* rather than a tool: how this user writes the weekly report
 
 Files and commands share one list of allowed directories (`[plugins.workspace] dirs`), so they are one plugin.
 
-**Shell: sandboxed, so it needn't ask.** Asking before every command doesn't protect much: a command's name says little about what it does (`npm test` runs whatever `package.json` says), prefix rules are easy to slip past (`git status; rm -rf ~`), and many prompts turn approval into reflex. A sandbox limits what any command can touch instead: writes only inside the allowed directories, no reads of secrets (`~/.ssh`, cloud credentials, `~/.ivy` with its API key and memory), and no network except approved domains, which is what stops data from leaving. Inside those limits commands run without asking (Claude Code reports far fewer prompts the same way).
+**Shell in M2: asked every time.** `run` is `dangerous`: each command is shown in full and asked about; nothing else is needed while Ivy only acts on what the user asks directly.
+
+**Shell from M3: sandboxed, so it needn't ask.** Once Ivy reads mail and web pages (and later runs unattended jobs), an injected instruction can reach the shell, and asking alone protects little. Asking before every command doesn't protect much: a command's name says little about what it does (`npm test` runs whatever `package.json` says), prefix rules are easy to slip past (`git status; rm -rf ~`), and many prompts turn approval into reflex. A sandbox limits what any command can touch instead: writes only inside the allowed directories, no reads of secrets (`~/.ssh`, cloud credentials, `~/.ivy` with its API key and memory), and no network except approved domains, which is what stops data from leaving. Inside those limits commands run without asking (Claude Code reports far fewer prompts the same way).
 - **Reuse, don't build:** Anthropic's `sandbox-runtime` (the library behind Claude Code's sandbox; Seatbelt on macOS, bubblewrap and seccomp on Linux, a proxy for network rules, reports of what was blocked). Its hard part is the edge cases, which is why not to write our own. It is a pre-1.0 research preview: pin the version, install it outside the allowed directories, and first check that it runs under Bun. Fallback: a small hand-written macOS profile with the network off.
 - **Network:** no domains by default; a command reaching a new one goes through the Permission Gate, where *Always* allows that domain.
 - **Escalation (as in Codex):** when the sandbox blocks something, what was blocked is appended to the command's output. The model may call again with `escalate` and a justification; that run is `dangerous` (asked every time, the justification shown) and happens outside the sandbox. Never retried automatically.
@@ -550,7 +552,7 @@ Files and commands share one list of allowed directories (`[plugins.workspace] d
 - **Read before edit:** reads and writes record a hash; editing an existing file needs a prior read, and if it changed since, only an exact unique match goes through, with a note to re-read.
 - **Results and writes:** the result is a short diff (also shown in the permission prompt); writes are atomic and keep line endings, BOM, final newline and file mode; allowed directories are checked on real paths (symlinks resolved).
 
-**Defaults:** reads run; writes and edits ask, showing the diff (*Always* available); sandboxed commands run; escalations ask every time.
+**Defaults:** reads run; writes and edits ask, showing the diff (*Always* available); commands ask every time in M2, and from M3 sandboxed ones run while escalations ask every time.
 
 ## 9. Project Layout
 
@@ -633,7 +635,7 @@ Goal: Ivy starts remembering. Built in this order; each step is shippable on its
 - **Done when (milestone):** Ivy remembers facts and todos across sessions and uses them without being asked.
 
 ### M2 — Work helper
-- The `workspace` plugin (§8.3), the baseline for work and coding on any model; `sandbox-runtime` checked on 2026-10-18 (v0.0.80, Bun 1.4.3, macOS 26.5.2): writes outside the allowed directories and reads of a denied one are blocked, network goes through the ask callback, about 15 ms per command; with its macOS log monitor on, file and network denials are both reported (routine noise such as `sysctl-read` must be filtered). Coding CLIs as optional delegates over ACP.
+- The `workspace` plugin (§8.3), the baseline for work and coding on any model; the shell asks before every command. Coding CLIs as optional delegates over ACP.
 - Skills (§8.2) and the MCP bridge (tools exposed on demand, not all up front).
 - Background tasks, subagents and steering (§5.9).
 - Evals: more cases (tools, work tasks) and replays of recorded sessions without an API key. Started in M1: `bun run eval` runs cases from `evals/` against any configured model (`--model`, `--provider`), each in a fresh data folder; the memory set covers the five checks plus regressions, including changed facts and contradictions, which public benchmarks barely test.
@@ -641,7 +643,7 @@ Goal: Ivy starts remembering. Built in this order; each step is shippable on its
 - **Done when:** I use Ivy for at least one real work task per day.
 
 ### M3 — Email & Calendar
-- Prerequisites: "unknown outcome" for interrupted side effects (§5.4); outside content kept out of standing memory (§8.1).
+- Prerequisites: "unknown outcome" for interrupted side effects (§5.4); outside content kept out of standing memory (§8.1); the sandboxed shell (§8.3); `sandbox-runtime` was checked on 2026-10-18 (v0.0.80, Bun 1.4.3, macOS 26.5.2): writes outside the allowed directories and reads of a denied one are blocked, network goes through the ask callback, about 15 ms per command; with its macOS log monitor on, file and network denials are both reported (routine noise such as `sysctl-read` must be filtered).
 - Gmail + Calendar (MCP first), inbox triage, draft replies (never auto-send), today's agenda; `web` plugin.
 - **Done when:** morning inbox triage happens in Ivy.
 
@@ -695,4 +697,4 @@ Real forks in the road only; the sections hold the details. Superseded decisions
 | 2026-10-18 | Permission prompts offer *for this session* / *Always* only where they take effect, enforced in the kernel | An `ask` rule comes before every allow, so remembering there did nothing |
 | 2026-10-18 | M4: the daemon owns sessions and interfaces are clients; it ships as a signed menu-bar app whose settings edit `config.toml` | More interfaces without touching plugins; macOS grants go to Ivy alone; one source of truth |
 | 2026-10-18 | For unbuilt milestones the doc records principles and key trade-offs; details are decided when built | Designs not yet tested by use go stale and mislead |
-| 2026-10-18 | M2 shell: sandboxed with Anthropic's `sandbox-runtime` and run without asking inside it; escalation asked every time. Edits: string replacement with careful normalization, no patch format | Asking per command protects little and tires the user; a sandbox bounds what any command can do. Replacement is the most robust edit form across models |
+| 2026-10-18 | Shell: asked every time in M2; from M3, sandboxed with Anthropic's `sandbox-runtime` and run without asking inside it, escalation asked every time. Edits: string replacement with careful normalization, no patch format | Before outside content reaches Ivy, asking is enough and simpler; after, asking protects little and a sandbox bounds what any command can do. Replacement is the most robust edit form across models |
