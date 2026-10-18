@@ -634,7 +634,7 @@ Goal: Ivy starts remembering. Built in this order; each step is shippable on its
 - **Done when (milestone):** Ivy remembers facts and todos across sessions and uses them without being asked.
 
 ### M2 — Work helper
-- The `workspace` plugin (§8.3), the baseline for work and coding on any model; first, check that `sandbox-runtime` runs under Bun. Coding CLIs as optional delegates over ACP.
+- The `workspace` plugin (§8.3), the baseline for work and coding on any model; `sandbox-runtime` checked on 2026-10-18 (v0.0.80, Bun 1.4.3, macOS 26.5.2): writes outside the allowed directories and reads of a denied one are blocked, network goes through the ask callback, about 15 ms per command; with its macOS log monitor on, file and network denials are both reported (routine noise such as `sysctl-read` must be filtered). Coding CLIs as optional delegates over ACP.
 - Skills (§8.2) and the MCP bridge (tools exposed on demand, not all up front).
 - Background tasks, subagents and steering (§5.9).
 - Evals: more cases (tools, work tasks) and replays of recorded sessions without an API key. Started in M1: `bun run eval` runs cases from `evals/` against any configured model (`--model`, `--provider`), each in a fresh data folder; the memory set covers the five checks plus regressions, including changed facts and contradictions, which public benchmarks barely test.
