@@ -205,7 +205,7 @@ Every tool declares a **risk level**:
 | `external` | send an email, post a message, accept an invite | ask (allowable by rule or *Always*) |
 | `dangerous` | shell commands, deleting data | always ask (Yes/No only, no rule allows it), show full input |
 
-Rules are tool-name globs (`*` matches anything). Argument patterns such as `shell__run(git status*)` come with the shell plugin in M2.
+Rules are tool-name globs (`*` matches anything). No rules on arguments ("allow `git status*`"): they are easy to slip past (`git status; rm -rf ~`); commands are asked every time in M2 and bounded by a sandbox from M3 (§8.3).
 
 ```toml
 [permissions]
