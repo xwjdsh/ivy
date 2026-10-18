@@ -349,10 +349,10 @@ Ivy reuses other agents' work through open standards, not their plugin formats:
 | Source | Reusable? | How |
 |---|---|---|
 | Code plugins of other agents (Hermes: Python; OpenClaw: TypeScript on its own runtime API) | No | Bound to another runtime; an adapter would chase their API and run third-party code in-process (§6.3). Not planned. |
-| Skills (`SKILL.md`, Agent Skills format; Hermes skills, ClawHub) | Mostly as-is | §8.2. Many assume a shell, so most become useful with the `shell` plugin (M2). Third-party skills are instructions to the model: scanned like memory and confirmed on first use (ClawHub has hosted malicious skills). |
+| Skills (`SKILL.md`, Agent Skills format; Hermes skills, ClawHub) | Mostly as-is | §8.2. Many assume a shell, so most become useful with the shell of the `workspace` plugin (M2). Third-party skills are instructions to the model: scanned like memory and confirmed on first use (ClawHub has hosted malicious skills). |
 | MCP servers | Yes | MCP bridge (M2); calls still go through the Permission Gate. |
 
-**Command-line tools:** through the `shell` plugin first (no code; coarse permissions), with a skill when *this user's* way of using a tool matters, and as a thin plugin or MCP server only when reads and side effects need different risk levels. The model is told briefly which tools are installed; how to use them it mostly knows, or reads from `--help` and skills.
+**Command-line tools:** through the sandboxed shell of the `workspace` plugin first (no code; bounded by the sandbox), with a skill when *this user's* way of using a tool matters, and as a thin plugin or MCP server only when reads and side effects need different risk levels. The model is told briefly which tools are installed; how to use them it mostly knows, or reads from `--help` and skills.
 
 ## 7. Data & Storage Layout
 
@@ -381,8 +381,8 @@ The data root is `$IVY_HOME`, default `~/.ivy`. During development `bun run ivy`
 |---|---|---|---|
 | `core` | M0 / M1 | Current time in every turn's context; date arithmetic | `date_calc` |
 | `memory` | M1 | Preferences, facts and todos as markdown files: capped hot files injected whole per session, a searchable archive (§8.1) | `save`, `update`, `move`, `delete`, `search`, `session_search` |
-| `fs` + `shell` | M2 | Read/edit files and run commands (CLI tools, §6.4) in allowed directories; the baseline for everyday work and coding on any model (pi shows four such tools suffice) | `read`, `write`, `edit`, `glob`, `grep`, `run` |
-| `coding-agent` | M2 | Optional delegate for coding tasks to any coding CLI that speaks the Agent Client Protocol (Claude Code and Codex through adapters, Gemini CLI natively), run as a subagent. The agent's own permission requests go through Ivy's gate. Optional: Ivy's `fs`/`shell` stay the baseline (principle 7) | `run` |
+| `workspace` | M2 | Files and commands in allowed directories, the shell sandboxed (§8.3); the baseline for everyday work and coding on any model | `read`, `write`, `edit`, `glob`, `grep`, `run` |
+| `coding-agent` | M2 | Optional delegate for coding tasks to any coding CLI that speaks the Agent Client Protocol (Claude Code and Codex through adapters, Gemini CLI natively), run as a subagent. The agent's own permission requests go through Ivy's gate. Optional: Ivy's `workspace` plugin stays the baseline (principle 7) | `run` |
 | `mcp` bridge | M2 | Wraps configured MCP servers as plugins | (from servers) |
 | `gmail` / `calendar` | M3 | Triage, summarize, draft replies, today's agenda — via MCP servers or Google APIs | `search`, `read_thread`, `draft`, `agenda` |
 | `web` | M3 | Web search & fetch (Anthropic server tools on Anthropic's API; otherwise a client-side tool) | `search`, `fetch` |
@@ -535,6 +535,24 @@ A skill is *know-how* rather than a tool: how this user writes the weekly report
 - Third-party skills are instructions to the model: scanned like memory and confirmed when added.
 - **Later: Ivy writes its own skills** (as Hermes does). They are persistent instructions, so they get `SOUL.md`-level care: kept apart from the user's, written only with the user's approval each time, scanned, and never able to loosen `SOUL.md`, `rules.md` or permissions.
 
+### 8.3 Workspace plugin (M2)
+
+Files and commands share one list of allowed directories (`[plugins.workspace] dirs`), so they are one plugin.
+
+**Shell: sandboxed, so it needn't ask.** Asking before every command doesn't protect much: a command's name says little about what it does (`npm test` runs whatever `package.json` says), prefix rules are easy to slip past (`git status; rm -rf ~`), and many prompts turn approval into reflex. A sandbox limits what any command can touch instead: writes only inside the allowed directories, no reads of secrets (`~/.ssh`, cloud credentials, `~/.ivy` with its API key and memory), and no network except approved domains, which is what stops data from leaving. Inside those limits commands run without asking (Claude Code reports far fewer prompts the same way).
+- **Reuse, don't build:** Anthropic's `sandbox-runtime` (the library behind Claude Code's sandbox; Seatbelt on macOS, bubblewrap and seccomp on Linux, a proxy for network rules, reports of what was blocked). Its hard part is the edge cases, which is why not to write our own. It is a pre-1.0 research preview: pin the version, install it outside the allowed directories, and first check that it runs under Bun. Fallback: a small hand-written macOS profile with the network off.
+- **Network:** no domains by default; a command reaching a new one goes through the Permission Gate, where *Always* allows that domain.
+- **Escalation (as in Codex):** when the sandbox blocks something, what was blocked is appended to the command's output. The model may call again with `escalate` and a justification; that run is `dangerous` (asked every time, the justification shown) and happens outside the sandbox. Never retried automatically.
+- **Known breakage, told to the model:** caches under `~` (pointed into writable directories), git over SSH (use HTTPS), the keychain, `open`/`osascript`, Docker.
+
+**Edit tool: string replacement, forgiving only where it can't go wrong.** `edit(path, old_string, new_string, replace_all?)` and `write(path, content)`, flat parameters (several edits are several calls). Replacement beat patch formats for nearly every model in published comparisons, most for weaker ones; a patch format may come later for models trained on one.
+- **Matching**, in order, each step accepted only for exactly one match: exact; line endings and BOM normalized; trailing whitespace and Unicode quotes, dashes and spaces normalized; leading indentation ignored, then the replacement re-indented. No fuzzy or model-assisted matching: an error is better than a wrong edit.
+- **Errors the model can act on:** not found, with the most similar lines and their numbers; several matches, with their lines; the file changed since it was read.
+- **Read before edit:** reads and writes record a hash; editing an existing file needs a prior read, and if it changed since, only an exact unique match goes through, with a note to re-read.
+- **Results and writes:** the result is a short diff (also shown in the permission prompt); writes are atomic and keep line endings, BOM, final newline and file mode; allowed directories are checked on real paths (symlinks resolved).
+
+**Defaults:** reads run; writes and edits ask, showing the diff (*Always* available); sandboxed commands run; escalations ask every time.
+
 ## 9. Project Layout
 
 Bun workspace monorepo. Packages and plugins only; their files are visible in the tree.
@@ -616,7 +634,7 @@ Goal: Ivy starts remembering. Built in this order; each step is shippable on its
 - **Done when (milestone):** Ivy remembers facts and todos across sessions and uses them without being asked.
 
 ### M2 — Work helper
-- `fs` + `shell` plugins (allowed directories; the shell sandboxed), the baseline for work and coding on any model; coding CLIs as optional delegates over ACP.
+- The `workspace` plugin (§8.3), the baseline for work and coding on any model; first, check that `sandbox-runtime` runs under Bun. Coding CLIs as optional delegates over ACP.
 - Skills (§8.2) and the MCP bridge (tools exposed on demand, not all up front).
 - Background tasks, subagents and steering (§5.9).
 - Evals: more cases (tools, work tasks) and replays of recorded sessions without an API key. Started in M1: `bun run eval` runs cases from `evals/` against any configured model (`--model`, `--provider`), each in a fresh data folder; the memory set covers the five checks plus regressions, including changed facts and contradictions, which public benchmarks barely test.
@@ -672,9 +690,10 @@ Real forks in the road only; the sections hold the details. Superseded decisions
 | 2026-10-17 | Optional `helper_model` for side work, default the main model at low effort | Cheaper side work without a second model until it helps |
 | 2026-10-17 | Reuse other ecosystems through Agent Skills and MCP, not their plugin formats | Open standards are stable; other agents' plugins are tied to their runtimes |
 | 2026-10-17 | Tool calls never block the conversation; subagents are tools, briefed by the parent, never writing memory | Explicit intent only; clean contexts; no background junk in memory |
-| 2026-10-17 | Coding CLIs only as optional delegates, ~~Claude Code alone~~ any CLI over the Agent Client Protocol (2026-10-18); Ivy's own `fs`/`shell` are the baseline | Capabilities must not depend on one model or product; one protocol instead of one adapter per CLI, with each CLI's permission requests routed through Ivy's gate |
+| 2026-10-17 | Coding CLIs only as optional delegates, ~~Claude Code alone~~ any CLI over the Agent Client Protocol (2026-10-18); Ivy's own `workspace` plugin is the baseline | Capabilities must not depend on one model or product; one protocol instead of one adapter per CLI, with each CLI's permission requests routed through Ivy's gate |
 | 2026-10-18 | Memory history is kept, not overwritten: a re-save changes nothing, a changed fact archives the old one (`until:`/`replaced:`) under a strict bar for "changed" | Repeats are echoes of memory, not news; judging contradictions loosely retires true facts (§10.1) |
 | 2026-10-18 | Memory safety rests on provenance: outside content never reaches the always-injected files without the user; a regex scan, strict on write and lenient on load, is the backstop | A model checking the attacker's text can be talked round; the user's own lines deserve trust |
 | 2026-10-18 | Permission prompts offer *for this session* / *Always* only where they take effect, enforced in the kernel | An `ask` rule comes before every allow, so remembering there did nothing |
 | 2026-10-18 | M4: the daemon owns sessions and interfaces are clients; it ships as a signed menu-bar app whose settings edit `config.toml` | More interfaces without touching plugins; macOS grants go to Ivy alone; one source of truth |
 | 2026-10-18 | For unbuilt milestones the doc records principles and key trade-offs; details are decided when built | Designs not yet tested by use go stale and mislead |
+| 2026-10-18 | M2 shell: sandboxed with Anthropic's `sandbox-runtime` and run without asking inside it; escalation asked every time. Edits: string replacement with careful normalization, no patch format | Asking per command protects little and tires the user; a sandbox bounds what any command can do. Replacement is the most robust edit form across models |
