@@ -106,6 +106,17 @@ test("update: a changed fact archives the old one until the new one's start", ()
   ]);
 });
 
+test("update: a changed fact's until is never before the old one's since", () => {
+  const c = ctx(["- [fact 2026-10-18 since:2026-10-18] Lives in Tokyo"]);
+  const r = update(c, {
+    match: "Tokyo",
+    content: "Lives in Osaka",
+    changed: true,
+    since: "2026-10-01",
+  });
+  expect(r.archived).toBe("- [fact 2026-10-18 since:2026-10-18 until:2026-10-18] Lives in Tokyo");
+});
+
 test("update: a rewording archives the old one as replaced", () => {
   const c = ctx(["- [fact 2026-01-05] Mei likes sushi"]);
   const r = update(c, { match: "Mei likes", content: "Mei likes sushi, especially salmon" });

@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { IvyPlugin, ToolResult } from "@ivy/plugin-api";
-import { createMemoryPlugin, localDate } from "./index.ts";
+import { createMemoryPlugin, localDate, tagList } from "./index.ts";
 
 let dir: string;
 let plugin: IvyPlugin;
@@ -41,7 +41,7 @@ test("save writes MEMORY.md with its header and reports usage", async () => {
     file: "memory",
     content: "Dentist at 15:00",
     due: "2026-10-21",
-    tags: ["牙医"],
+    tags: "牙医",
   });
   expect(text(r)).toMatch(
     /^Saved to MEMORY.md \(\d+ \/ 8,000 chars\):\n- \[todo \d{4}-\d\d-\d\d due:2026-10-21\] Dentist at 15:00 #牙医$/,
@@ -118,7 +118,7 @@ test("delete asks by default; the other writes don't", () => {
 });
 
 test("search covers all three files and labels validity", async () => {
-  await call("save", { file: "memory", content: "Passport expires 2026-12", tags: ["护照"] });
+  await call("save", { file: "memory", content: "Passport expires 2026-12", tags: "护照" });
   await call("save", { file: "memory", content: "Lives in Tokyo" });
   await call("move", { match: "Tokyo", to: "archive" });
   const r = text(await call("search", { query: "护照 tokyo" }));
@@ -215,4 +215,15 @@ test("a todo's time is kept in due and shown in the reminder", async () => {
       isError: true,
     },
   );
+});
+
+test("tags come in as one string, split on commas (any width), 、 and #", () => {
+  expect(tagList("dentist, 牙医、看牙，health #teeth")).toEqual([
+    "dentist",
+    " 牙医",
+    "看牙",
+    "health ",
+    "teeth",
+  ]);
+  expect(tagList(undefined)).toBeUndefined();
 });

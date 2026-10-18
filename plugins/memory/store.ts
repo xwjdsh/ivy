@@ -181,7 +181,9 @@ export function update(ctx: Context, input: UpdateInput): UpdateResult {
   if (text !== old.text) {
     // Keep the old version: a fact that changed ends where the new one starts.
     const mark: DateField = input.changed ? "until" : "replaced";
-    const when = input.changed ? (fields.since ?? ctx.today) : ctx.today;
+    // Never an end before the start: if the new fact "started" before the old one, use today.
+    const start = fields.since;
+    const when = input.changed && start && start >= (old.fields.since ?? "") ? start : ctx.today;
     const previous = entryLine({ ...old, fields: { ...old.fields, [mark]: when } });
     files.archive.push(previous);
     archived = previous.raw;

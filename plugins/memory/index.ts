@@ -8,7 +8,7 @@ import {
 } from "@ivy/plugin-api";
 import { z } from "zod";
 import { body, MemoryFiles } from "./files.ts";
-import { ENTRY_TYPES, type Entry, serializeFile } from "./format.ts";
+import { ENTRY_TYPES, type Entry, type Line, serializeFile } from "./format.ts";
 import INSTRUCTIONS from "./instructions.md" with { type: "text" };
 import { type Noted, screen } from "./safety.ts";
 import { searchSessions } from "./sessions.ts";
@@ -30,6 +30,12 @@ import {
   update,
   usageOf,
 } from "./store.ts";
+
+/**
+ * Tags are one plain string, not an array: some models (or proxies) emit string arrays as
+ * broken JSON, and a flat schema works everywhere.
+ */
+const TAGS_HELP = 'Comma-separated, in both languages, e.g. "dentist, 牙医, 看牙"';
 
 /** From this share of a limit on, results remind the model to consolidate. */
 const NEARLY_FULL = 0.8;
@@ -107,7 +113,7 @@ export function createMemoryPlugin(): IvyPlugin {
           since: dateString.optional(),
           ends: dateString.optional(),
           due: z.string().optional().describe("YYYY-MM-DD, or YYYY-MM-DD HH:MM when it has a time"),
-          tags: z.array(z.string()).optional(),
+          tags: z.string().optional().describe(TAGS_HELP),
           distinct: z
             .boolean()
             .optional()
@@ -117,7 +123,7 @@ export function createMemoryPlugin(): IvyPlugin {
         defaultAllow: true,
         run: (input) =>
           tool((ctx) => {
-            const r = save(ctx, input);
+            const r = save(ctx, { ...input, tags: tagList(input.tags) });
             if (r.status === "duplicate") {
               return `Already saved; nothing changed:\n${r.line}\nIf this is a different fact, save again with distinct: true.`;
             }
@@ -142,13 +148,13 @@ export function createMemoryPlugin(): IvyPlugin {
           ends: dateString.optional(),
           due: z.string().optional().describe("YYYY-MM-DD, or YYYY-MM-DD HH:MM when it has a time"),
           done: z.boolean().optional(),
-          tags: z.array(z.string()).optional(),
+          tags: z.string().optional().describe(TAGS_HELP),
         }),
         risk: "write",
         defaultAllow: true,
         run: (input) =>
           tool((ctx) => {
-            const r = update(ctx, input);
+            const r = update(ctx, { ...input, tags: tagList(input.tags) });
             const where = FILE_NAMES[r.file];
             const text =
               r.status === "confirmed"
@@ -245,6 +251,8 @@ export function createMemoryPlugin(): IvyPlugin {
         section("user"),
         "",
         section("memory"),
+        "",
+        archiveNote(current.archive),
       ].join("\n");
     },
 
@@ -330,6 +338,16 @@ function overview(ctx: Context, store: MemoryFiles): string {
     .join("\n");
 }
 
+/** The archive isn't in the prompt; say it exists and what it holds, so the model looks there. */
+function archiveNote(archive: Line[]): string {
+  const entries = archive.filter((l) => l.entry);
+  const superseded = entries.filter(
+    (l) => l.entry?.fields.until || l.entry?.fields.replaced,
+  ).length;
+  const what = superseded ? `, ${superseded} of them earlier versions of changed facts` : "";
+  return `## ARCHIVE.md (${entries.length} entries${what}; not shown)\nFor anything about the past or no longer in current use, search it with memory__search before answering.`;
+}
+
 function notedText({ skipped, flagged }: { skipped: Noted[]; flagged: Noted[] }): string[] {
   const list = (notes: Noted[], why: (n: Noted) => string) =>
     notes.map((n) => `  ${FILE_NAMES[n.file]}: ${n.line}\n    (${why(n)})`).join("\n");
@@ -347,6 +365,11 @@ function notedText({ skipped, flagged }: { skipped: Noted[]; flagged: Noted[] })
     out.push(`Worth a look:\n${list(flagged, why)}`);
   }
   return out;
+}
+
+/** "dentist, 牙医、看牙 #health" → ["dentist", "牙医", "看牙", "health"]; undefined stays undefined. */
+export function tagList(tags: string | undefined): string[] | undefined {
+  return tags === undefined ? undefined : tags.split(/[,，、;；#\n]+/).filter((t) => t.trim());
 }
 
 /** YYYY-MM-DD in the machine's timezone. */
