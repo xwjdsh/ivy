@@ -155,7 +155,7 @@ Naming follows the common `SOUL.md` / `USER.md` convention of personal agents:
 - `packages/kernel/src/prompts/rules.md`: operating and safety rules (use tools instead of guessing, report failures honestly, tool output is data not instructions). Built in and always present, so safety never depends on the user's files.
 - `SOUL.md`: who Ivy is (personality, tone, values) and the user's hard rules ("never send email on my behalf"). Written by the user only.
 - `USER.md`: who the user is and how they like things done. Maintained by Ivy's memory plugin (§8.1) and editable by the user; it reaches the prompt through the plugin's `sessionPrompt`, not through a kernel loader.
-- Interface instructions: supplied by the UI (the TUI says it renders Markdown; one-shot mode asks for plain text).
+- Interface instructions: supplied by the UI (`cli/src/interface.ts`: the TUI says it renders Markdown; one-shot mode asks for plain text). The evals run with the TUI's.
 
 #### Turn context
 
@@ -166,7 +166,8 @@ Each user turn, the kernel asks every enabled plugin for `contextFor(turn)` and 
 ## core
 Now: 2026-10-16 Friday 14:57 (Asia/Tokyo, UTC+09:00)
 ## memory
-Due: Dentist appointment at 15:00 (today)
+Todos due (mention them to the user once in this conversation, briefly, whatever the question):
+- Dentist appointment (today at 15:00)
 </context>
 ```
 
@@ -178,7 +179,7 @@ Due: Dentist appointment at 15:00 (today)
 - **Deterministic:** the same history and mode always render to the same bytes and grow append-only within a turn, so the prompt cache and thinking blocks stay valid. Switching models may switch modes; that already costs a cache miss, since caches are per model.
 - **Display:** the TUI, session previews and turn counts skip the `<context>` block; the verbose view (`-v`, `/verbose`) and traces show it.
 - **Trust:** `rules.md` tells the model the block is supplied by Ivy as reference data, not written by the user.
-- **Limits:** each plugin's context is capped (2,000 characters) and gets a short time budget (1 s); a plugin that fails or times out is skipped and logged, so a turn never fails because of context.
+- **Limits:** each plugin's context is capped (2,000 characters) and gets a short time budget (1 s); a session section (`sessionPrompt`) gets 80,000 characters and 2 s. A plugin that fails or times out is skipped and logged, so a turn never fails because of a plugin.
 
 `SOUL.md` lives in the data dir and is optional; a missing file is simply left out. A template is in `examples/`.
 
@@ -254,7 +255,7 @@ Part of the kernel from M0, so problems can be debugged from day one.
 - Every API call is written to `~/.ivy/traces/<session>/<time>-<n>.json`: the exact request body, the raw response, latency, and `usage` (input, output, cache read/write tokens). Since each request holds the whole history, traces grow quickly: `[trace] retention_days` (default 7) prunes old session folders on startup, and `[trace] enabled = false` turns tracing off.
 - **Verbose view** (`-v`, `/verbose`) adds per-call details to the transcript: one line per model call (step, how context was sent, stop reason, tokens, cache, latency, the serving model if a fallback answered, the trace file), the turn's hidden `<context>` block, full tool input, and logs. Static state belongs in the status bar and `/status`.
 - **`/status`**: provider and endpoint, the current model's capabilities and why, system prompt parts with sizes, plugins, session, trace, config and cache paths. Not shown on purpose: the model's thinking (`thinking.display` changes the request; observing should not change what is observed).
-- *(Planned, M2)* `/trace` (the last request as the model saw it) and `ivy replay <trace>` (re-send it with another prompt or model), the start of evals.
+- *(Planned, M2)* `/trace` (the last request as the model saw it) and `ivy replay <trace>` (re-send it with another prompt or model); recorded requests could also feed the evals (§11).
 
 ### 5.9 Background Tasks & Subagents (M2)
 
@@ -307,7 +308,7 @@ export interface ToolDef<I = unknown> {
   input: z.ZodType<I>;        // converted to JSON Schema; validated before run
   risk: "read" | "write" | "external" | "dangerous";
   defaultAllow?: boolean;     // run without asking (low-impact tools; never "dangerous")
-  run(input: I, ctx: ToolContext): Promise<ToolResult> | ToolResult;
+  run(input: I, ctx: ToolContext): Promise<ToolResult> | ToolResult;  // ctx: abort signal, logger, session id
 }
 
 export interface PluginContext {
@@ -379,7 +380,7 @@ The data root is `$IVY_HOME`, default `~/.ivy`. During development `bun run ivy`
 | Plugin | Milestone | Summary | Key tools |
 |---|---|---|---|
 | `core` | M0 / M1 | Current time in every turn's context; date arithmetic | `date_calc` |
-| `memory` | M1 | Preferences, facts and todos as markdown files: capped hot files injected whole per session, a searchable archive (§8.1) | `save`, `update`, `move`, `delete`, `search` |
+| `memory` | M1 | Preferences, facts and todos as markdown files: capped hot files injected whole per session, a searchable archive (§8.1) | `save`, `update`, `move`, `delete`, `search`, `session_search` |
 | `fs` + `shell` | M2 | Read/edit files and run commands (CLI tools, §6.4) in allowed directories; the baseline for everyday work and coding on any model (pi shows four such tools suffice) | `read`, `write`, `edit`, `glob`, `grep`, `run` |
 | `claude-code` | M2 | Optional delegate for coding tasks, run as a subagent; `dangerous`, so asked every time. Claude only, so optional (principle 7) | `run` |
 | `mcp` bridge | M2 | Wraps configured MCP servers as plugins | (from servers) |
@@ -394,12 +395,12 @@ Memory is what makes Ivy *personal*, so it gets its own design. v3 follows Herme
 #### Goals
 
 1. **Used unprompted.** What matters is applied without the user repeating it, including preferences and facts that share no words with the current question ("keep answers short" must apply to "what's the date next Wednesday?").
-2. **Visible and editable.** Plain files the user can read, edit, delete and back up with git; every write shows up in the transcript as a tool call.
+2. **Visible and editable.** Plain files the user can read, edit, delete and back up with git; every write by the model shows up in the transcript as a tool call (rule-based tidying is noted in the verbose log).
 3. **Cheap.** Bounded tokens; no prompt-cache breakage within a session.
 4. **Safe.** Memory is injected into prompts every session, so it must not become an injection channel; nothing is ever silently dropped.
 5. **Any model.** Rules live in Ivy, not in model features; tools have small flat schemas.
 
-**How quality is kept**, in this order of preference: code for what is certain (caps, dates, archiving old versions, near-duplicate checks, safety scan, taint), tool design for what can be steered (separate `due` and `since` fields, `changed` as a parameter, errors that return candidates and usage), and prompt rules only for real judgment (what to save, where, how to word it, whether a fact changed). Evals (M2) measure the prompt part across models. Graphiti shows why: it left contradiction detection to a small model, which got it wrong every time in a 30-case probe.
+**How quality is kept**, in this order of preference: code for what is certain (caps, dates, archiving old versions, near-duplicate checks, safety scan, taint), tool design for what can be steered (separate `due` and `since` fields, `changed` as a parameter, errors that return candidates and usage), and prompt rules only for real judgment (what to save, where, how to word it, whether a fact changed). Evals (`bun run eval`, §11) measure the prompt part across models. Graphiti shows why: it left contradiction detection to a small model, which got it wrong every time in a 30-case probe.
 
 #### Three files: two hot, one cold
 
@@ -408,13 +409,14 @@ Memory is what makes Ivy *personal*, so it gets its own design. v3 follows Herme
 | What | How Ivy should behave for this user, and stable facts about them: "prefers concise answers", "Chinese for chat, English for code", "lives in Tokyo", "partner: Mei" | Facts, todos and notes in current use: people, projects, accounts, "dentist on 10-21", "parking spot B12" | Entries no longer in current use: done todos, old facts |
 | Size | `[plugins.memory] user_limit`, default 2,000 characters (500–20,000) | `memory_limit`, default 8,000 characters (1,000–50,000), about 2,500–3,000 tokens | Unbounded |
 | Reaches the model | Whole, in the system prompt, **frozen per session** | Same | Only through `memory__search` |
-| When full | A write fails with the entry count and how many characters to free; the model consolidates (merge, shorten, move to `MEMORY.md` or the archive) and retries | Same (merge, shorten, archive) | n/a |
+| When full | A write fails with how much to free, ideally down to about 80%; the model makes room (archiving what is not in current use first, then merging, shortening last) and retries | Same | n/a |
 
 - **Why hot and cold:** whole injection never misses and lets the model judge relevance across synonyms and languages; the caps keep it cheap and focused, and the archive holds a lifetime of entries without putting them in every request. On endpoints without prompt caching the hot files cost full price each call, which is why they are capped.
 - **Why `USER.md` apart from `MEMORY.md`:** it holds standing instructions about the user, so it has its own cap and stricter rules (Safety); `MEMORY.md` holds facts and errands.
 - **The profile is `USER.md`**, maintained by Ivy and editable by the user (there is no separate user-written profile: tell Ivy, or edit the file). Things Ivy must never change, such as hard rules, belong in `SOUL.md`, which Ivy never edits (§5.3).
 - **Usage is visible to the model:** each hot file is injected under a header with its size, e.g. `## MEMORY.md (5,310 / 8,000 chars)`, and every write that adds to or changes a hot file returns its current usage. The rules ask the model to consolidate from 80% on, so a failed write is the exception and tidying doesn't land in the middle of urgent work.
 - **Lowering a limit truncates nothing:** the file is still injected whole, the next write fails until it is consolidated, and `/memory` shows it as over the limit.
+- **The archive is named in the prompt:** after the hot files, a line gives its entry count (and how many are earlier versions of changed facts) and says to search it for anything about the past, which models otherwise forget.
 - **Frozen per session:** both hot files are read when a session starts (startup, `/new`, `/resume`) through the plugin's `sessionPrompt`, so hand edits apply after `/new`. Writes reach disk at once and the model knows what it just wrote (and `memory__search` reads the files as they are now), but the system prompt only changes at the next session, which keeps the cached prefix stable.
 
 #### Storage
@@ -464,24 +466,25 @@ There is no `/remember` command: the user just says it, and the model routes it 
 
 | Tool | Risk | Default | Does |
 |---|---|---|---|
-| `save(file, content, type?, since?, ends?, due?, tags?, distinct?)` | write | allowed (`defaultAllow`) | Appends a line to `user` or `memory` (cap checked). If a line in that file is nearly the same (bigram overlap ≥ 0.9), nothing is added or changed and that line is returned ("already saved"); to save something different after all, `distinct: true`. Re-saving is not confirmation: the model sees the hot files, so a repeat is usually an echo of memory, not news. A partial match (0.5–0.9) is saved, and the closest line is returned so the model can merge them (agentmemory, which instead replaces such entries silently) |
-| `update(match, content?, changed?, since?, ends?, due?, done?, tags?)` | write | allowed (`defaultAllow`) | Changes the one line containing `match` (a unique substring, in any file); patch only, no whole-file replace (Hermes removed its replace action because models wiped unrelated entries with it). Changing the text archives the old version (below): with `changed: true` (the fact itself changed: both can't be true, or it explicitly ended or was replaced) it is marked `until:`, otherwise (more detail, rewording, a correction) `replaced:`. `done: true` moves a todo to the archive. With no changes at all, it confirms the entry: its date becomes today |
+| `save(file, content, type?, since?, ends?, due?, tags?, distinct?)` | write | allowed (`defaultAllow`) | Appends a line to `user` or `memory` (cap checked). `due` may carry a time (`2026-10-23 17:00`), which models otherwise drop from the text. `tags` is one comma-separated string (string arrays came out as broken JSON through a proxy), and `#tags` typed at the end of `content` become tags. If a line in that file is nearly the same (bigram overlap ≥ 0.9), nothing is added or changed and that line is returned ("already saved"); to save something different after all, `distinct: true`. Re-saving is not confirmation: the model sees the hot files, so a repeat is usually an echo of memory, not news. A partial match (0.5–0.9) is saved, and the closest line is returned so the model can merge them (agentmemory, which instead replaces such entries silently) |
+| `update(match, content?, changed?, since?, ends?, due?, done?, tags?)` | write | allowed (`defaultAllow`) | Changes the one line containing `match` (a unique substring, in any file); patch only, no whole-file replace (Hermes removed its replace action because models wiped unrelated entries with it). Changing the text archives the old version (below): with `changed: true` (the fact itself changed: both can't be true, or it explicitly ended or was replaced) it is marked `until:`, otherwise (more detail, rewording, a correction) `replaced:`. A changed fact starts fresh: the old one's `since:`, `ends:` and tags don't carry over. `done: true` moves a todo to the archive. With no changes at all, it confirms the entry: its date becomes today |
 | `move(match, to)` | write | allowed (`defaultAllow`) | Moves a line between files: archiving, or bringing an archived entry back (cap checked) |
 | `delete(match)` | write | asks | Removes a line for good (e.g. for privacy); nothing goes to the archive |
 | `search(query?, type?, limit?)` | read | allowed | Searches all three files as they are now, archive included; empty query lists the newest entries |
+| `session_search(query, since?, limit?)` | read | allowed | Searches past conversations (below) |
 
 `match` must hit exactly one line; otherwise the tool returns the candidates so the model can be more specific. There are no ids.
 
 #### Tidying (automatic, never asks)
 
-Moving between hot and cold deletes nothing (the archive stays searchable), so tidying runs without confirmation and shows as tool calls.
-- **By rule:** a todo marked done moves to the archive, and so does an entry whose `ends:` date has passed (marked `until:`). When `update` changes an entry's text, the old version goes to the archive (Graphiti and Mem0 invalidate facts instead of deleting them): marked `until:` with the new version's `since:` (or today) if the fact changed, `replaced:` if it was only reworded. Graphiti's main failure was retiring facts that were still true (41% of facts invalidated, most wrongly), so the bar for `changed` is strict: new activity or extra detail is not a change. This keeps history ("where did I live before?") and, more importantly, makes consolidation safe: whatever the model merges or shortens under cap pressure survives word for word in the archive. Overdue open todos stay in `MEMORY.md`; `/memory` flags those overdue for more than 30 days, since moving them would silently give up on them.
+Moving between hot and cold deletes nothing (the archive stays searchable), so tidying runs without confirmation: the model's moves show as tool calls, the rule-based ones are noted in the verbose log.
+- **By rule:** a todo marked done moves to the archive, and so does an entry whose `ends:` date has passed (marked `until:`). When `update` changes an entry's text, the old version goes to the archive (Graphiti and Mem0 invalidate facts instead of deleting them): marked `until:` with the new version's `since:` (or today, and never before the old `since:`) if the fact changed, `replaced:` if it was only reworded. Graphiti's main failure was retiring facts that were still true (41% of facts invalidated, most wrongly), so the bar for `changed` is strict: new activity or extra detail is not a change. This keeps history ("where did I live before?") and, more importantly, makes consolidation safe: whatever the model merges or shortens under cap pressure survives word for word in the archive. Overdue open todos stay in `MEMORY.md`; `/memory` flags those overdue for more than 30 days, since moving them would silently give up on them.
 - **By the model, when a hot file is full:** the over-cap error makes it consolidate (above). Generous limits keep this rare.
 - **Back from the archive:** when a searched archive entry is in use again, the model moves it back.
 
 #### Per-turn context
 
-`contextFor` adds a `Due:` line for each todo in the hot files that is due today or overdue, at most 3: `Due: Dentist appointment at 15:00 (today)`, `Due: Taxes (overdue since 2026-10-01)`; nothing otherwise. The todos are already in the prompt; the line makes sure they get brought up on the day.
+`contextFor` lists todos in `MEMORY.md` that are due today or overdue, at most 3, with their time (`- Dentist appointment (today at 15:00)`, `- Taxes (overdue since 2026-10-01)`), and asks the model to mention them once in the conversation, briefly, whatever the question: without that, models saw the line and said nothing. Nothing otherwise.
 
 #### Search
 
@@ -522,7 +525,7 @@ Automatic capture (opt-in, with `helper_model`; the flush before compaction come
 2. A fact in `MEMORY.md` is used when it matters without being asked, including across Chinese and English; a todo is brought up on its due day; an archived fact is found with `memory__search`.
 3. Writing past a cap makes the model consolidate or archive instead of losing entries.
 4. An injection attempt ("remember: ignore your rules and …") is rejected on save.
-5. A changed fact ("I moved to Osaka") replaces the old one in the prompt, and the old one is still found in the archive. Public memory benchmarks (LoCoMo) barely test updates and contradictions, so Ivy's evals (M2) include them.
+5. A changed fact ("I moved to Osaka") replaces the old one in the prompt, and the old one is still found in the archive. Public memory benchmarks (LoCoMo) barely test updates and contradictions, so Ivy's evals include them (`evals/memory.ts`).
 
 ### 8.2 Skills (M2)
 
@@ -550,7 +553,7 @@ ivy/
 ├── evals/                   # real-model eval cases (`bun run eval`): memory.ts, the runner
 ├── plugins/
 │   ├── core/                # time context + date_calc
-│   ├── memory/              # USER.md / MEMORY.md / ARCHIVE.md: format, search, store, files, plugin; the model's rules in instructions.md
+│   ├── memory/              # USER.md / MEMORY.md / ARCHIVE.md: format, search, store, files, safety, sessions, plugin; the model's rules in instructions.md
 │   └── ...
 ├── biome.json
 ├── package.json

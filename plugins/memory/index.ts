@@ -231,10 +231,14 @@ export function createMemoryPlugin(): IvyPlugin {
 
     // Both hot files, frozen for the session. Rules that need no judgment run first.
     async sessionPrompt() {
-      const { current } = await store().change((f) => {
+      const { current, moved } = await store().change((f) => {
         const r = tidy(context(f));
-        return r.moved.length ? { files: r.files, current: r.files } : { current: f };
+        return r.moved.length
+          ? { files: r.files, current: r.files, moved: r.moved }
+          : { current: f, moved: [] };
       });
+      // Rule-based tidying makes no tool call, so it is logged (the verbose view shows it).
+      for (const line of moved) ready().log.info(`archived by rule: ${line}`);
       const ctx = context(current);
       const { files: shown, skipped } = screen(current);
       for (const s of skipped) {
