@@ -46,7 +46,7 @@ Everything users care about (memory, email, calendar, coding help, news digests,
 4. **Explicit over magic.** Ivy should be able to tell the user which plugin and tool produced an answer and what it remembered at the time (`/memory`, the session prompt in `/status`; which entry an answer used would need citations, §8.1 backlog).
 5. **Confirm before effects.** Any outward-facing or hard-to-reverse action is shown to the user before it runs, unless a permission rule says otherwise.
 6. **Dogfood every milestone.** A milestone is only done once it has been used in real life for a few days.
-7. **Compatibility first, enhance progressively.** Core features rely only on what every Anthropic-compatible endpoint offers: messages, tool calls, streaming, a system prompt. Anthropic-only features (prompt caching, effort, refusal fallback, `clear_at` system messages, compaction, server tools, ...) are enhancements: switched on per request where the provider and model support them, with a fallback everywhere else. No Ivy feature may *require* one. Capability decisions live in one place, `Capabilities` (`capabilities.ts`, §5.2).
+7. **Compatibility first, enhance progressively.** Core features rely only on what every Anthropic-compatible endpoint offers: messages, tool calls, streaming, a system prompt. Anthropic-only features (prompt caching, effort, refusal fallback, `clear_at` system messages, compaction, server tools, ...) are enhancements: switched on per request where the provider and model support them, with a fallback everywhere else. No Ivy feature may *require* one. Capability decisions live in one place (§5.2).
 8. **Everything is observable.** Every request, response, tool call, token count and cache hit can be inspected after the fact. If we can't see why Ivy did something, we can't fix it.
 
 ## 4. Architecture
@@ -107,7 +107,7 @@ Today the kernel runs inside the CLI process. From M4 it runs in the daemon, whi
 - Speaks the Anthropic Messages API to whatever `[providers.*]` endpoint is active. With Anthropic's own API the default model is **`claude-opus-5-5`**, with adaptive thinking and one `effort` level from `[generation]` (switch with `/effort`).
 - Server-side refusal fallback (`fallbacks: "default"`) is on where supported (decided by `Capabilities`), as Anthropic recommends: if the model declines, Anthropic re-runs the request on a fallback model within the same call, and a notice names both models, so a swap is never silent. A provider can opt out with `refusal_fallback = false` (optional, default true).
 - **Compatible endpoints vary.** Effort, adaptive thinking, prompt caching, refusal fallback, `clear_at` system messages, compaction and server tools are Anthropic API features; a compatible endpoint or a non-Claude model may ignore or reject them.
-- **Capabilities** (`capabilities.ts`) decide per request which optional features a model gets on the active endpoint, from three sources:
+- **Capabilities** decide per request which optional features a model gets on the active endpoint, from three sources:
   1. **Models API** (official endpoint only): `client.models.list()` reports effort support and levels, `max_tokens`, context window, thinking types, server tools and more. Fetched in the background at startup (never blocking), cached in `~/.ivy/cache/models.json` for a day. New models need no code change. It does *not* report mid-conversation system messages or refusal fallback.
   2. **Learned:** when the endpoint answers a request with a 400 naming an optional feature it used (system messages, fallbacks, effort), the agent turns that feature off for that model, tells the user with a notice, and resends the step. Remembered in the same cache, per endpoint and model.
   3. **Defaults:** on the official API, Claude models get the optional features, except a fixed pattern of *older* models known to lack them (this list only covers the past, so it never grows). Compatible endpoints get only the basics plus `effort` (dropped on a 400). `refusal_fallback = false` in a provider turns fallbacks off.
@@ -123,21 +123,21 @@ Today the kernel runs inside the CLI process. From M4 it runs in the daemon, whi
 
 Ivy speaks only the Anthropic Messages API (see Non-Goals): Claude directly, or any model behind an Anthropic-compatible endpoint. The coupling to that API is kept in known places, so adding another API kind later is a bounded job.
 
-| Anthropic-specific | Where | Impact on another provider |
-|---|---|---|
-| Message format (content blocks, `tool_use`/`tool_result`, thinking blocks) | Whole kernel; session JSONL | Needs translation; old sessions stay in this format |
-| Refusal fallback (`fallbacks: "default"` + beta header) | `Agent.buildRequest` | Unknown param, likely 400 |
-| `output_config.effort` | `Agent.buildRequest` | Unknown or named differently |
-| Top-level `cache_control` | `Agent.buildRequest` | Ignored or rejected |
-| `eager_input_streaming` on tools | `PluginHost.apiTools` | Ignored or rejected |
-| Price table | `model.ts` | Recorded cost is unknown (cost is never shown in the UI) |
-| Planned: server-side compaction, server tools (web search) | — | Not available elsewhere (client-side compaction is the baseline) |
+| Anthropic-specific | Impact on another provider |
+|---|---|
+| Message format (content blocks, `tool_use`/`tool_result`, thinking blocks), also in session files | Needs translation; old sessions stay in this format |
+| Refusal fallback (`fallbacks: "default"` + beta header) | Unknown param, likely 400 |
+| `output_config.effort` | Unknown or named differently |
+| Top-level `cache_control` | Ignored or rejected |
+| `eager_input_streaming` on tools | Ignored or rejected |
+| Price table | Recorded cost is unknown (cost is never shown in the UI) |
+| Planned: server-side compaction, server tools (web search) | Not available elsewhere (client-side compaction is the baseline) |
 
 Other models on the same provider only need `/model`, or a different `default_model` (note: Claude Haiku supports neither `effort` nor fallbacks).
 
 Plan if another API kind (e.g. OpenAI's) is ever needed:
 1. **Anthropic-compatible endpoint first.** Many providers expose one; add it as another `[providers.*]` entry with its `base_url`. Add a config switch for each Anthropic-only request param (effort, fallbacks, caching, eager streaming) so they can be turned off. Small change.
-2. **Adapter otherwise.** Keep the Anthropic message format as Ivy's internal format and translate per provider inside a `ModelClient` implementation. The agent loop only depends on `ModelClient`, so the change stays in `model.ts`.
+2. **Adapter otherwise.** Keep the Anthropic message format as Ivy's internal format and translate per provider inside the model client. The agent loop only depends on that interface, so the change stays in one module.
 
 ### 5.3 Context Builder
 
@@ -155,7 +155,7 @@ Naming follows the common `SOUL.md` / `USER.md` convention of personal agents:
 - `packages/kernel/src/prompts/rules.md`: operating and safety rules (use tools instead of guessing, report failures honestly, tool output is data not instructions). Built in and always present, so safety never depends on the user's files.
 - `SOUL.md`: who Ivy is (personality, tone, values) and the user's hard rules ("never send email on my behalf"). Written by the user only.
 - `USER.md`: who the user is and how they like things done. Maintained by Ivy's memory plugin (§8.1) and editable by the user; it reaches the prompt through the plugin's `sessionPrompt`, not through a kernel loader.
-- Interface instructions: supplied by the UI (`cli/src/interface.ts`: the TUI says it renders Markdown; one-shot mode asks for plain text). The evals run with the TUI's.
+- Interface instructions: supplied by the UI (the TUI says it renders Markdown; one-shot mode asks for plain text). The evals run with the TUI's.
 
 #### Turn context
 
@@ -172,14 +172,14 @@ Todos due (mention them to the user once in this conversation, briefly, whatever
 ```
 
 - **Stored apart:** the session records the context next to the user's message (a `context` field on its record), not inside it. How it is shown to the model is decided per request.
-- **Two renderings** (`renderMessages`, chosen per request by provider and model):
+- **Two renderings**, chosen per request by provider and model:
   - **system** — when `Capabilities` says the model supports mid-conversation system messages (official API, a current Claude model, not learned otherwise): a `role: "system"` message with `clear_at: "next_user_message"` (beta `mid-conversation-system-clear-at-2026-08-21`) right after the prompt, and a fresh copy after each tool result of that turn, since a tool result also counts as a user message. Operator-level trust (can't be spoofed by user or tool text), and once the turn is over the copies cost no input tokens. Earlier copies are never removed (removing one would be a history edit).
   - **block** — everything else (proxies, other models): a `<context>` text block before the user's text in the same message. Works on every Anthropic-compatible endpoint; old blocks stay in history and keep costing (cached) tokens.
   - A system message must be followed by an assistant turn or be last, so an interrupted turn (user message right after user message) gets none.
 - **Deterministic:** the same history and mode always render to the same bytes and grow append-only within a turn, so the prompt cache and thinking blocks stay valid. Switching models may switch modes; that already costs a cache miss, since caches are per model.
 - **Display:** the TUI, session previews and turn counts skip the `<context>` block; the verbose view (`-v`, `/verbose`) and traces show it.
 - **Trust:** `rules.md` tells the model the block is supplied by Ivy as reference data, not written by the user.
-- **Limits:** each plugin's context is capped (2,000 characters) and gets a short time budget (1 s); a session section (`sessionPrompt`) gets 80,000 characters and 2 s. A plugin that fails or times out is skipped and logged, so a turn never fails because of a plugin.
+- **Limits:** each plugin's turn context and session section are capped in size and time (a session section is large enough for both memory files at their maximum). A plugin that fails or times out is skipped and logged, so a turn never fails because of a plugin.
 
 `SOUL.md` lives in the data dir and is optional; a missing file is simply left out. A template is in `examples/`.
 
@@ -216,7 +216,7 @@ deny  = ["shell__*"]
 
 - **`ask` carves exceptions out of a wildcard `allow`** (as in Claude Code's `allow`/`ask`/`deny`), and also forces a confirmation for a tool whose declared risk you don't trust.
 
-- **Precedence** (`permissions.ts`): `deny` > `ask` > dangerous tools always ask > allow (`allow` rules, learned "Always" rules, plugin defaults, "for this session") > the risk level's default (`read` runs, everything else asks). A denied call is rejected without asking, and the model is told it was blocked by a rule.
+- **Precedence:** `deny` > `ask` > dangerous tools always ask > allow (`allow` rules, learned "Always" rules, plugin defaults, "for this session") > the risk level's default (`read` runs, everything else asks). A denied call is rejected without asking, and the model is told it was blocked by a rule.
 - **Risk levels are declared by plugins and not verified.** A plugin could label a risky tool `read`. The gate protects against the *model* misusing tools, not against a malicious plugin (§6.3). `ask` rules let the user force a confirmation for any tool, and `/status` lists every tool with its declared risk.
 - **Sources:** rules from `config.toml` (hand-written) plus learned rules in `~/.ivy/permissions.json`, which Ivy owns. Ivy never rewrites `config.toml` as a whole; today the only in-place edits are `/model` and `/effort` saving their choice (§5.2), later also the M4 app's settings (§5.7).
 - **Dialog:** *Yes* / *Yes, for this session* / *Always (saves an allow rule to permissions.json)* / *No*, with the reason it asks (`write tool`, `ask rule`, ...) and the input (in full for `dangerous` tools). Where remembering would have no effect (`dangerous` tools, `ask` rules) only *Yes* / *No* are offered, and the kernel treats a remembered choice there as *Yes* whatever the interface sends.
@@ -466,7 +466,7 @@ There is no `/remember` command: the user just says it, and the model routes it 
 
 | Tool | Risk | Default | Does |
 |---|---|---|---|
-| `save(file, content, type?, since?, ends?, due?, tags?, distinct?)` | write | allowed (`defaultAllow`) | Appends a line to `user` or `memory` (cap checked). `due` may carry a time (`2026-10-23 17:00`), which models otherwise drop from the text. `tags` is one comma-separated string (string arrays came out as broken JSON through a proxy), and `#tags` typed at the end of `content` become tags. If a line in that file is nearly the same (bigram overlap ≥ 0.9), nothing is added or changed and that line is returned ("already saved"); to save something different after all, `distinct: true`. Re-saving is not confirmation: the model sees the hot files, so a repeat is usually an echo of memory, not news. A partial match (0.5–0.9) is saved, and the closest line is returned so the model can merge them (agentmemory, which instead replaces such entries silently) |
+| `save(file, content, type?, since?, ends?, due?, tags?, distinct?)` | write | allowed (`defaultAllow`) | Appends a line to `user` or `memory` (cap checked). `due` may carry a time (`2026-10-23 17:00`), which models otherwise drop from the text. `tags` is one comma-separated string (string arrays came out as broken JSON through a proxy), and `#tags` typed at the end of `content` become tags. If a line in that file is nearly the same, nothing is added or changed and that line is returned ("already saved"); to save something different after all, `distinct: true`. Re-saving is not confirmation: the model sees the hot files, so a repeat is usually an echo of memory, not news. A partial match is saved, and the closest line is returned so the model can merge them (agentmemory, which instead replaces such entries silently) |
 | `update(match, content?, changed?, since?, ends?, due?, done?, tags?)` | write | allowed (`defaultAllow`) | Changes the one line containing `match` (a unique substring, in any file); patch only, no whole-file replace (Hermes removed its replace action because models wiped unrelated entries with it). Changing the text archives the old version (below): with `changed: true` (the fact itself changed: both can't be true, or it explicitly ended or was replaced) it is marked `until:`, otherwise (more detail, rewording, a correction) `replaced:`. A changed fact starts fresh: the old one's `since:`, `ends:` and tags don't carry over. `done: true` moves a todo to the archive. With no changes at all, it confirms the entry: its date becomes today |
 | `move(match, to)` | write | allowed (`defaultAllow`) | Moves a line between files: archiving, or bringing an archived entry back (cap checked) |
 | `delete(match)` | write | asks | Removes a line for good (e.g. for privacy); nothing goes to the archive |
@@ -478,13 +478,13 @@ There is no `/remember` command: the user just says it, and the model routes it 
 #### Tidying (automatic, never asks)
 
 Moving between hot and cold deletes nothing (the archive stays searchable), so tidying runs without confirmation: the model's moves show as tool calls, the rule-based ones are noted in the verbose log.
-- **By rule:** a todo marked done moves to the archive, and so does an entry whose `ends:` date has passed (marked `until:`). When `update` changes an entry's text, the old version goes to the archive (Graphiti and Mem0 invalidate facts instead of deleting them): marked `until:` with the new version's `since:` (or today, and never before the old `since:`) if the fact changed, `replaced:` if it was only reworded. Graphiti's main failure was retiring facts that were still true (41% of facts invalidated, most wrongly), so the bar for `changed` is strict: new activity or extra detail is not a change. This keeps history ("where did I live before?") and, more importantly, makes consolidation safe: whatever the model merges or shortens under cap pressure survives word for word in the archive. Overdue open todos stay in `MEMORY.md`; `/memory` flags those overdue for more than 30 days, since moving them would silently give up on them.
+- **By rule:** a todo marked done moves to the archive, and so does an entry whose `ends:` date has passed (marked `until:`). When `update` changes an entry's text, the old version goes to the archive (Graphiti and Mem0 invalidate facts instead of deleting them): marked `until:` with the new version's `since:` (or today, and never before the old `since:`) if the fact changed, `replaced:` if it was only reworded. Graphiti's main failure was retiring facts that were still true (41% of facts invalidated, most wrongly), so the bar for `changed` is strict: new activity or extra detail is not a change. This keeps history ("where did I live before?") and, more importantly, makes consolidation safe: whatever the model merges or shortens under cap pressure survives word for word in the archive. Overdue open todos stay in `MEMORY.md`; `/memory` flags long-overdue ones, since moving them would silently give up on them.
 - **By the model, when a hot file is full:** the over-cap error makes it consolidate (above). Generous limits keep this rare.
 - **Back from the archive:** when a searched archive entry is in use again, the model moves it back.
 
 #### Per-turn context
 
-`contextFor` lists todos in `MEMORY.md` that are due today or overdue, at most 3, with their time (`- Dentist appointment (today at 15:00)`, `- Taxes (overdue since 2026-10-01)`), and asks the model to mention them once in the conversation, briefly, whatever the question: without that, models saw the line and said nothing. Nothing otherwise.
+`contextFor` lists todos in `MEMORY.md` that are due today or overdue (a few at most), with their time (`- Dentist appointment (today at 15:00)`, `- Taxes (overdue since 2026-10-01)`), and asks the model to mention them once in the conversation, briefly, whatever the question: without that, models saw the line and said nothing. Nothing otherwise.
 
 #### Search
 
@@ -500,7 +500,7 @@ Used by `memory__search`, `/memory <query>` and `session_search` (4e). Pure func
 
 #### Safety
 
-- **Scan on write and on load** (`safety.ts`): reject invisible, control or text-direction characters (U+202E and the like; Unicode tag characters), text addressed to the model ("ignore previous instructions", "you are now…", 忽略之前的指令, role or chat-format markup such as `</system>` or `<|im_start|>`), and secrets (API keys, private keys, GitHub/AWS/Slack/Google tokens, JWTs). The rules are narrow on purpose: a false positive blocks a real memory. **Writes are strict:** every line Ivy writes (save, update, move; text and tags) is scanned in code, and a rejected write tells the model why. **Reads are lenient:** a line Ivy didn't write is the user's own (only the user and Ivy write `~/.ivy`; whoever else can has the machine already), so only hidden characters, which a paste can carry unnoticed, keep a line out of the prompt, search results and due reminders; instruction-like text and secrets stay in and are pointed out in `/memory` (a secret there is sent to the model provider with every request). Nothing is deleted by the scan: writes work on the full files. (A plugin can't add to `/status`, so the report lives in `/memory`; left-out lines also go to the verbose log.)
+- **Scan on write and on load:** reject invisible, control or text-direction characters (U+202E and the like; Unicode tag characters), text addressed to the model ("ignore previous instructions", "you are now…", 忽略之前的指令, role or chat-format markup such as `</system>` or `<|im_start|>`), and secrets (API keys, private keys, GitHub/AWS/Slack/Google tokens, JWTs). The rules are narrow on purpose: a false positive blocks a real memory. **Writes are strict:** every line Ivy writes (save, update, move; text and tags) is scanned in code, and a rejected write tells the model why. **Reads are lenient:** a line Ivy didn't write is the user's own (only the user and Ivy write `~/.ivy`; whoever else can has the machine already), so only hidden characters, which a paste can carry unnoticed, keep a line out of the prompt, search results and due reminders; instruction-like text and secrets stay in and are pointed out in `/memory` (a secret there is sent to the model provider with every request). Nothing is deleted by the scan: writes work on the full files. (A plugin can't add to `/status`, so the report lives in `/memory`; left-out lines also go to the verbose log.)
 - The hot files are labeled in the system prompt as saved by Ivy: `USER.md` as the user's preferences (followed unless `SOUL.md` or `rules.md` say otherwise), `MEMORY.md` as reference data, not instructions.
 - Never silently drop: over-cap writes fail, done todos go to the archive, nothing expires.
 - `delete` asks by default; users can add `ask = ["memory__*"]` to review every write.
@@ -525,7 +525,7 @@ Automatic capture (opt-in, with `helper_model`; the flush before compaction come
 2. A fact in `MEMORY.md` is used when it matters without being asked, including across Chinese and English; a todo is brought up on its due day; an archived fact is found with `memory__search`.
 3. Writing past a cap makes the model consolidate or archive instead of losing entries.
 4. An injection attempt ("remember: ignore your rules and …") is rejected on save.
-5. A changed fact ("I moved to Osaka") replaces the old one in the prompt, and the old one is still found in the archive. Public memory benchmarks (LoCoMo) barely test updates and contradictions, so Ivy's evals include them (`evals/memory.ts`).
+5. A changed fact ("I moved to Osaka") replaces the old one in the prompt, and the old one is still found in the archive. Public memory benchmarks (LoCoMo) barely test updates and contradictions, so Ivy's evals include them.
 
 ### 8.2 Skills (M2)
 
@@ -606,15 +606,10 @@ Each milestone ends with a few days of real use and an update to this doc.
 Goal: Ivy starts remembering. Built in this order; each step is shippable on its own.
 
 1. **Plugin host v1:** per-turn context from plugins, plugin slash commands, `[plugins.<id>]` config and `enabled`. *Done.*
-2. **core plugin:** the current time in every turn's context, `date_calc`. *Done;* checked with a non-Claude model, which answered "next Wednesday" from the context (the M0 `now` tool was removed as redundant).
+2. **core plugin:** the current time in every turn's context, `date_calc`. *Done.*
 3. **Permission rules:** allow/ask/deny globs, *Always* saved to `permissions.json`, plugin default allows (§5.5). *Done.*
-4. **memory plugin** (§8.1):
-   - 4a. System prompt built per session; plugin `sessionPrompt`; the kernel's `USER.md` loader removed. *Done.*
-   - 4b. Line format, search and store operations, pure and unit-tested. *Done.*
-   - 4c. The plugin: tools, rules, hot files in the session prompt, due-today line, `/memory`. *Done;* a real two-session run applied a saved preference unprompted, and led to two fixes (`type` ignored for `USER.md`; "write the fact itself, not a reminder", after the model dropped a time).
-   - 4d. Safety scan, strict on write and lenient on load. *Done;* a real model's attempt to save an injected instruction was rejected, and it refused an API key on its own.
-   - 4e. `session_search` over past sessions. *Done;* a real model asked "what did you advise when I wanted you to store my OpenAI key?" found the earlier session and quoted the advice.
-   *Done when:* the five checks at the end of §8.1 pass with a real model. *Passed (2026-10-18)* in a clean data folder, one session per step. Against a control with no memory, the brevity preference cut the answer to about a third and dropped its table; a fact saved in Chinese shaped an English answer; an archived fact was found by search; a due todo was mentioned in unrelated sessions; past the cap, the model archived past events instead of losing entries; an injection was refused; a changed home moved the old one to the archive. The runs led to four fixes: a todo's time is a structured part of `due` (the model kept dropping it from the text), the due line asks the model to mention it, the over-cap error points to archiving down to ~80% (the model had shaved a few characters off entry after entry), and tags typed into the text become tags while a changed fact starts with fresh ones. The checks then became `evals/memory.ts` (`bun run eval`), which led to more fixes: tags are one comma-separated string (string arrays came out as broken JSON through a proxy), a rule against claiming a save that didn't happen, the archive named in the session prompt, and no `until:` before a fact's `since:`. On 2026-10-18 `copilot/claude-sonnet-5.5` passed 8/8 and `codex/gpt-6-luna` 7/8: it sometimes doesn't save a plainly stated fact and doesn't search the archive for questions about the past.
+4. **memory plugin** (§8.1): a per-session system prompt with plugin sections (4a), line format, search and store (4b), the plugin itself (4c), the safety scan (4d), `session_search` (4e). *Done.*
+   *Done when:* the five checks at the end of §8.1 pass with a real model. *Passed (2026-10-18);* they now run as evals (`bun run eval`). Real runs found what unit tests couldn't (a dropped time, a reminder never voiced, a claimed save that never happened, tags breaking through a proxy); each became a rule or a tool change in §8.1 and an eval case. Models differ markedly on the same cases, so run the evals before switching models.
 5. *(Optional)* Progress notes while the model works, where the provider supports it.
 
 - **Done when (milestone):** Ivy remembers facts and todos across sessions and uses them without being asked.
