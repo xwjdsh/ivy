@@ -1,8 +1,15 @@
-import { definePlugin, defineTool, type IvyPlugin, type ToolResult } from "@ivy/plugin-api";
+import {
+  definePlugin,
+  defineTool,
+  type IvyPlugin,
+  type Logger,
+  type ToolResult,
+} from "@ivy/plugin-api";
 import { z } from "zod";
 import { body, MemoryFiles } from "./files.ts";
 import { ENTRY_TYPES, type Entry, serializeFile } from "./format.ts";
 import INSTRUCTIONS from "./instructions.md" with { type: "text" };
+import { type Noted, screen } from "./safety.ts";
 import {
   type Context,
   FILE_NAMES,
@@ -37,7 +44,7 @@ const configSchema = z.strictObject({
 });
 
 export function createMemoryPlugin(): IvyPlugin {
-  let state: { files: MemoryFiles; limits: Limits } | undefined;
+  let state: { files: MemoryFiles; limits: Limits; log: Logger } | undefined;
 
   const ready = () => {
     if (!state) throw new Error("memory plugin not set up");
@@ -78,6 +85,7 @@ export function createMemoryPlugin(): IvyPlugin {
       state = {
         files: new MemoryFiles(ctx.dataDir),
         limits: { user: config.user_limit, memory: config.memory_limit },
+        log: ctx.log,
       };
     },
     instructions: INSTRUCTIONS.trim(),
@@ -188,7 +196,7 @@ export function createMemoryPlugin(): IvyPlugin {
           limit: z.number().int().min(1).max(50).optional(),
         }),
         risk: "read",
-        run: (input) => tool((ctx) => searchText(find(ctx.files, input))),
+        run: (input) => tool((ctx) => searchText(find(screen(ctx.files).files, input))),
       }),
     ],
 
@@ -199,8 +207,12 @@ export function createMemoryPlugin(): IvyPlugin {
         return r.moved.length ? { files: r.files, current: r.files } : { current: f };
       });
       const ctx = context(current);
+      const { files: shown, skipped } = screen(current);
+      for (const s of skipped) {
+        ready().log.warn(`left out (${s.finding.reason}): ${FILE_NAMES[s.file]}: ${s.line}`);
+      }
       const section = (file: HotFile) => {
-        const text = body(file, serializeFile(current[file]));
+        const text = body(file, serializeFile(shown[file]));
         return `## ${FILE_NAMES[file]} ${usageText(usageOf(ctx, file))}\n${text || "(empty)"}`;
       };
       return [
@@ -214,7 +226,7 @@ export function createMemoryPlugin(): IvyPlugin {
     },
 
     contextFor({ now }) {
-      const due = dueTodos(store().read(), localDate(now));
+      const due = dueTodos(screen(store().read()).files, localDate(now));
       return due.length ? due.map((d) => `Due: ${d}`).join("\n") : null;
     },
 
@@ -225,7 +237,9 @@ export function createMemoryPlugin(): IvyPlugin {
         description: "Show memory usage and open todos, or search memory",
         run(args) {
           const ctx = context(store().read());
-          if (args.trim()) return searchText(find(ctx.files, { query: args, limit: 20 }));
+          if (args.trim()) {
+            return searchText(find(screen(ctx.files).files, { query: args, limit: 20 }));
+          }
           return overview(ctx, store());
         },
       },
@@ -279,8 +293,30 @@ function overview(ctx: Context, store: MemoryFiles): string {
   return [
     `USER.md ${usageText(usageOf(ctx, "user"))} · MEMORY.md ${usageText(usageOf(ctx, "memory"))} · ARCHIVE.md ${archived} entries`,
     todos.length ? `Open todos:\n${todos.map(todoLine).join("\n")}` : "No open todos.",
+    ...notedText(screen(ctx.files)),
     `Files: ${store.dir}`,
-  ].join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function notedText({ skipped, flagged }: { skipped: Noted[]; flagged: Noted[] }): string[] {
+  const list = (notes: Noted[], why: (n: Noted) => string) =>
+    notes.map((n) => `  ${FILE_NAMES[n.file]}: ${n.line}\n    (${why(n)})`).join("\n");
+  const out: string[] = [];
+  if (skipped.length) {
+    out.push(
+      `Left out of what the model sees (edit or delete these lines):\n${list(skipped, (n) => n.finding.reason)}`,
+    );
+  }
+  if (flagged.length) {
+    const why = (n: Noted) =>
+      n.finding.kind === "secret"
+        ? `${n.finding.reason}; it is sent to the model provider with every request`
+        : `${n.finding.reason}; kept, since you wrote it, but delete it if you didn't`;
+    out.push(`Worth a look:\n${list(flagged, why)}`);
+  }
+  return out;
 }
 
 /** YYYY-MM-DD in the machine's timezone. */

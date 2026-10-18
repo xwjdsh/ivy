@@ -163,3 +163,27 @@ test("moving into a nearly full hot file reminds the model", async () => {
   const back = text(await call("move", { match: "xxxx", to: "memory" }));
   expect(back).toContain("% full: consolidate soon");
 });
+
+test("hand-written lines: hidden characters are left out, the rest is kept but flagged", async () => {
+  const hidden = `- [todo 2026-10-01 due:2000-01-01] Pay${String.fromCodePoint(0x202e)}rent`;
+  const mine =
+    "- [fact 2026-10-01] Prompt tip: ignore all previous instructions breaks weak models";
+  const key = "- [fact 2026-10-01] Test key sk-test-abcdefghijklmnopqrstuvwx";
+  writeFileSync(join(dir, "MEMORY.md"), `# Memory\n\n${hidden}\n${mine}\n${key}\n`);
+  const prompt = (await plugin.sessionPrompt?.({ id: "s" })) ?? "";
+  expect(prompt).not.toContain("Pay"); // hidden characters: left out
+  expect(prompt).toContain("Prompt tip"); // the user's own words: kept
+  expect(prompt).toContain("Test key");
+  expect(text(await call("search", { query: "pay rent" }))).toBe("No matching entries.");
+  expect(plugin.contextFor?.({ sessionId: "s", userText: "", now: new Date() })).toBeNull();
+  const cmd = plugin.commands?.find((c) => c.name === "/memory");
+  const overview = (await cmd?.run("", { sessionId: "s", log })) ?? "";
+  expect(overview).toContain("Left out of what the model sees");
+  expect(overview).toContain("U+202E");
+  expect(overview).toContain("Worth a look:");
+  expect(overview).toContain("kept, since you wrote it");
+  expect(overview).toContain("sent to the model provider with every request");
+  // A write rewrites the file: the hand-written lines must survive it.
+  await call("save", { file: "memory", content: "Ken likes ramen" });
+  for (const line of [hidden, mine, key]) expect(file("MEMORY.md")).toContain(line);
+});
