@@ -91,6 +91,9 @@ async function runCase(c: EvalCase, home: string): Promise<string[]> {
     if (step.clearMemory) {
       for (const f of FILES) writeFileSync(join(home, "data", "memory", f), "");
     }
+    for (const [name, text] of Object.entries(step.files ?? {})) {
+      writeFileSync(join(home, "data", "memory", name), text);
+    }
     if (!session || !step.sameSession) {
       session = Session.create(ivy.paths.sessions, ivy.agent.model);
       await ivy.systemPrompt.start(session.id);

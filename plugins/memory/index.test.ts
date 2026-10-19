@@ -227,3 +227,43 @@ test("tags come in as one string, split on commas (any width), 、 and #", () =>
   ]);
   expect(tagList(undefined)).toBeUndefined();
 });
+
+test("changes to the hot files during a session reach the turn's context", async () => {
+  writeFileSync(
+    join(dir, "MEMORY.md"),
+    "# Memory\n\n- [fact 2026-10-01] Mei likes sushi\n- [fact 2026-10-01] Ken likes ramen\n",
+  );
+  await plugin.sessionPrompt?.({ id: "s1" });
+  const turn = (sessionId = "s1") =>
+    plugin.contextFor?.({ sessionId, userText: "", now: new Date() });
+  expect(turn()).toBeNull(); // nothing changed
+
+  // By hand (or another session): both the new and the removed line are reported.
+  writeFileSync(
+    join(dir, "MEMORY.md"),
+    "# Memory\n\n- [fact 2026-10-01] Mei likes sushi\n- [fact 2026-10-19] Ken likes udon\n",
+  );
+  expect(turn()).toBe(
+    "MEMORY.md changed since this session started:\n+ - [fact 2026-10-19] Ken likes udon\n- - [fact 2026-10-01] Ken likes ramen",
+  );
+  // By Ivy itself: shown too, so the context always matches the files.
+  await call("save", { file: "user", content: "Prefers short answers" });
+  expect(turn()).toContain(
+    `USER.md changed since this session started:\n+ - [${today}] Prefers short answers`,
+  );
+  // A session that started later has its own snapshot.
+  await plugin.sessionPrompt?.({ id: "s2" });
+  expect(turn("s2")).toBeNull();
+});
+
+test("many changes are cut short with a pointer to search", async () => {
+  await plugin.sessionPrompt?.({ id: "s" });
+  writeFileSync(
+    join(dir, "MEMORY.md"),
+    `# Memory\n\n${Array.from({ length: 30 }, (_, i) => `- [fact 2026-10-19] Fact ${i}`).join("\n")}\n`,
+  );
+  const ctx = (await plugin.contextFor?.({ sessionId: "s", userText: "", now: new Date() })) ?? "";
+  expect(ctx.split("\n").filter((l) => l.startsWith("+ ")).length).toBe(20);
+  // 30 added entries, plus the default header's description line that this file lacks.
+  expect(ctx).toContain("(11 more changes; search memory for the current state)");
+});

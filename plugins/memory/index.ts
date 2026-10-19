@@ -52,6 +52,8 @@ const configSchema = z.strictObject({
 });
 
 export function createMemoryPlugin(): IvyPlugin {
+  /** Per session: the hot files' lines as the session prompt showed them. */
+  const snapshots = new Map<string, Record<HotFile, Set<string>>>();
   let state:
     | { files: MemoryFiles; limits: Limits; log: Logger; history: ConversationHistory }
     | undefined;
@@ -230,7 +232,7 @@ export function createMemoryPlugin(): IvyPlugin {
     ],
 
     // Both hot files, frozen for the session. Rules that need no judgment run first.
-    async sessionPrompt() {
+    async sessionPrompt({ id }) {
       const { current, moved } = await store().change((f) => {
         const r = tidy(context(f));
         return r.moved.length
@@ -244,6 +246,8 @@ export function createMemoryPlugin(): IvyPlugin {
       for (const s of skipped) {
         ready().log.warn(`left out (${s.finding.reason}): ${FILE_NAMES[s.file]}: ${s.line}`);
       }
+      // What the prompt holds, to tell the model later in this session what changed since.
+      snapshots.set(id, { user: lineSet(shown.user), memory: lineSet(shown.memory) });
       const section = (file: HotFile) => {
         const text = body(file, serializeFile(shown[file]));
         return `## ${FILE_NAMES[file]} ${usageText(usageOf(ctx, file))}\n${text || "(empty)"}`;
@@ -260,12 +264,19 @@ export function createMemoryPlugin(): IvyPlugin {
       ].join("\n");
     },
 
-    contextFor({ now }) {
-      const due = dueTodos(screen(store().read()).files, localDate(now));
+    contextFor({ sessionId, now }) {
+      const current = screen(store().read()).files;
+      const parts: string[] = [];
+      const due = dueTodos(current, localDate(now));
       // Phrased as a task: a reminder only helps if the model actually says it.
-      return due.length
-        ? `Todos due (mention them to the user once in this conversation, briefly, whatever the question):\n${due.map((d) => `- ${d}`).join("\n")}`
-        : null;
+      if (due.length) {
+        parts.push(
+          `Todos due (mention them to the user once in this conversation, briefly, whatever the question):\n${due.map((d) => `- ${d}`).join("\n")}`,
+        );
+      }
+      const snapshot = snapshots.get(sessionId);
+      if (snapshot) parts.push(...changesSince(snapshot, current));
+      return parts.length ? parts.join("\n") : null;
     },
 
     commands: [
@@ -340,6 +351,40 @@ function overview(ctx: Context, store: MemoryFiles): string {
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+/** Hot-file lines in the prompt, to compare later: entries and hand-written lines, not blanks. */
+function lineSet(lines: Line[]): Set<string> {
+  return new Set(lines.map((l) => l.raw.trimEnd()).filter((l) => l.trim() !== ""));
+}
+
+/** At most this many changed lines per turn; beyond that the model is told to search. */
+const MAX_CHANGES = 20;
+
+/**
+ * Lines added to or removed from a hot file since the session prompt was built: by Ivy in
+ * this session, by hand, or by another session. The prompt keeps its snapshot (the cache
+ * holds); the turn's context carries the difference, so the model never works from stale
+ * memory and needn't search to check.
+ */
+function changesSince(snapshot: Record<HotFile, Set<string>>, current: Files): string[] {
+  const out: string[] = [];
+  for (const file of ["user", "memory"] as const) {
+    const now = lineSet(current[file]);
+    const before = snapshot[file];
+    const changes = [
+      ...[...now].filter((l) => !before.has(l)).map((l) => `+ ${l}`),
+      ...[...before].filter((l) => !now.has(l)).map((l) => `- ${l}`),
+    ];
+    if (changes.length === 0) continue;
+    const shown = changes.slice(0, MAX_CHANGES);
+    const more =
+      changes.length > shown.length
+        ? `\n(${changes.length - shown.length} more changes; search memory for the current state)`
+        : "";
+    out.push(`${FILE_NAMES[file]} changed since this session started:\n${shown.join("\n")}${more}`);
+  }
+  return out;
 }
 
 /** The archive isn't in the prompt; say it exists and what it holds, so the model looks there. */

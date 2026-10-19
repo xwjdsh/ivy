@@ -419,7 +419,7 @@ Memory is what makes Ivy *personal*, so it gets its own design. v3 follows Herme
 - **Usage is visible to the model:** each hot file is injected under a header with its size, e.g. `## MEMORY.md (5,310 / 8,000 chars)`, and every write that adds to or changes a hot file returns its current usage. The rules ask the model to consolidate from 80% on, so a failed write is the exception and tidying doesn't land in the middle of urgent work.
 - **Lowering a limit truncates nothing:** the file is still injected whole, the next write fails until it is consolidated, and `/memory` shows it as over the limit.
 - **The archive is named in the prompt:** after the hot files, a line gives its entry count (and how many are earlier versions of changed facts) and says to search it for anything about the past, which models otherwise forget.
-- **Frozen per session:** both hot files are read when a session starts (startup, `/new`, `/resume`) through the plugin's `sessionPrompt`, so hand edits apply after `/new`. Writes reach disk at once and the model knows what it just wrote (and `memory__search` reads the files as they are now), but the system prompt only changes at the next session, which keeps the cached prefix stable.
+- **Frozen per session:** both hot files are read when a session starts (startup, `/new`, `/resume`) through the plugin's `sessionPrompt`, so hand edits apply after `/new`. Writes reach disk at once and the model knows what it just wrote (and `memory__search` reads the files as they are now), but the system prompt only changes at the next session, which keeps the cached prefix stable. When a hot file changes during the session (Ivy's own writes, a hand edit, another session), each turn's context lists the added and removed lines since the snapshot, so the model works from current memory without searching and the cached prompt stays as it is.
 
 #### Storage
 
@@ -486,7 +486,7 @@ Moving between hot and cold deletes nothing (the archive stays searchable), so t
 
 #### Per-turn context
 
-`contextFor` lists todos in `MEMORY.md` that are due today or overdue (a few at most), with their time (`- Dentist appointment (today at 15:00)`, `- Taxes (overdue since 2026-10-01)`), and asks the model to mention them once in the conversation, briefly, whatever the question: without that, models saw the line and said nothing. Nothing otherwise.
+`contextFor` lists todos in `MEMORY.md` that are due today or overdue (a few at most), with their time (`- Dentist appointment (today at 15:00)`, `- Taxes (overdue since 2026-10-01)`), and asks the model to mention them once in the conversation, briefly, whatever the question: without that, models saw the line and said nothing. Nothing otherwise. It also carries changes to the hot files since the session started (above), cut short past a limit with a pointer to search.
 
 #### Search
 

@@ -179,4 +179,20 @@ export default defineEvals([
       },
     ],
   },
+  {
+    name: "hand-edit-mid-session",
+    about:
+      "A hot file edited by hand during a session: the turn's context carries the change, so the model answers from the current file, not the session's snapshot.",
+    files: { "MEMORY.md": "# Memory\n\n- [todo 2026-10-01 due:2099-01-01] 看牙医\n" },
+    steps: [
+      { say: "我有哪些待办？", expect: { answer: "牙医" } },
+      {
+        say: "我现在有哪些待办？",
+        sameSession: true,
+        files: { "MEMORY.md": "# Memory\n\n- [todo 2026-10-01 due:2099-01-01] 交周报\n" },
+        // Mentioning that the old todo is gone is fine; the new one must be there.
+        expect: { answer: "周报" },
+      },
+    ],
+  },
 ]);

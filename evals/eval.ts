@@ -32,6 +32,8 @@ export interface Step {
   sameSession?: boolean;
   /** Empty the memory files first: what was said then lives only in past sessions. */
   clearMemory?: boolean;
+  /** Memory files written before this step, as a user editing them by hand mid-session. */
+  files?: Partial<Record<MemoryFile, string>>;
   expect?: Expect;
 }
 
