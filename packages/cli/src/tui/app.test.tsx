@@ -85,12 +85,22 @@ const writeTool = definePlugin({
 
 const tick = (ms = 30) => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * Lets React run the effects of the last render. Ink subscribes `useInput` handlers in effects,
+ * which run after the frame is drawn: a key sent the moment a prompt shows up would still reach
+ * the input box. React's scheduler runs them on setImmediate, so a few turns of it are enough.
+ */
+async function settle(): Promise<void> {
+  for (let i = 0; i < 3; i++) await new Promise((r) => setImmediate(r));
+}
+
 /** Retry an assertion until it passes (or time runs out), instead of guessing a fixed wait. */
-async function eventually(check: () => void, timeoutMs = 1000): Promise<void> {
+async function eventually(check: () => void, timeoutMs = 3000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     try {
       check();
+      await settle();
       return;
     } catch (err) {
       if (Date.now() > deadline) throw err;
@@ -154,14 +164,20 @@ async function start(
     ui.stdin.write(s);
     await tick();
   };
-  return { ui, model, session, screen, type, frame: () => ui.lastFrame() ?? "" };
+  const frame = () => ui.lastFrame() ?? "";
+  // Enter sets the turn running synchronously, so right after it this waits for the turn's end;
+  // keys typed before then are lost (Enter is ignored while a turn runs).
+  const idle = () => eventually(() => expect(frame()).not.toContain("esc to interrupt"));
+  return { ui, model, session, screen, type, frame, idle };
 }
 
 test("sends a message and renders the streamed Markdown answer", async () => {
-  const { type, frame } = await start([{ stop: "end_turn", content: [text("Hello **there**")] }]);
+  const { type, frame, idle } = await start([
+    { stop: "end_turn", content: [text("Hello **there**")] },
+  ]);
   await type("hi");
   await type(ENTER);
-  await tick(50);
+  await idle();
   expect(frame()).toContain("> hi");
   expect(frame()).toContain("Hello there");
   expect(frame()).not.toContain("**");
@@ -171,7 +187,7 @@ test("sends a message and renders the streamed Markdown answer", async () => {
 });
 
 test("risky tool asks once; 'for this session' skips later prompts", async () => {
-  const { type, frame, model } = await start([
+  const { type, frame, idle, model } = await start([
     { stop: "tool_use", content: [toolUse("a", "t__save")] },
     { stop: "end_turn", content: [text("done one")] },
     { stop: "tool_use", content: [toolUse("b", "t__save")] },
@@ -181,25 +197,28 @@ test("risky tool asks once; 'for this session' skips later prompts", async () =>
   await type(ENTER);
   await eventually(() => expect(frame()).toContain("Allow t__save"));
   await type("s"); // yes, for this session
-  await eventually(() => expect(frame()).toContain("done one"));
+  await idle();
+  expect(frame()).toContain("done one");
   expect(frame()).toContain("✓ t__save");
 
   await type("again");
   await type(ENTER);
-  await eventually(() => expect(frame()).toContain("done two"));
+  await idle();
+  expect(frame()).toContain("done two");
   expect(frame().match(/Allow t__save/g)?.length ?? 0).toBe(0);
   expect(model.requests).toHaveLength(4);
 });
 
 test("denying a tool reports it and continues", async () => {
-  const { type, frame } = await start([
+  const { type, frame, idle } = await start([
     { stop: "tool_use", content: [toolUse("a", "t__save")] },
     { stop: "end_turn", content: [text("ok, not saving")] },
   ]);
   await type("save it");
   await type(ENTER);
+  await eventually(() => expect(frame()).toContain("Allow t__save"));
   await type("n");
-  await tick(50);
+  await idle();
   expect(frame()).toContain("The user denied this tool call.");
   expect(frame()).toContain("ok, not saving");
 });
@@ -209,12 +228,12 @@ test("Ctrl-C interrupts a running turn", async () => {
     new Promise<never>((_, reject) =>
       signal.addEventListener("abort", () => reject(new Error("aborted"))),
     );
-  const { type, frame } = await start([hang]);
+  const { type, frame, idle } = await start([hang]);
   await type("long task");
   await type(ENTER);
   expect(frame()).toContain("Thinking");
   await type(CTRL_C);
-  await tick(50);
+  await idle();
   expect(frame()).toContain("Interrupted");
   expect(frame()).not.toContain("Thinking");
 });
@@ -239,31 +258,33 @@ test("slash commands: completion, /help and /new", async () => {
 });
 
 test("multi-line input with a trailing backslash", async () => {
-  const { type, frame, session } = await start([{ stop: "end_turn", content: [text("got it")] }]);
+  const { type, frame, idle, session } = await start([
+    { stop: "end_turn", content: [text("got it")] },
+  ]);
   await type("line one\\");
   await type(ENTER);
   await type("line two");
   expect(frame()).toContain("line one");
   expect(frame()).toContain("line two");
   await type(ENTER);
-  await tick(50);
+  await idle();
   expect(session.messages[0]).toEqual({ role: "user", content: "line one\nline two" });
 });
 
 test("text and Enter arriving in one chunk still submits", async () => {
-  const { type, session } = await start([{ stop: "end_turn", content: [text("ok")] }]);
+  const { type, idle, session } = await start([{ stop: "end_turn", content: [text("ok")] }]);
   await type("quick\r");
-  await tick(50);
+  await idle();
   expect(session.messages[0]).toEqual({ role: "user", content: "quick" });
 });
 
 test("Ctrl+J inserts a newline", async () => {
-  const { type, session } = await start([{ stop: "end_turn", content: [text("ok")] }]);
+  const { type, idle, session } = await start([{ stop: "end_turn", content: [text("ok")] }]);
   await type("a");
   await type(CTRL_J);
   await type("b");
   await type(ENTER);
-  await tick(50);
+  await idle();
   expect(session.messages[0]).toEqual({ role: "user", content: "a\nb" });
 });
 
@@ -277,13 +298,14 @@ test("Ctrl-C clears typed text instead of arming exit", async () => {
 });
 
 test("tool calls are one line; Ctrl+O shows the output and redraws", async () => {
-  const { type, frame, screen } = await start([
+  const { type, frame, idle, screen } = await start([
     { stop: "tool_use", content: [toolUse("a", "t__lines")] },
     { stop: "end_turn", content: [text("done")] },
   ]);
   await type("show lines");
   await type(ENTER);
-  await eventually(() => expect(frame()).toContain("done"));
+  await idle();
+  expect(frame()).toContain("done");
   expect(frame()).toContain("✓ t__lines");
   expect(frame()).not.toContain("l1");
   const clears = screen.clears;
@@ -306,20 +328,19 @@ test("a failed tool shows ✗ and the first line of the error", async () => {
 });
 
 test("/resume clears the screen and redraws that session's history", async () => {
-  const { type, frame, screen, session } = await start([
+  const { type, frame, idle, screen, session } = await start([
     { stop: "end_turn", content: [text("first answer")] },
   ]);
   await type("first question");
   await type(ENTER);
-  await tick(50);
+  await idle();
   await type("/new");
   await type(ENTER);
   expect(screen.clears).toBe(1);
   await type(`/resume ${session.id}`);
   await type(ENTER);
-  await tick(50);
+  await eventually(() => expect(frame()).toContain(`Resumed ${session.id}`));
   expect(screen.clears).toBe(2);
-  expect(frame()).toContain(`Resumed ${session.id}`);
   expect(frame()).toContain("first answer");
 });
 
@@ -388,15 +409,14 @@ test("/resume without an id opens a picker; Enter resumes, Esc cancels", async (
   await type(DOWN);
   expect(frame()).toMatch(/❯ just now\s+older question/);
   await type(ENTER);
-  await tick(50);
+  await eventually(() => expect(frame()).toContain(`Resumed ${older.id}`));
   expect(screen.clears).toBe(1);
-  expect(frame()).toContain(`Resumed ${older.id}`);
   expect(frame()).toContain("older answer");
   expect(frame()).not.toContain("Resume a session");
 });
 
 test("/model opens a picker; choosing switches the model for later turns", async () => {
-  const { type, frame, model } = await start([{ stop: "end_turn", content: [text("ok")] }]);
+  const { type, frame, idle, model } = await start([{ stop: "end_turn", content: [text("ok")] }]);
   await type("/model");
   await type(ENTER);
   expect(frame()).toContain("Switch model (saved as default)");
@@ -410,7 +430,7 @@ test("/model opens a picker; choosing switches the model for later turns", async
   expect(frame()).toContain("anthropic/claude-sonnet-5-5 · medium");
   await type("hi");
   await type(ENTER);
-  await tick(50);
+  await idle();
   expect(model.requests[0]?.model).toBe("claude-sonnet-5-5");
 });
 
@@ -430,7 +450,7 @@ const OPEN =
 
 test("a provider without `models` offers what its endpoint lists; typing filters", async () => {
   const listed = Array.from({ length: 15 }, (_, i) => `a/m${i}`).concat("a/one", "b/special");
-  const { type, frame, model } = await start(
+  const { type, frame, idle, model } = await start(
     [{ stop: "end_turn", content: [text("ok")] }],
     OPEN,
     [],
@@ -438,7 +458,7 @@ test("a provider without `models` offers what its endpoint lists; typing filters
   );
   await type("/model");
   await type(ENTER);
-  expect(frame()).toContain("Switch model (saved as default)");
+  await eventually(() => expect(frame()).toContain("Switch model (saved as default)"));
   expect(frame()).toContain("❯ p/a/one  (current)");
   expect(frame()).toMatch(/↑ \d+ more/); // a long list scrolls
   await type("spec");
@@ -449,7 +469,7 @@ test("a provider without `models` offers what its endpoint lists; typing filters
   expect(frame()).toContain("Model: p/b/special (saved to config.toml)");
   await type("hi");
   await type(ENTER);
-  await tick(50);
+  await idle();
   expect(model.requests[0]?.model).toBe("b/special");
   // The id alone works too when it's unambiguous (here the id is "a/m3").
   await type("/model a/m3");
@@ -464,7 +484,9 @@ test("an endpoint that can't list its models: a warning, and /model says why", a
   await type("\x15");
   await type("/model");
   await type(ENTER);
-  expect(frame()).toContain("Couldn't list the models of p: this endpoint can't list its models");
+  await eventually(() =>
+    expect(frame()).toContain("Couldn't list the models of p: this endpoint can't list its models"),
+  );
   expect(frame()).toContain("Only one model is available (p/a/one)");
 });
 
@@ -511,8 +533,7 @@ test("plugin command shows in the / list and runs; its output is shown", async (
   await type("\x15"); // Ctrl+U
   await type("/note buy milk");
   await type(ENTER);
-  await tick(20);
-  expect(frame()).toContain("Saved: buy milk");
+  await eventually(() => expect(frame()).toContain("Saved: buy milk"));
 });
 
 test("a plugin command's log reaches the verbose view", async () => {
@@ -525,14 +546,14 @@ test("a plugin command's log reaches the verbose view", async () => {
 });
 
 test("plugin context reaches the model but isn't shown, live or after /resume", async () => {
-  const { type, frame, model, session } = await start(
+  const { type, frame, idle, model, session } = await start(
     [{ stop: "end_turn", content: [text("Tea it is.")] }],
     undefined,
     [notes],
   );
   await type("what should I drink?");
   await type(ENTER);
-  await tick(50);
+  await idle();
   const sent = JSON.stringify(model.requests[0]?.messages);
   expect(sent).toContain("<context>");
   expect(sent).toContain("the user likes tea");
@@ -543,7 +564,7 @@ test("plugin context reaches the model but isn't shown, live or after /resume", 
   await type(ENTER);
   await type(`/resume ${session.id}`);
   await type(ENTER);
-  await tick(50);
+  await eventually(() => expect(frame()).toContain(`Resumed ${session.id}`));
   expect(frame()).toContain("> what should I drink?");
   expect(frame()).not.toContain("likes tea");
 });
@@ -556,7 +577,7 @@ test("a plugin's session section is frozen for the session and re-read on /new",
     description: "",
     sessionPrompt: () => `Profile v${version}`,
   });
-  const { type, model } = await start(
+  const { type, idle, model } = await start(
     [
       { stop: "end_turn", content: [text("one")] },
       { stop: "end_turn", content: [text("two")] },
@@ -568,11 +589,13 @@ test("a plugin's session section is frozen for the session and re-read on /new",
   const system = (i: number) => JSON.stringify(model.requests[i]?.system);
   await type("hi");
   await type(ENTER);
-  await eventually(() => expect(model.requests).toHaveLength(1));
+  await idle();
+  expect(model.requests).toHaveLength(1);
   version = 2;
   await type("again");
   await type(ENTER);
-  await eventually(() => expect(model.requests).toHaveLength(2));
+  await idle();
+  expect(model.requests).toHaveLength(2);
   expect(system(0)).toContain("Profile v1");
   expect(system(1)).toBe(system(0)); // same bytes within a session
 
@@ -580,12 +603,13 @@ test("a plugin's session section is frozen for the session and re-read on /new",
   await type(ENTER);
   await type("fresh");
   await type(ENTER);
-  await eventually(() => expect(model.requests).toHaveLength(3));
+  await idle();
+  expect(model.requests).toHaveLength(3);
   expect(system(2)).toContain("Profile v2");
 });
 
 test("a disabled plugin contributes no command and no context", async () => {
-  const { type, frame, model } = await start(
+  const { type, frame, idle, model } = await start(
     [{ stop: "end_turn", content: [text("ok")] }],
     '[agent]\nmodel = "anthropic/claude-opus-5-5"\n[providers.anthropic]\napi_key = "k"\n[plugins.notes]\nenabled = false\n',
     [notes],
@@ -595,12 +619,12 @@ test("a disabled plugin contributes no command and no context", async () => {
   await type("\x15");
   await type("hi");
   await type(ENTER);
-  await tick(50);
+  await idle();
   expect(JSON.stringify(model.requests[0]?.messages)).not.toContain("<context>");
 });
 
 test("/effort opens a picker; the choice is used and saved to config.toml", async () => {
-  const { type, frame, model } = await start([{ stop: "end_turn", content: [text("ok")] }]);
+  const { type, frame, idle, model } = await start([{ stop: "end_turn", content: [text("ok")] }]);
   await type("/effort");
   await type(ENTER);
   expect(frame()).toContain("Switch effort (saved as default)");
@@ -612,7 +636,7 @@ test("/effort opens a picker; the choice is used and saved to config.toml", asyn
   expect(readFileSync(join(home, "config.toml"), "utf8")).toContain('effort = "high"');
   await type("hi");
   await type(ENTER);
-  await tick(50);
+  await idle();
   expect(model.requests[0]?.output_config).toEqual({ effort: "high" });
 });
 
@@ -638,7 +662,7 @@ test("/effort on a model without effort support says it isn't sent", async () =>
 });
 
 test("/verbose toggles details: request/step lines, the hidden context, full tool input", async () => {
-  const { type, frame } = await start(
+  const { type, frame, idle } = await start(
     [
       { stop: "tool_use", content: [toolUse("a", "t__lines", { verbose: true })] },
       { stop: "end_turn", content: [text("done")] },
@@ -653,7 +677,7 @@ test("/verbose toggles details: request/step lines, the hidden context, full too
   expect(frame()).toMatch(/· verbose$/m);
   await type("show lines");
   await type(ENTER);
-  await tick(50);
+  await idle();
   const f = frame();
   expect(f).toContain("context:\n<context>\n## notes\nNote: the user likes tea.");
   expect(f).toContain("step 1 · 2 msgs · context system · tool_use"); // prompt + system context message
@@ -691,7 +715,8 @@ test("'Always' is saved to config.toml; a restart doesn't ask again", async () =
   await first.type(ENTER);
   await eventually(() => expect(first.frame()).toContain("Always (saved to config.toml)"));
   await first.type("a");
-  await eventually(() => expect(first.frame()).toContain("saved it"));
+  await first.idle();
+  expect(first.frame()).toContain("saved it");
   expect(readFileSync(join(home, "config.toml"), "utf8")).toContain(
     '[permissions]\nallow = ["t__save"]',
   );
@@ -700,7 +725,8 @@ test("'Always' is saved to config.toml; a restart doesn't ask again", async () =
   const second = await start(script());
   await second.type("save again");
   await second.type(ENTER);
-  await eventually(() => expect(second.frame()).toContain("saved it"));
+  await second.idle();
+  expect(second.frame()).toContain("saved it");
   expect(second.frame()).not.toContain("Allow t__save");
 });
 
