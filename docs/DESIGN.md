@@ -245,7 +245,7 @@ An interface turns user I/O into kernel calls. All interfaces share the same ker
   - Finished text moves into Ink's `<Static>` (printed once, kept in scrollback) and the live area stays shorter than the screen, so redraws don't flicker; a full redraw remounts `<Static>` (as Gemini CLI does). Tool calls are one line each; their output shows with Ctrl+O or in the verbose view.
   - One-shot mode (`ivy "question"`) stays plain text for scripts and pipes.
 - **M4 — Daemon** (`ivy daemon`): runs scheduled jobs and sends results as macOS notifications or files.
-  - **It owns sessions; interfaces are clients** over one local protocol (OpenClaw's gateway, §10.1, is the reference), so adding an interface never touches plugins. The CLI becomes one of them.
+  - **It owns sessions; interfaces are clients** over one local protocol (OpenClaw's gateway, §10.1, is the reference; OpenCode, on the same stack, already runs its TUI as a client of a local HTTP server with an OpenAPI spec, a generated SDK and SSE events, which is the first thing to try), so adding an interface never touches plugins. The CLI becomes one of them.
   - **A signed macOS app of its own** (a small menu-bar shell): macOS grants screen recording, accessibility and automation to the responsible app, so run from a terminal they would go to the terminal and everything run in it; as its own app, Ivy alone gets them. The shell also gives quick capture and notifications, and its settings edit `config.toml` in place (files stay the truth); API keys can move to the Keychain.
 - **Later (maybe)** — Chat-app bot for phone access; a local web UI if the terminal falls short. Both daemon clients.
 
@@ -300,7 +300,8 @@ export interface IvyPlugin {
   contextFor?(turn: TurnInfo): Promise<string | null> | string | null;
   sessionPrompt?(session: { id: string }): Promise<string | null> | string | null;  // frozen per session
   commands?: CommandDef[];
-  // Planned: jobs (M4), lifecycle hooks
+  // Planned: jobs (M4), lifecycle hooks: first "before compaction" (memory saves what
+  // is worth keeping) and "session idle" (M4 notifications), as OpenCode's plugins have
 }
 
 export interface ToolDef<I = unknown> {
@@ -582,6 +583,8 @@ Two plugins, so each can be turned off and given rules on its own (`deny = ["she
 - **Results and writes:** the result is a short diff (also shown in the permission prompt); writes are atomic and keep line endings, BOM, final newline and file mode; allowed directories are checked on real paths (symlinks resolved).
 
 **Defaults:** reads run; writes and edits ask, showing the diff (*Always* available); commands ask every time in M2, and from M3 sandboxed ones run while escalations ask every time.
+
+**Two guards from OpenCode:** `fs` refuses secret files even inside allowed directories (`.env` and `.env.*` but not `.env.example`, keys, credentials), from M2, before the sandbox does it for commands; and the agent loop notices a model repeating the same call with the same input and asks the user before going on, where `max_steps` alone only stops it late.
 
 ## 9. Project Layout
 
