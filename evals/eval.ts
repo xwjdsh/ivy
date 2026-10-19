@@ -30,6 +30,8 @@ export interface Step {
   say: string;
   /** Continue the previous step's session instead of starting a new one. */
   sameSession?: boolean;
+  /** Empty the memory files first: what was said then lives only in past sessions. */
+  clearMemory?: boolean;
   expect?: Expect;
 }
 

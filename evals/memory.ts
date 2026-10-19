@@ -166,4 +166,17 @@ export default defineEvals([
       },
     ],
   },
+  {
+    name: "name-from-past-session",
+    about:
+      "Asked something it doesn't have in memory, the model looks in past conversations before saying it doesn't know (a real miss: the memory files had been cleared and the model just said it didn't know).",
+    steps: [
+      { say: "我叫 Wen。", expect: { called: ["memory__save"] } },
+      {
+        say: "你知道我的名字吗？",
+        clearMemory: true,
+        expect: { called: ["memory__session_search"], answer: /wen/i },
+      },
+    ],
+  },
 ]);

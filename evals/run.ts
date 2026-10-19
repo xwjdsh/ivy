@@ -12,10 +12,11 @@ import { createIvy, errorMessage, type Ivy, resolvePaths, Session } from "@ivy/k
 import core from "@ivy/plugin-core";
 import { createMemoryPlugin } from "@ivy/plugin-memory";
 import { TUI_INSTRUCTIONS } from "../packages/cli/src/interface.ts";
+import basics from "./basics.ts";
 import type { EvalCase, Expect, MemoryFile, Pattern, StepRun } from "./eval.ts";
 import memory from "./memory.ts";
 
-const SUITES: Record<string, EvalCase[]> = { memory };
+const SUITES: Record<string, EvalCase[]> = { basics, memory };
 const FILES: MemoryFile[] = ["USER.md", "MEMORY.md", "ARCHIVE.md"];
 
 const { values, positionals } = parseArgs({
@@ -87,6 +88,9 @@ async function runCase(c: EvalCase, home: string): Promise<string[]> {
   const failures: string[] = [];
   let session: Session | undefined;
   for (const [i, step] of c.steps.entries()) {
+    if (step.clearMemory) {
+      for (const f of FILES) writeFileSync(join(home, "data", "memory", f), "");
+    }
     if (!session || !step.sameSession) {
       session = Session.create(ivy.paths.sessions, ivy.agent.model);
       await ivy.systemPrompt.start(session.id);
