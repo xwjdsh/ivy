@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { assertNoCommandClash, availableCommands } from "./commands.ts";
 
 test("plugin commands go after the built-ins but before /help and /exit", () => {
-  const names = availableCommands(2, [{ name: "/note", description: "" }]).map((c) => c.name);
+  const names = availableCommands(true, [{ name: "/note", description: "" }]).map((c) => c.name);
   expect(names).toEqual([
     "/new",
     "/clear",
@@ -16,7 +16,7 @@ test("plugin commands go after the built-ins but before /help and /exit", () => 
     "/help",
     "/exit",
   ]);
-  expect(availableCommands(1).map((c) => c.name)).not.toContain("/model");
+  expect(availableCommands(false).map((c) => c.name)).not.toContain("/model");
 });
 
 test("a plugin command may not take a built-in name", () => {

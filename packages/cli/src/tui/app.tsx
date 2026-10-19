@@ -1,11 +1,11 @@
 import {
   type AgentEvent,
+  canSwitchModel,
   createLogger,
   EFFORT_LEVELS,
   type Effort,
   errorMessage,
   type Ivy,
-  modelChoices,
   type PermissionChoice,
   type RequestInfo,
   Session,
@@ -35,7 +35,7 @@ import {
 import { formatCall, statusReport } from "../verbose-format.ts";
 import { Input } from "./input.tsx";
 import { historyItems, type Item, itemId } from "./items.ts";
-import { Picker } from "./picker.tsx";
+import { Picker, pickerHeight } from "./picker.tsx";
 import { SessionPicker } from "./session-picker.tsx";
 import {
   ItemView,
@@ -323,13 +323,15 @@ export function App({
 
   // At most one dialog at a time: the session, model or effort picker.
   const [dialog, setDialog] = useState<
-    { kind: "sessions"; sessions: SessionSummary[] } | { kind: "model" } | { kind: "effort" } | null
+    | { kind: "sessions"; sessions: SessionSummary[] }
+    | { kind: "model"; models: string[] }
+    | { kind: "effort" }
+    | null
   >(null);
   const closeDialog = () => setDialog(null);
 
-  const models = modelChoices(ivy.config, ivy.agent.model);
   const commands = availableCommands(
-    models.length,
+    canSwitchModel(ivy.config),
     ivy.plugins
       .commands()
       .map(({ def }) => ({ name: def.name, args: def.args, description: def.description })),
@@ -396,21 +398,26 @@ export function App({
         return;
       case "/model": {
         const name = args[0];
-        // The provider can be left out when only one provider has a model by that id.
-        const byId = models.filter((m) => m.slice(m.indexOf("/") + 1) === name);
-        const pick = name && models.includes(name) ? name : byId.length === 1 ? byId[0] : undefined;
-        if (models.length < 2) {
-          info(
-            `Only one model is configured (${model}). Add more to \`models\` under a [providers.*] section to switch.`,
-            "warn",
-          );
-        } else if (!name) {
-          setDialog({ kind: "model" });
-        } else if (pick) {
-          switchModel(pick);
-        } else {
-          info(`Unknown model ${name}. Available: ${models.join(", ")}`, "error");
-        }
+        // Providers without a `models` limit are asked what they offer (once per run).
+        void ivy.modelChoices().then(({ models, errors }) => {
+          for (const e of errors) info(`Couldn't list the models of ${e}`, "warn");
+          // The provider can be left out when only one provider has a model by that id.
+          const byId = models.filter((m) => m.slice(m.indexOf("/") + 1) === name);
+          const pick =
+            name && models.includes(name) ? name : byId.length === 1 ? byId[0] : undefined;
+          if (models.length < 2) {
+            info(
+              `Only one model is available (${model}). List more under \`models\` in a [providers.*] section, or leave \`models\` out to offer all the endpoint has.`,
+              "warn",
+            );
+          } else if (!name) {
+            setDialog({ kind: "model", models });
+          } else if (pick) {
+            switchModel(pick);
+          } else {
+            info(`Unknown model ${name}. /model lists the available ones.`, "error");
+          }
+        });
         return;
       }
       case "/effort": {
@@ -520,8 +527,8 @@ export function App({
     6 +
     pendingTools.length * 2 +
     (permission ? permissionPromptHeight(permission.call) : 0) +
-    (dialog?.kind === "sessions" ? dialog.sessions.length + 4 : 0) +
-    (dialog?.kind === "model" ? models.length + 4 : 0) +
+    (dialog?.kind === "sessions" ? pickerHeight(dialog.sessions.length) : 0) +
+    (dialog?.kind === "model" ? pickerHeight(dialog.models.length, true) : 0) +
     (dialog?.kind === "effort" ? EFFORT_LEVELS.length + 4 : 0) +
     completions.length;
   const maxLiveLines = Math.max(3, rows - reserved);
@@ -565,10 +572,11 @@ export function App({
       {dialog?.kind === "model" && (
         <Picker
           title="Switch model (saved as default)"
-          items={models}
+          items={dialog.models}
           itemKey={(name) => name}
-          initialIndex={Math.max(0, models.indexOf(model))}
+          initialIndex={Math.max(0, dialog.models.indexOf(model))}
           renderItem={(name) => (name === model ? `${name}  (current)` : name)}
+          filterText={(name) => name}
           onPick={(name) => {
             closeDialog();
             switchModel(name);

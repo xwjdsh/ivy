@@ -10,7 +10,8 @@ max_steps = 25                    # model calls per turn
 type = "anthropic"                # API kind; only "anthropic" for now
 api_key = ""                      # required
 base_url = "https://api.anthropic.com"
-models = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-4-5"]  # optional; what /model offers
+# models = ["claude-opus-5-5", "claude-sonnet-5-5"]  # optional: limit what /model offers;
+                                  # left out, /model offers everything the endpoint lists
 # refusal_fallback = false        # optional, default true: if the model declines, retry on a fallback model
 
 # A second provider, e.g. a proxy. Its models are named the same way:
@@ -18,7 +19,7 @@ models = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-4-5"]  # optiona
 # [providers.proxy]
 # api_key = "..."
 # base_url = "https://my-proxy.example.com"
-# models = ["vendor/model-a"]
+# models = ["vendor/model-a"]   # optional, as above
 
 [generation]
 effort = "medium"                 # low | medium | high | xhigh | max

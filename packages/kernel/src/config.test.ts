@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadConfig, modelChoices, resolvePaths } from "./config.ts";
+import { canSwitchModel, loadConfig, modelChoices, resolvePaths } from "./config.ts";
 
 const tempPaths = () => resolvePaths(mkdtempSync(join(tmpdir(), "ivy-cfg-")));
 
@@ -94,6 +94,17 @@ models = ["w/v"]
   );
   expect(modelChoices(config)).toEqual(["a/x", "a/y", "a/z", "b/w/v"]);
   expect(modelChoices(config, "a/z")).toEqual(["a/y", "a/z", "b/w/v"]);
+  // The upstream list only counts for a provider without its own `models`.
+  expect(modelChoices(config, "a/z", { a: ["q"], b: ["r"] })).toEqual(["a/y", "a/z", "b/w/v"]);
+});
+
+test("a provider without `models` offers what its endpoint lists", () => {
+  const config = loadConfig(
+    configWith('[agent]\nmodel = "a/x"\n[providers.a]\n[providers.b]\nmodels = ["v"]\n'),
+  );
+  expect(modelChoices(config)).toEqual(["a/x", "b/v"]);
+  expect(modelChoices(config, "a/x", { a: ["x", "y"] })).toEqual(["a/x", "a/y", "b/v"]);
+  expect(canSwitchModel(config)).toBe(true);
 });
 
 test("only supported provider types are accepted", () => {

@@ -5,6 +5,7 @@ import { Capabilities } from "./capabilities.ts";
 import {
   type Config,
   loadConfig,
+  modelChoices,
   type Paths,
   type ProviderConfig,
   resolvePaths,
@@ -22,6 +23,8 @@ export * from "./capabilities.ts";
 export * from "./config.ts";
 export * from "./config-edit.ts";
 export { type PromptPart, SystemPrompt } from "./context.ts";
+
+import { errorMessage } from "./log.ts";
 
 export { createLogger, errorMessage, type LogLevel, setLogLevel, setLogSink } from "./log.ts";
 export * from "./model.ts";
@@ -51,6 +54,11 @@ export interface Ivy {
   systemPrompt: SystemPrompt;
   capabilities: Capabilities;
   permissions: Permissions;
+  /**
+   * What /model offers (see `modelChoices` in config.ts). Endpoints are asked once per run;
+   * providers that couldn't be listed are named in `errors`.
+   */
+  modelChoices(): Promise<{ models: string[]; errors: string[] }>;
   /** Tracer for a session, or undefined when tracing is off. */
   tracer(sessionId: string): Tracer | undefined;
 }
@@ -94,6 +102,37 @@ export async function createIvy(opts: IvyOptions): Promise<Ivy> {
     systemPrompt: (sessionId) => systemPrompt.textFor(sessionId),
     confirm: opts.confirm,
   });
+  const upstream = new Map<string, Promise<string[]>>();
+  const listUpstream = (provider: ProviderConfig): Promise<string[]> => {
+    let list = upstream.get(provider.name);
+    if (!list) {
+      list = (async () => {
+        const client = clientFor(provider);
+        if (!client.listModels) throw new Error("this endpoint can't list its models");
+        return (await client.listModels()).map((m) => m.id);
+      })();
+      // A failure isn't kept: the next /model asks again.
+      list.catch(() => upstream.delete(provider.name));
+      upstream.set(provider.name, list);
+    }
+    return list;
+  };
+  const choices = async () => {
+    const lists: Record<string, string[]> = {};
+    const errors: string[] = [];
+    const open = Object.values(config.providers).filter((p) => p.models.length === 0);
+    await Promise.all(
+      open.map(async (p) => {
+        try {
+          lists[p.name] = await listUpstream(p);
+        } catch (err) {
+          errors.push(`${p.name}: ${errorMessage(err)}`);
+        }
+      }),
+    );
+    return { models: modelChoices(config, agent.model, lists), errors };
+  };
+
   const tracer = (sessionId: string) =>
     config.trace.enabled ? new Tracer(join(paths.traces, sessionId)) : undefined;
   return {
@@ -104,6 +143,7 @@ export async function createIvy(opts: IvyOptions): Promise<Ivy> {
     systemPrompt,
     capabilities,
     permissions,
+    modelChoices: choices,
     tracer,
   };
 }

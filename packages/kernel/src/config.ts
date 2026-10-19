@@ -21,7 +21,10 @@ const ProviderSchema = z.strictObject({
   /** Required to call the API. Environment variables are intentionally not used. */
   api_key: z.string().optional(),
   base_url: z.url().default("https://api.anthropic.com"),
-  /** Models /model can switch to on this provider (by id, without the provider prefix). */
+  /**
+   * Models /model offers on this provider (by id, without the provider prefix). Unset or
+   * empty: no limit, /model offers whatever the endpoint lists.
+   */
   models: z.array(z.string().min(1)).default([]),
   /**
    * Server-side refusal fallback where supported: if the model declines, Anthropic re-runs
@@ -158,10 +161,25 @@ export function resolveModel(providers: Record<string, ProviderConfig>, ref: str
   return { ref, provider, id };
 }
 
-/** What /model offers: every provider's `models`, and the current model if it isn't listed. */
-export function modelChoices(config: Config, current = config.model.ref): string[] {
+/**
+ * What /model offers: each provider's `models`, or for a provider without that limit, what
+ * its endpoint lists (`upstream`, by provider name); and the current model if it isn't
+ * among them.
+ */
+export function modelChoices(
+  config: Config,
+  current = config.model.ref,
+  upstream: Record<string, string[]> = {},
+): string[] {
   const listed = Object.values(config.providers).flatMap((p) =>
-    p.models.map((id) => `${p.name}/${id}`),
+    (p.models.length ? p.models : (upstream[p.name] ?? [])).map((id) => `${p.name}/${id}`),
   );
-  return listed.includes(current) ? listed : [current, ...listed];
+  const unique = [...new Set(listed)];
+  return unique.includes(current) ? unique : [current, ...unique];
+}
+
+/** Whether /model has anything to offer: a provider without a limit, or two models listed. */
+export function canSwitchModel(config: Config): boolean {
+  const providers = Object.values(config.providers);
+  return providers.some((p) => p.models.length === 0) || modelChoices(config).length > 1;
 }

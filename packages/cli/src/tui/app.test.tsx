@@ -25,7 +25,16 @@ const toolUse = (id: string, name: string, input: unknown = {}) =>
 
 class FakeModel implements ModelClient {
   readonly requests: ModelRequest[] = [];
-  constructor(private readonly script: Step[]) {}
+  listModels?: ModelClient["listModels"];
+  /** `listed`: what the endpoint lists (/model on a provider without `models`). */
+  constructor(
+    private readonly script: Step[],
+    listed?: string[],
+  ) {
+    if (listed) {
+      this.listModels = async () => listed.map((id) => ({ id }) as never);
+    }
+  }
   async stream(request: ModelRequest, handlers: { onText?(d: string): void }, signal: AbortSignal) {
     this.requests.push(request);
     const step = this.script.shift();
@@ -106,9 +115,14 @@ beforeEach(() => {
 });
 afterEach(() => cleanup?.());
 
-async function start(script: Step[], configToml?: string, extraPlugins: IvyPlugin[] = []) {
+async function start(
+  script: Step[],
+  configToml?: string,
+  extraPlugins: IvyPlugin[] = [],
+  listed?: string[],
+) {
   if (configToml) writeFileSync(join(home, "config.toml"), configToml);
-  const model = new FakeModel(script);
+  const model = new FakeModel(script, listed);
   const bridge: ConfirmBridge = { confirm: async () => "deny" };
   const ivy = await createIvy({
     plugins: [writeTool, ...extraPlugins],
@@ -407,15 +421,57 @@ test("/model <name> switches directly; unknown names are rejected", async () => 
   expect(frame()).toMatch(/anthropic\/claude-haiku-4-5 · \d{4}-/); // Haiku takes no effort setting
   await type("/model gpt-4");
   await type(ENTER);
-  expect(frame().replace(/\s+/g, " ")).toContain(
-    "Unknown model gpt-4. Available: anthropic/claude-opus-5-5, anthropic/claude-sonnet-5-5, anthropic/claude-haiku-4-5",
+  expect(frame()).toContain("Unknown model gpt-4. /model lists the available ones.");
+});
+
+// A proxy, so listing models doesn't also feed the official API's capability refresh.
+const OPEN =
+  '[agent]\nmodel = "p/a/one"\n[providers.p]\napi_key = "k"\nbase_url = "http://127.0.0.1:9"\n';
+
+test("a provider without `models` offers what its endpoint lists; typing filters", async () => {
+  const listed = Array.from({ length: 15 }, (_, i) => `a/m${i}`).concat("a/one", "b/special");
+  const { type, frame, model } = await start(
+    [{ stop: "end_turn", content: [text("ok")] }],
+    OPEN,
+    [],
+    listed,
   );
+  await type("/model");
+  await type(ENTER);
+  expect(frame()).toContain("Switch model (saved as default)");
+  expect(frame()).toContain("❯ p/a/one  (current)");
+  expect(frame()).toMatch(/↑ \d+ more/); // a long list scrolls
+  await type("spec");
+  expect(frame()).toContain("Filter: spec");
+  expect(frame()).toContain("❯ p/b/special");
+  expect(frame()).not.toContain("p/a/m1");
+  await type(ENTER);
+  expect(frame()).toContain("Model: p/b/special (saved to config.toml)");
+  await type("hi");
+  await type(ENTER);
+  await tick(50);
+  expect(model.requests[0]?.model).toBe("b/special");
+  // The id alone works too when it's unambiguous (here the id is "a/m3").
+  await type("/model a/m3");
+  await type(ENTER);
+  expect(frame()).toContain("Model: p/a/m3 (saved to config.toml)");
+});
+
+test("an endpoint that can't list its models: a warning, and /model says why", async () => {
+  const { type, frame } = await start([], OPEN);
+  await type("/");
+  expect(frame()).toContain("/model"); // no limit, so there may be something to offer
+  await type("\x15");
+  await type("/model");
+  await type(ENTER);
+  expect(frame()).toContain("Couldn't list the models of p: this endpoint can't list its models");
+  expect(frame()).toContain("Only one model is available (p/a/one)");
 });
 
 test("with a single model, /model is hidden and explains why when typed", async () => {
   const { type, frame } = await start(
     [],
-    '[agent]\nmodel = "local/my/model"\n[providers.local]\napi_key = "k"\n',
+    '[agent]\nmodel = "local/my/model"\n[providers.local]\napi_key = "k"\nmodels = ["my/model"]\n',
   );
   await type("/");
   expect(frame()).toContain("/usage");
@@ -427,7 +483,7 @@ test("with a single model, /model is hidden and explains why when typed", async 
   expect(frame()).not.toContain("Switch model");
   await type("/model x");
   await type(ENTER);
-  expect(frame()).toContain("Only one model is configured (local/my/model)");
+  expect(frame()).toContain("Only one model is available (local/my/model)");
 });
 
 const notes = definePlugin({

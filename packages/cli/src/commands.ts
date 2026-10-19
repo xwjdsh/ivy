@@ -21,8 +21,11 @@ export const COMMANDS: CommandInfo[] = [
  * Commands that make sense for this setup: built-ins (/model only when there is something
  * to switch to), then plugin commands, kept before /help and /exit.
  */
-export function availableCommands(modelCount: number, plugin: CommandInfo[] = []): CommandInfo[] {
-  const builtIn = COMMANDS.filter((c) => c.name !== "/model" || modelCount > 1);
+export function availableCommands(
+  canSwitchModel: boolean,
+  plugin: CommandInfo[] = [],
+): CommandInfo[] {
+  const builtIn = COMMANDS.filter((c) => c.name !== "/model" || canSwitchModel);
   const tail = builtIn.filter((c) => c.name === "/help" || c.name === "/exit");
   return [...builtIn.filter((c) => !tail.includes(c)), ...plugin, ...tail];
 }
