@@ -692,6 +692,7 @@ Goal: Ivy starts remembering. Built in this order; each step is shippable on its
 - Session summaries by `helper_model` (a title and key points per session), kept as session metadata, not memory: they help find a session and title `/resume`, while memory stays explicitly written.
 - Model fallbacks across providers, for one turn, never overriding an explicit `/model`.
 - Quarantined reading of outside content (Dual-LLM / CaMeL), which would replace taint tracking.
+- Instruction tuning driven by the evals, a development tool, not part of Ivy at runtime ([Harness²](https://github.com/google-research/harness2) automates the same loop): when a case fails, a helper model proposes a few edits to the instructions, each is run against the evals, and the diffs with their pass rates go to the user to pick from. It automates what is done by hand today (a real miss → a rule → an eval case). Ivy never edits its own instructions at runtime, for the same reason it doesn't edit `SOUL.md`.
 - Session branching; synchronized terminal output; paste placeholders; a maintained Markdown renderer in place of the patched marked-terminal, once one wraps Chinese text (markdansi is close).
 
 ## 12. Open Questions
