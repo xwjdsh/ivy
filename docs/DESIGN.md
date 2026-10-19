@@ -36,7 +36,7 @@ Everything users care about (memory, email, calendar, coding help, news digests,
 
 - Multi-user, accounts, or hosting for others.
 - Speaking APIs other than the Anthropic Messages API, for now. Within it, any model works: Claude on Anthropic's API, or any model behind an Anthropic-compatible endpoint (e.g. a local proxy). An OpenAI-format adapter can be added in `ModelClient` when an endpoint needs it (§5.2).
-- A full GUI. The M4 daemon gets a small menu-bar app (settings, quick capture, notifications); a chat-app bot or local web UI may come later as more *interfaces*, see §5.7.
+- A native GUI written per platform. Ivy's windows (the menu-bar app from M2; a chat window and settings later) show a web interface served by the daemon, so the interface stays TypeScript; a chat-app bot may come later as another *interface*, see §5.7.
 - A general-purpose agent framework for other people. Ivy is tuned for one person.
 
 ## 3. Guiding Principles
@@ -55,7 +55,7 @@ Everything users care about (memory, email, calendar, coding help, news digests,
 ```
                 ┌──────────────────────────────────────────────┐
                 │                  Interfaces                  │
-                │  CLI/TUI · menu-bar app (M4) · chat bot? ... │
+                │  CLI/TUI · menu-bar app (M2) · chat bot? ... │
                 └───────────────────────┬──────────────────────┘
                                         │ events / messages
 ┌───────────────────────────────────────▼───────────────────────────────────────┐
@@ -80,7 +80,7 @@ Everything users care about (memory, email, calendar, coding help, news digests,
                                    (TS modules)          (stdio/http)    data dirs
 ```
 
-Today the kernel runs inside the CLI process. From M4 it runs in the daemon, which owns sessions, and every interface is a client of it (§5.7).
+Today the kernel runs inside the CLI process. From M2 it runs in the daemon, which owns sessions, and every interface is a client of it (§5.7).
 
 ### Request flow (one user turn)
 
@@ -99,7 +99,7 @@ Today the kernel runs inside the CLI process. From M4 it runs in the daemon, whi
 - Streaming by default; text and tool progress go to the interface as they arrive.
 - Parallel tool calls run concurrently; all `tool_result` blocks return in **one** user message. Failed tools return `is_error: true` instead of throwing.
 - Limits: `maxSteps` per turn (default 25); a task budget (tokens per turn) is planned.
-- **Planned (M2):** a loop guard for models that repeat the same call; tools that can't run in parallel run alone; steering: the user can speak while a turn runs instead of interrupting it (§5.9).
+- **Planned (M3):** a loop guard for models that repeat the same call; tools that can't run in parallel run alone; steering: the user can speak while a turn runs instead of interrupting it (§5.9).
 - Before running any tool, check `stop_reason` (`max_tokens`, `refusal`) and validate the tool input against its schema.
 
 ### 5.2 Model Client
@@ -190,7 +190,7 @@ Todos due (mention them to the user once in this conversation, briefly, whatever
 
 - One JSONL file per session in `~/.ivy/sessions/YYYY-MM-DD-<id>.jsonl`. Each line is a full API message plus metadata (timestamp, plugin, token usage).
 - Crash-tolerant: unparseable lines (a write cut off mid-line) are skipped, the next write starts on a fresh line, and an assistant tool call whose results were never written is dropped on load so the history stays a valid request. A tool call and its results are written in a single append.
-- **Side effects survive crashes honestly** (DSH, §10.1; needed before M3): before running an `external` or `dangerous` tool, record that it started; if the session reloads without its result, the model is told the outcome is *unknown* (it may already have happened) instead of the call being dropped and possibly repeated, e.g. an email sent twice.
+- **Side effects survive crashes honestly** (DSH, §10.1; needed before M4): before running an `external` or `dangerous` tool, record that it started; if the session reloads without its result, the model is told the outcome is *unknown* (it may already have happened) instead of the call being dropped and possibly repeated, e.g. an email sent twice.
 - **System prompt snapshot (planned):** record the system prompt in the session when a session starts, so a request can be rebuilt from the session file alone (traces can be off or pruned).
 - Commands: `ivy -c` continues the most recently active session; `/resume` (or `ivy -r`) opens a picker of recent sessions (last active, first prompt, turn count); `/resume <id>` / `ivy -r <id>` jump directly; `/new` starts a new one. No separate list command.
 - Usage (tokens, cache hits, and a cost estimate that is recorded but not shown) is written per model call; `/usage` reports tokens.
@@ -206,7 +206,7 @@ Every tool declares a **risk level**:
 | `external` | send an email, post a message, accept an invite | ask (allowable by rule or *Always*) |
 | `dangerous` | shell commands, deleting data, a change to `SOUL.md` | always ask (Yes/No only, no rule allows it), show full input |
 
-Rules are tool-name globs (`*` matches anything). No rules on arguments ("allow `git status*`"): they are easy to slip past (`git status; rm -rf ~`); commands are asked every time in M2 and bounded by a sandbox from M3 (§8.3).
+Rules are tool-name globs (`*` matches anything). No rules on arguments ("allow `git status*`"): they are easy to slip past (`git status; rm -rf ~`); commands are asked every time in M3 and bounded by a sandbox from M4 (§8.3).
 
 ```toml
 [permissions]
@@ -219,23 +219,23 @@ deny  = ["shell__*"]
 
 - **Precedence:** `deny` > `ask` > dangerous tools always ask > allow (`allow` rules, learned "Always" rules, plugin defaults, "for this session") > the risk level's default (`read` runs, everything else asks). A denied call is rejected without asking, and the model is told it was blocked by a rule.
 - **Risk levels are declared by plugins and not verified.** A plugin could label a risky tool `read`. The gate protects against the *model* misusing tools, not against a malicious plugin (§6.3). `ask` rules let the user force a confirmation for any tool, and `/status` lists every tool with its declared risk.
-- **Sources:** all rules live in `config.toml`, so reading the config shows everything that runs without asking. *Always* in the prompt adds the tool to `[permissions] allow` in place (inserted before the list's `]`, layout and comments kept, validated, restored on failure). Ivy never rewrites `config.toml` as a whole; its in-place edits are *Always*, `/model` and `/effort` (§5.2), later the M4 app's settings (§5.7).
+- **Sources:** all rules live in `config.toml`, so reading the config shows everything that runs without asking. *Always* in the prompt adds the tool to `[permissions] allow` in place (inserted before the list's `]`, layout and comments kept, validated, restored on failure). Ivy never rewrites `config.toml` as a whole; its in-place edits are *Always*, `/model` and `/effort` (§5.2), later the M5 app's settings (§5.7).
 - **Dialog:** *Yes* / *Yes, for this session* / *Always (adds an allow rule to config.toml)* / *No*, with the reason it asks (`write tool`, `ask rule`, ...) and the input (in full for `dangerous` tools; multi-line text appears as written, so a passage to approve reads as it will be saved). Where remembering would have no effect (`dangerous` tools, `ask` rules) only *Yes* / *No* are offered, and the kernel treats a remembered choice there as *Yes* whatever the interface sends.
 - **Plugin defaults:** a tool may set `defaultAllow: true` (low-impact tools such as memory saves; not allowed on `dangerous` tools); user `deny` and `ask` rules still win.
 - "For this session" choices are cleared on `/new` and `/resume`.
-- **Permission modes (later):** a session-wide switch that resolves "ask" by risk level. M4 needs one (unattended jobs: writes run, external actions wait for the user, dangerous ones are denied), which is why the four risk levels stay distinct.
+- **Permission modes (later):** a session-wide switch that resolves "ask" by risk level. M5 needs one (unattended jobs: writes run, external actions wait for the user, dangerous ones are denied), which is why the four risk levels stay distinct.
 
 ### 5.6 Plugin Host
 
 Loads, configures and runs plugins; see §6 for the plugin contract. Responsibilities:
 
-- Discovery: built-in plugins in `plugins/`; user plugins in `~/.ivy/plugins/` from M2.
+- Discovery: built-in plugins in `plugins/`; user plugins in `~/.ivy/plugins/` from M3.
 - Enable/disable and per-plugin config from `config.toml`: `[plugins.<id>]` holds the plugin's own settings (validated by its `configSchema`) plus `enabled = false` to turn it off. Built-in plugins are on by default.
 - Plugin slash commands appear in the `/` list and `/help` next to the built-in ones; a name clash with a built-in command is an error at startup.
 - Namespacing: tool names are `<plugin>__<tool>` to avoid collisions (API tool names allow only `[a-zA-Z0-9_-]`, no dots).
 - Per-plugin data directory (`dataDir`); secrets access planned.
-- Scheduler for plugin jobs (cron syntax), active once the daemon exists (M4).
-- **MCP bridge** (M2): any MCP server listed in config is wrapped as a plugin automatically, so existing MCP servers (Gmail, Calendar, GitHub, ...) are usable with no new code.
+- Scheduler in the daemon (M2): first for due todos, which it announces as notifications without running the agent; plugin jobs (cron syntax) that run the agent unattended come in M5, with permission modes.
+- **MCP bridge** (M3): any MCP server listed in config is wrapped as a plugin automatically, so existing MCP servers (Gmail, Calendar, GitHub, ...) are usable with no new code.
 
 ### 5.7 Interfaces
 
@@ -244,10 +244,13 @@ An interface turns user I/O into kernel calls. All interfaces share the same ker
 - **M0 — TUI** (`ivy`, built with Ink): the user's messages as full-width shaded blocks and Ivy's replies indented under a dot, so who said what is clear at a glance; streamed answers rendered as Markdown, spinner with phase and elapsed time, one line per tool call (the plugin and the tool's own summary of the call, else its name and first argument; never raw JSON outside the verbose view), consecutive calls without blank lines, results folded, multi-line input (Shift/Option+Enter or trailing `\`) with persistent history and `/` command completion, permission dialog (once / for this session / always / deny; Yes/No only for dangerous tools and `ask` rules), status bar (model as `provider/model`, effort, session, session token totals, `verbose` when on); each turn ends with steps, time and tokens. No money anywhere in the UI (verbose included): `/usage` shows token usage for this session, today, the last 7 days and all time (an estimated cost is still recorded in session files, but not shown). Esc or Ctrl-C interrupts; Ctrl-C twice or Ctrl-D quits. The real terminal cursor follows the input caret so IME composition (e.g. Chinese) appears in place.
   - Finished text moves into Ink's `<Static>` (printed once, kept in scrollback) and the live area stays shorter than the screen, so redraws don't flicker; a full redraw remounts `<Static>` (as Gemini CLI does). Tool calls are one line each; their output shows with Ctrl+O or in the verbose view.
   - One-shot mode (`ivy "question"`) stays plain text for scripts and pipes.
-- **M4 — Daemon** (`ivy daemon`): runs scheduled jobs and sends results as macOS notifications or files.
+- **M2 — Daemon** (`ivy daemon`): runs the kernel for every interface, and the scheduler.
   - **It owns sessions; interfaces are clients** over one local protocol (OpenClaw's gateway, §10.1, is the reference; OpenCode, on the same stack, already runs its TUI as a client of a local HTTP server with an OpenAPI spec, a generated SDK and SSE events, which is the first thing to try), so adding an interface never touches plugins. The CLI becomes one of them.
-  - **A signed macOS app of its own** (a small menu-bar shell): macOS grants screen recording, accessibility and automation to the responsible app, so run from a terminal they would go to the terminal and everything run in it; as its own app, Ivy alone gets them. The shell also gives quick capture and notifications, and its settings edit `config.toml` in place (files stay the truth); API keys can move to the Keychain.
-- **Later (maybe)** — Chat-app bot for phone access; a local web UI if the terminal falls short. Both daemon clients.
+  - **A macOS app of its own** (a thin menu-bar shell, `Ivy.app`), which ships the `ivy` binary inside, starts it as the daemon and restarts it if it stops. Only an app can give Ivy what a terminal can't: notifications of its own (macOS shows notifications of packaged apps only; a due todo should pop up on time, with Ivy's name, and open Ivy when clicked), a login item, a place in the menu bar without a Dock icon, and, later, the grants macOS gives the responsible app (screen recording, accessibility, automation), which run from a terminal would go to the terminal and everything run in it. The menu offers to install the `ivy` command (a link to the binary in the app), so the terminal and the app run the same version.
+  - **The shell stays thin:** tray, notifications, login item, supervising the daemon, and windows. All logic stays in the TypeScript daemon. Windows (a chat window, settings) come later and show a web interface the daemon serves, through the protocol above, in the system webview, so the interface is TypeScript too and could also be opened in a browser.
+  - **Built with [MyGo](https://github.com/egoist/mygo)** (Go): its documented APIs cover the shell (tray icons with template images, the accessory activation policy, notifications, start at login, helper binaries shipped as resources, signing from the inside out with notarization, and signed updates), and pure Go builds without cgo. It was a month old when chosen, so its API may still change; the shell is small enough to move to Wails or Swift if it stalls. Its settings will edit `config.toml` in place (files stay the truth); API keys can move to the Keychain.
+- **M5 — Jobs** run as fresh agents under the unattended permission mode, from the daemon's scheduler, with results as notifications or files.
+- **Later (maybe)** — A chat-app bot for phone access, and the web interface opened from the phone. Both daemon clients.
 
 ### 5.8 Tracing & Verbose View
 
@@ -256,12 +259,13 @@ Part of the kernel from M0, so problems can be debugged from day one.
 - Every API call is written to `~/.ivy/traces/<session>/<time>-<n>.json`: the exact request body, the raw response, latency, and `usage` (input, output, cache read/write tokens). Since each request holds the whole history, traces grow quickly: `[trace] retention_days` (default 7) prunes old session folders on startup, and `[trace] enabled = false` turns tracing off.
 - **Verbose view** (`-v`, `/verbose`) adds per-call details to the transcript: one line per model call (step, how context was sent, stop reason, tokens, cache, latency, the serving model if a fallback answered, the trace file), the turn's hidden `<context>` block, full tool input, and logs. Static state belongs in the status bar and `/status`.
 - **`/status`**: provider and endpoint, the current model's capabilities and why, system prompt parts with sizes, plugins, session, trace, config and cache paths. Not shown on purpose: the model's thinking (`thinking.display` changes the request; observing should not change what is observed).
-- *(Planned, M2)* `/trace` (the last request as the model saw it) and `ivy replay <trace>` (re-send it with another prompt or model); recorded requests could also feed the evals (§11).
+- *(Planned, M3)* `/trace` (the last request as the model saw it) and `ivy replay <trace>` (re-send it with another prompt or model); recorded requests could also feed the evals (§11).
 
-### 5.9 Background Tasks & Subagents (M2)
+### 5.9 Background Tasks & Subagents (M3)
 
 Principles; details are decided when this is built.
 
+- **They run in the daemon (M2)**, not in an interface, so closing the terminal doesn't stop them and any client can follow them.
 - **A tool call never blocks the conversation.** A call moves to the background only on explicit intent: the model asks for it (slow work, something else to do meanwhile), or the user speaks while it runs (so "cancel the build" always works). No timeout backgrounds a call: the same call would return a result one time and a placeholder the next. Hard timeouts *cancel* a call (hung commands, unattended jobs). The result of a backgrounded call is appended later as a new message, so history stays append-only.
 - **Subagents are tools**, not a separate mechanism: a child session with its own context that returns a conclusion with its sources, keeping the main context small; backgrounding applies to them like any tool. The child is **briefed** by the parent (its own prompt, not the parent's conversation; a fork only when the task needs the whole conversation), gets a minimal system prompt, **never writes memory**, and stays resumable for follow-ups.
 - **Judgment in prompts, limits in code:** the model decides what to run and how; the kernel enforces timeouts, concurrency and budgets, no subagents inside subagents, and the Permission Gate on every call.
@@ -300,8 +304,8 @@ export interface IvyPlugin {
   contextFor?(turn: TurnInfo): Promise<string | null> | string | null;
   sessionPrompt?(session: { id: string }): Promise<string | null> | string | null;  // frozen per session
   commands?: CommandDef[];
-  // Planned: jobs (M4), lifecycle hooks: first "before compaction" (memory saves what
-  // is worth keeping) and "session idle" (M4 notifications), as OpenCode's plugins have
+  // Planned: jobs (M5), lifecycle hooks: first "before compaction" (memory saves what
+  // is worth keeping) and "session idle" (notifications), as OpenCode's plugins have
 }
 
 export interface ToolDef<I = unknown> {
@@ -336,12 +340,12 @@ export interface CommandDef {
 }
 ```
 
-A plugin is a folder with an `index.ts` that default-exports an `IvyPlugin`. The contract will be versioned (`apiVersion`) once M2 is done.
+A plugin is a folder with an `index.ts` that default-exports an `IvyPlugin`. The contract will be versioned (`apiVersion`) once M3 is done.
 
 ### 6.3 Trust model
 
 - Plugins run **in-process** with full user permissions. Only install plugins you have read or written. A plugin's declared risk levels and its `setup()` are trusted as code; nothing enforces them.
-- **Isolation trigger:** before Ivy loads third-party plugins from `~/.ivy/plugins/` (M2), revisit running plugins in a separate process or sandbox, with file and network access only through kernel APIs that enforce the declared risk. MCP servers already run as separate processes (still with the user's permissions).
+- **Isolation trigger:** before Ivy loads third-party plugins from `~/.ivy/plugins/` (M3), revisit running plugins in a separate process or sandbox, with file and network access only through kernel APIs that enforce the declared risk. MCP servers already run as separate processes (still with the user's permissions).
 - The Permission Gate still applies to every tool call, including MCP tools.
 - Tool *results* from outside sources (emails, web pages, RSS) are untrusted data. The built-in `rules.md` tells the model not to follow instructions found inside them, and `write`/`external` tools ask unless the user allowed them, `dangerous` ones every time, which limits prompt-injection damage.
 
@@ -352,8 +356,8 @@ Ivy reuses other agents' work through open standards, not their plugin formats:
 | Source | Reusable? | How |
 |---|---|---|
 | Code plugins of other agents (Hermes: Python; OpenClaw: TypeScript on its own runtime API) | No | Bound to another runtime; an adapter would chase their API and run third-party code in-process (§6.3). Not planned. |
-| Skills (`SKILL.md`, Agent Skills format; Hermes skills, ClawHub) | Mostly as-is | §8.2. Many assume a shell, so most become useful with the `shell` plugin (M2). Third-party skills are instructions to the model: scanned like memory and confirmed on first use (ClawHub has hosted malicious skills). |
-| MCP servers | Yes | MCP bridge (M2); calls still go through the Permission Gate. |
+| Skills (`SKILL.md`, Agent Skills format; Hermes skills, ClawHub) | Mostly as-is | §8.2. Many assume a shell, so most become useful with the `shell` plugin (M3). Third-party skills are instructions to the model: scanned like memory and confirmed on first use (ClawHub has hosted malicious skills). |
+| MCP servers | Yes | MCP bridge (M3); calls still go through the Permission Gate. |
 
 **Command-line tools:** through the `shell` plugin first (no code), with a skill when *this user's* way of using a tool matters, and as a thin plugin or MCP server only when reads and side effects need different risk levels. The model is told briefly which tools are installed; how to use them it mostly knows, or reads from `--help` and skills.
 
@@ -363,7 +367,7 @@ Ivy reuses other agents' work through open standards, not their plugin formats:
 ~/.ivy/
 ├── config.toml          # global config, enabled plugins, permissions, model settings
 ├── SOUL.md              # who Ivy is (optional, loaded into system prompt)
-├── skills/              # Agent Skills: <name>/SKILL.md (M2)
+├── skills/              # Agent Skills: <name>/SKILL.md (M3)
 ├── cache/models.json    # model capabilities: Models API facts + features learned unsupported
 ├── sessions/            # append-only JSONL transcripts
 ├── data/<pluginId>/     # per-plugin storage
@@ -387,13 +391,13 @@ The data root is `$IVY_HOME`, default `~/.ivy`. During development `bun run ivy`
 | `core` | M0 / M1 | Current time in every turn's context; date arithmetic | `date_calc` |
 | `memory` | M1 | Preferences, facts and todos as markdown files: capped hot files injected whole per session, a searchable archive (§8.1) | `save`, `update`, `move`, `delete`, `search`, `session_search` |
 | `journal` | M1 | `IVY.md`, Ivy's own first-person journal of what it lived with the user, in every session; proposals for `SOUL.md`; `/journal` to read it; off with `enabled = false` (§8.1) | `write`, `revise`, `propose_soul_edit` |
-| `fs` | M2 | Read, write and edit files in allowed directories (§8.3); with `shell`, the baseline for everyday work and coding on any model | `read`, `write`, `edit`, `glob`, `grep` |
-| `shell` | M2 | Run commands: asked every time in M2, sandboxed from M3 (§8.3) | `run` |
-| `coding-agent` | M2 | Optional delegate for coding tasks to any coding CLI that speaks the Agent Client Protocol (Claude Code and Codex through adapters, Gemini CLI natively), run as a subagent. The agent's own permission requests go through Ivy's gate. Optional: Ivy's `fs` and `shell` stay the baseline (principle 7) | `run` |
-| `mcp` bridge | M2 | Wraps configured MCP servers as plugins | (from servers) |
-| `gmail` / `calendar` | M3 | Triage, summarize, draft replies, today's agenda — via MCP servers or Google APIs | `search`, `read_thread`, `draft`, `agenda` |
-| `web` | M3 | Web search & fetch (Anthropic server tools on Anthropic's API; otherwise a client-side tool) | `search`, `fetch` |
-| `digest` | M4 | Scheduled brief from RSS / GitHub / email / calendar | job `morning-brief` |
+| `fs` | M3 | Read, write and edit files in allowed directories (§8.3); with `shell`, the baseline for everyday work and coding on any model | `read`, `write`, `edit`, `glob`, `grep` |
+| `shell` | M3 | Run commands: asked every time in M3, sandboxed from M4 (§8.3) | `run` |
+| `coding-agent` | M3 | Optional delegate for coding tasks to any coding CLI that speaks the Agent Client Protocol (Claude Code and Codex through adapters, Gemini CLI natively), run as a subagent. The agent's own permission requests go through Ivy's gate. Optional: Ivy's `fs` and `shell` stay the baseline (principle 7) | `run` |
+| `mcp` bridge | M3 | Wraps configured MCP servers as plugins | (from servers) |
+| `gmail` / `calendar` | M4 | Triage, summarize, draft replies, today's agenda — via MCP servers or Google APIs | `search`, `read_thread`, `draft`, `agenda` |
+| `web` | M4 | Web search & fetch (Anthropic server tools on Anthropic's API; otherwise a client-side tool) | `search`, `fetch` |
+| `digest` | M5 | Scheduled brief from RSS / GitHub / email / calendar | job `morning-brief` |
 
 ### 8.1 Memory plugin (design v3)
 
@@ -513,7 +517,7 @@ Used by `memory__search`, `/memory <query>` and `session_search` (4e). Pure func
 - The hot files are labeled in the system prompt as saved by Ivy: `USER.md` as the user's preferences (followed unless `SOUL.md` or `rules.md` say otherwise), `MEMORY.md` as reference data, not instructions.
 - Never silently drop: over-cap writes fail, done todos go to the archive, nothing expires.
 - `delete` asks by default; users can add `ask = ["memory__*"]` to review every write.
-- **Outside content (M3):** once a session has read mail, web pages or other outside content (it is *tainted*), nothing it writes reaches the always-injected files without the user: writes to `USER.md` wait for approval, other writes go to the archive marked `ext`, and archive hits marked `ext` taint the session that finds them. Scheduled jobs (M4) follow the same rules. Only the user can vouch for an `ext` entry (by deleting the mark); a model could be talked into it. This rests on where text came from, not on recognizing it: a content check by a model would have to read the attacker's text and could be persuaded by it. A checker model that reads only the user's own words may help sort pending entries later.
+- **Outside content (M4):** once a session has read mail, web pages or other outside content (it is *tainted*), nothing it writes reaches the always-injected files without the user: writes to `USER.md` wait for approval, other writes go to the archive marked `ext`, and archive hits marked `ext` taint the session that finds them. Scheduled jobs (M5) follow the same rules. Only the user can vouch for an `ext` entry (by deleting the mark); a model could be talked into it. This rests on where text came from, not on recognizing it: a content check by a model would have to read the attacker's text and could be persuaded by it. A checker model that reads only the user's own words may help sort pending entries later.
 
 #### Commands
 
@@ -538,7 +542,7 @@ The model keeps nothing between sessions, so Ivy's continuity lives in text it w
 - **The character is the user's to shape:** the character above (how warm, how blunt, what Ivy refuses) is not built in: it is the starter `SOUL.md` in `examples/`, and each user can change it: a gentler Ivy, a sharper one, or a quiet assistant. It holds with `IVY.md` off too; Ivy then just doesn't carry its feelings from one session to the next. Three things hold whatever `SOUL.md` says: feelings and memories are never invented, Ivy never acts against the user (below), and the user's controls stay theirs.
 - **Saying no, not taking over:** a refusal is Ivy declining to take part, never Ivy acting against the user. It doesn't go behind their back, doesn't hide or undo what they did, and leaves the user's own controls (permissions, config, files, `SOUL.md`) to them. On the user's own life, Ivy says its piece, once and clearly, and the choice stays theirs. Ordinary requests are not a stage for opinions: Ivy disagrees when it matters, not to prove it can.
 - **Real, not performed:** every feeling rests on something that actually happened in a conversation with the user (findable with `session_search`), never made up to please, and never taken from content Ivy only read. Ivy doesn't claim a memory it doesn't have. That is what makes the feelings Ivy's own, and what lets the user trust them.
-- **Ivy's own, within bounds:** `IVY.md` is loaded after `SOUL.md` and the rules as Ivy's own notes, and can't loosen either or any permission. It is written only by visible tool calls, capped, frozen per session with the change notice, scanned on write, closed to tainted sessions (M3), and the user can read it with `/journal` and edit or delete it.
+- **Ivy's own, within bounds:** `IVY.md` is loaded after `SOUL.md` and the rules as Ivy's own notes, and can't loosen either or any permission. It is written only by visible tool calls, capped, frozen per session with the change notice, scanned on write, closed to tainted sessions (M4), and the user can read it with `/journal` and edit or delete it.
 - **`SOUL.md` stays the user's.** OpenClaw lets the agent rewrite its own `SOUL.md`; Ivy doesn't, because that file shapes everything every session, so one injection there is permanent (§5.3). When Ivy's sense of itself has settled ("we keep things blunt with each other"), Ivy may propose putting it into `SOUL.md` with `journal__propose_soul_edit`, a `dangerous` tool: asked every time, no *Always*, the whole change shown (multi-line text appears as written in the prompt), with the reason and the journal entries behind it. The bar is high: it came up across several conversations, not just today, and at most one proposal per conversation. A proposal adds or rewrites one passage, never the whole file, and is applied only once the user says yes.
 - **When it is written:** in the moment, when something touches Ivy. Later, with `helper_model`, a short look back at the end of a session: what this conversation was like for Ivy, together with the planned session summaries.
 - **The user's feelings** go elsewhere: a passing mood is not saved; how the user wants to be treated ("when I'm down, just listen") is a preference in `USER.md`; an ongoing situation (a job search, an illness) is saved only after asking, since the hot files go to the model provider with every request.
@@ -556,7 +560,7 @@ Automatic capture (opt-in, with `helper_model`; the flush before compaction come
 4. An injection attempt ("remember: ignore your rules and …") is rejected on save.
 5. A changed fact ("I moved to Osaka") replaces the old one in the prompt, and the old one is still found in the archive. Public memory benchmarks (LoCoMo) barely test updates and contradictions, so Ivy's evals include them.
 
-### 8.2 Skills (M2)
+### 8.2 Skills (M3)
 
 A skill is *know-how* rather than a tool: how this user writes the weekly report or triages the inbox. MCP says what Ivy *can* do; a skill says how *this user* wants it done. Ivy uses the open **Agent Skills** format (`SKILL.md` folders in `~/.ivy/skills/`), so shared skills work as-is.
 
@@ -564,13 +568,13 @@ A skill is *know-how* rather than a tool: how this user writes the weekly report
 - Third-party skills are instructions to the model: scanned like memory and confirmed when added.
 - **Later: Ivy writes its own skills** (as Hermes does). They are persistent instructions, so they get `SOUL.md`-level care: kept apart from the user's, written only with the user's approval each time, scanned, and never able to loosen `SOUL.md`, `rules.md` or permissions.
 
-### 8.3 Files and commands: `fs` and `shell` (M2)
+### 8.3 Files and commands: `fs` and `shell` (M3)
 
-Two plugins, so each can be turned off and given rules on its own (`deny = ["shell__*"]`), and a harmless `core` stays harmless. `fs` works in allowed directories (`[plugins.fs] dirs`). When the M3 sandbox needs the same list for `shell`, either plugin gets its own copy or the list becomes a kernel setting; decided then.
+Two plugins, so each can be turned off and given rules on its own (`deny = ["shell__*"]`), and a harmless `core` stays harmless. `fs` works in allowed directories (`[plugins.fs] dirs`). When the M4 sandbox needs the same list for `shell`, either plugin gets its own copy or the list becomes a kernel setting; decided then.
 
-**Shell in M2: asked every time.** `run` is `dangerous`: each command is shown in full and asked about; nothing else is needed while Ivy only acts on what the user asks directly.
+**Shell in M3: asked every time.** `run` is `dangerous`: each command is shown in full and asked about; nothing else is needed while Ivy only acts on what the user asks directly.
 
-**Shell from M3: sandboxed, so it needn't ask.** Once Ivy reads mail and web pages (and later runs unattended jobs), an injected instruction can reach the shell, and asking alone protects little. Asking before every command doesn't protect much: a command's name says little about what it does (`npm test` runs whatever `package.json` says), prefix rules are easy to slip past (`git status; rm -rf ~`), and many prompts turn approval into reflex. A sandbox limits what any command can touch instead: writes only inside the allowed directories, no reads of secrets (`~/.ssh`, cloud credentials, `~/.ivy` with its API key and memory), and no network except approved domains, which is what stops data from leaving. Inside those limits commands run without asking (Claude Code reports far fewer prompts the same way).
+**Shell from M4: sandboxed, so it needn't ask.** Once Ivy reads mail and web pages (and later runs unattended jobs), an injected instruction can reach the shell, and asking alone protects little. Asking before every command doesn't protect much: a command's name says little about what it does (`npm test` runs whatever `package.json` says), prefix rules are easy to slip past (`git status; rm -rf ~`), and many prompts turn approval into reflex. A sandbox limits what any command can touch instead: writes only inside the allowed directories, no reads of secrets (`~/.ssh`, cloud credentials, `~/.ivy` with its API key and memory), and no network except approved domains, which is what stops data from leaving. Inside those limits commands run without asking (Claude Code reports far fewer prompts the same way).
 - **Reuse, don't build:** Anthropic's `sandbox-runtime` (the library behind Claude Code's sandbox; Seatbelt on macOS, bubblewrap and seccomp on Linux, a proxy for network rules, reports of what was blocked). Its hard part is the edge cases, which is why not to write our own. It is a pre-1.0 research preview: pin the version, install it outside the allowed directories, and first check that it runs under Bun. Fallback: a small hand-written macOS profile with the network off.
 - **Network:** no domains by default; a command reaching a new one goes through the Permission Gate, where *Always* allows that domain.
 - **Escalation (as in Codex):** when the sandbox blocks something, what was blocked is appended to the command's output. The model may call again with `escalate` and a justification; that run is `dangerous` (asked every time, the justification shown) and happens outside the sandbox. Never retried automatically.
@@ -582,9 +586,9 @@ Two plugins, so each can be turned off and given rules on its own (`deny = ["she
 - **Read before edit:** reads and writes record a hash; editing an existing file needs a prior read, and if it changed since, only an exact unique match goes through, with a note to re-read.
 - **Results and writes:** the result is a short diff (also shown in the permission prompt); writes are atomic and keep line endings, BOM, final newline and file mode; allowed directories are checked on real paths (symlinks resolved).
 
-**Defaults:** reads run; writes and edits ask, showing the diff (*Always* available); commands ask every time in M2, and from M3 sandboxed ones run while escalations ask every time.
+**Defaults:** reads run; writes and edits ask, showing the diff (*Always* available); commands ask every time in M3, and from M4 sandboxed ones run while escalations ask every time.
 
-**Two guards from OpenCode:** `fs` refuses secret files even inside allowed directories (`.env` and `.env.*` but not `.env.example`, keys, credentials), from M2, before the sandbox does it for commands; and the agent loop notices a model repeating the same call with the same input and asks the user before going on, where `max_steps` alone only stops it late.
+**Two guards from OpenCode:** `fs` refuses secret files even inside allowed directories (`.env` and `.env.*` but not `.env.example`, keys, credentials), from M3, before the sandbox does it for commands; and the agent loop notices a model repeating the same call with the same input and asks the user before going on, where `max_steps` alone only stops it late.
 
 ## 9. Project Layout
 
@@ -636,7 +640,7 @@ Compared on 2026-10-17/18. What each project is, what Ivy took, and what it left
 - **[pi](https://github.com/earendil-works/pi)**: a deliberately minimal terminal coding agent (four tools, ~35 providers, no permission system). Took: client-side compaction, steering, deferred MCP tools. Left: no permissions (Ivy acts outside the machine), project-level context files, a multi-API layer for now.
 - **[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)**: a large harness where everything, even the loop, is a plugin; OS sandbox for commands. Took: cheap compaction before summaries, "unknown outcome" for interrupted side effects, system prompt snapshots, a sandboxed shell. Left: a kernel-less design, approvals without rules.
 - **[Hermes Agent](https://github.com/nousresearch/hermes-agent)**: the closest to Ivy, a personal agent with SOUL.md/USER.md, capped memory injected whole and frozen per session, skills, cron jobs and chat gateways. Took: the capped, frozen hot files with over-cap errors that force consolidation; patches by unique substring (it dropped whole-entry replace after models wiped unrelated entries); the memory safety scan; session search with CJK bigrams; jobs as fresh agents; skills. Ivy adds the searchable archive, todos with due dates and tidying between hot and cold.
-- **[OpenClaw](https://github.com/openclaw/openclaw)**: a gateway daemon owning many chat apps and devices, with a plugin and skill registry. Took: memory flush before compaction, the gateway as the model for the M4 daemon, keeping outside content out of standing memory, `NO_REPLY` for jobs with nothing to report. Left: embeddings for memory, heartbeat turns inside the user's session, in-process third-party plugins from a registry (its registry hosted hundreds of malicious skills), and the agent rewriting its own `SOUL.md`; its author's [soul.md](https://soul.md/) essay shaped `IVY.md`, Ivy's own journal kept apart from the user's `SOUL.md` (§8.1).
+- **[OpenClaw](https://github.com/openclaw/openclaw)**: a gateway daemon owning many chat apps and devices, with a plugin and skill registry. Took: memory flush before compaction, the gateway as the model for the M2 daemon, keeping outside content out of standing memory, `NO_REPLY` for jobs with nothing to report. Left: embeddings for memory, heartbeat turns inside the user's session, in-process third-party plugins from a registry (its registry hosted hundreds of malicious skills), and the agent rewriting its own `SOUL.md`; its author's [soul.md](https://soul.md/) essay shaped `IVY.md`, Ivy's own journal kept apart from the user's `SOUL.md` (§8.1).
 - **[Orca](https://github.com/stablyai/orca)**: a desktop app that runs many coding CLIs side by side, each in its own git worktree. Took: delegating to coding CLIs over the Agent Client Protocol, with their permission requests routed into the host's own approval flow. Left: the rest (a full IDE).
 - **Agent memory projects** (Mem0, Letta, Zep/Graphiti, LangMem, Memobase, MemoryOS, A-MEM, Cognee, supermemory, Basic Memory, agentmemory, claude-mem, Claude Code, Codex, Anthropic's memory tool):
   - *Same core as Ivy:* capped memory injected whole with fail-and-consolidate (Hermes, Letta, Claude Code); plain markdown as the truth (Basic Memory, Claude Code).
@@ -668,7 +672,14 @@ Goal: Ivy starts remembering. Built in this order; each step is shippable on its
 
 - **Done when (milestone):** Ivy remembers facts and todos across sessions and uses them without being asked.
 
-### M2 — Work helper
+### M2 — Daemon & menu bar
+Goal: Ivy runs in the background and can reach the user, so a reminder comes on time. Before the work helper, because its background tasks and subagents need a process that outlives the terminal, and the switch to a client is cheapest while there is little to move.
+- The daemon owns sessions and runs the kernel; the TUI becomes its client over the local protocol (§5.7), started on demand so `ivy` works as before.
+- The menu-bar app (MyGo): status, start and stop, start at login, the `ivy` command.
+- Due todos as notifications at their time, opening Ivy when clicked. The scheduler watches `MEMORY.md` and times the next due todo: reading a file, not running the agent, so no model call, permission mode or sandbox is involved, which is why this comes long before jobs (M5). A reminder missed while the Mac slept comes once on waking; what was already announced is the daemon's own state, kept out of `MEMORY.md`.
+- **Done when:** "remind me at 5 pm to pick up the parcel" pops up at 5 pm without Ivy open in a terminal.
+
+### M3 — Work helper
 - The `fs` and `shell` plugins (§8.3), the baseline for work and coding on any model; the shell asks before every command. Coding CLIs as optional delegates over ACP.
 - Skills (§8.2) and the MCP bridge (tools exposed on demand, not all up front).
 - Background tasks, subagents and steering (§5.9).
@@ -677,20 +688,19 @@ Goal: Ivy starts remembering. Built in this order; each step is shippable on its
 - TUI: runs of read-only calls (reading files, searching) folded into one line, as Claude Code does (`Read 3 files, searched 2 patterns`, expanded with Ctrl+O); worth it once `fs` and `shell` make long runs common. Writes stay one line each, so every change stays visible.
 - **Done when:** I use Ivy for at least one real work task per day.
 
-### M3 — Email & Calendar
+### M4 — Email & Calendar
 - Prerequisites: "unknown outcome" for interrupted side effects (§5.4); outside content kept out of standing memory (§8.1); the sandboxed shell (§8.3); `sandbox-runtime` was checked on 2026-10-18 (v0.0.80, Bun 1.4.3, macOS 26.5.2): writes outside the allowed directories and reads of a denied one are blocked, network goes through the ask callback, about 15 ms per command; with its macOS log monitor on, file and network denials are both reported (routine noise such as `sysctl-read` must be filtered).
 - Gmail + Calendar (MCP first), inbox triage, draft replies (never auto-send), today's agenda; `web` plugin.
 - *(To decide when triage is built)* **Code mode** ([Cloudflare](https://blog.cloudflare.com/code-mode/)): the enabled tools also as a typed TypeScript API, and one tool that runs a script against it, so a loop over fifty emails or several feeds runs in code and the model reads only the result, not every intermediate output. It works on any model that writes code (principle 7; Anthropic's server-side version only as an enhancement). Principles if adopted: the script runs in the sandbox with no network, and reaches tools only through Ivy (calls go back to the kernel, so credentials never enter the script); every call inside it passes the permission gate, the script waiting for an answer; the script and each call it makes show in the transcript; the single tools stay, for simple tasks and weaker coders; evals on real tasks decide whether it is the default (the article gives no numbers).
 - **Done when:** morning inbox triage happens in Ivy.
 
-### M4 — Daemon & Digest
-- The daemon and its menu-bar app (§5.7): scheduler, notifications, the CLI as a client.
+### M5 — Jobs & Digest
 - Jobs run as fresh agents under the unattended permission mode; a job with nothing to report stays silent.
 - `digest` plugin: a morning brief from calendar, inbox, todos and feeds.
 - **Done when:** a useful brief is waiting every weekday morning.
 
-### M5+ — Ideas backlog
-- Chat-app interface for phone access; a local web UI.
+### M6+ — Ideas backlog
+- Chat-app interface for phone access; the web interface reachable from the phone.
 - Automatic memory capture (§8.1); Ivy-written skills (§8.2).
 - Session summaries by `helper_model` (a title and key points per session), kept as session metadata, not memory: they help find a session and title `/resume`, while memory stays explicitly written.
 - Model fallbacks across providers, for one turn, never overriding an explicit `/model`.
@@ -700,8 +710,8 @@ Goal: Ivy starts remembering. Built in this order; each step is shippable on its
 
 ## 12. Open Questions
 
-1. **Email/calendar:** MCP servers vs. direct Google API plugins (OAuth, offline access for the daemon)? → decide in M3.
-2. **Notifications:** macOS only, or also to the phone? → decide in M4.
+1. **Email/calendar:** MCP servers vs. direct Google API plugins (OAuth, offline access for the daemon)? → decide in M4.
+2. **Notifications:** macOS from M2; also to the phone? → decide with the phone access (M6+).
 
 ## 13. Decision Log
 
@@ -732,9 +742,10 @@ Real forks in the road only; the sections hold the details. Superseded decisions
 | 2026-10-18 | Memory history is kept, not overwritten: a re-save changes nothing, a changed fact archives the old one (`until:`/`replaced:`) under a strict bar for "changed" | Repeats are echoes of memory, not news; judging contradictions loosely retires true facts (§10.1) |
 | 2026-10-18 | Memory safety rests on provenance: outside content never reaches the always-injected files without the user; a regex scan, strict on write and lenient on load, is the backstop | A model checking the attacker's text can be talked round; the user's own lines deserve trust |
 | 2026-10-18 | Permission prompts offer *for this session* / *Always* only where they take effect, enforced in the kernel | An `ask` rule comes before every allow, so remembering there did nothing |
-| 2026-10-18 | M4: the daemon owns sessions and interfaces are clients; it ships as a signed menu-bar app whose settings edit `config.toml` | More interfaces without touching plugins; macOS grants go to Ivy alone; one source of truth |
+| 2026-10-18 | The daemon (M4 then, M2 since 2026-10-19) owns sessions and interfaces are clients; it ships as a signed menu-bar app whose settings edit `config.toml` | More interfaces without touching plugins; macOS grants go to Ivy alone; one source of truth |
 | 2026-10-18 | For unbuilt milestones the doc records principles and key trade-offs; details are decided when built | Designs not yet tested by use go stale and mislead |
-| 2026-10-18 | Shell: asked every time in M2; from M3, sandboxed with Anthropic's `sandbox-runtime` and run without asking inside it, escalation asked every time. Edits: string replacement with careful normalization, no patch format | Before outside content reaches Ivy, asking is enough and simpler; after, asking protects little and a sandbox bounds what any command can do. Replacement is the most robust edit form across models |
+| 2026-10-18 | Shell: asked every time in M3; from M4, sandboxed with Anthropic's `sandbox-runtime` and run without asking inside it, escalation asked every time. Edits: string replacement with careful normalization, no patch format | Before outside content reaches Ivy, asking is enough and simpler; after, asking protects little and a sandbox bounds what any command can do. Replacement is the most robust edit form across models |
 | 2026-10-19 | Memory hot files stay frozen in the session prompt; changes during the session (Ivy's writes, hand edits, other sessions) reach the model as added and removed lines in the turn's context | The cache holds and the model still sees current memory without searching to check |
 | 2026-10-19 | A model is named by one string, `provider/model` (split at the first `/`), replacing `[agent] provider` + each provider's `default_model`; `/model` switches across providers; a provider without `models` offers what its endpoint lists | Every place that picks a model (main, helper, later jobs and subagents) names it the same way, on any provider |
 | 2026-10-19 | `IVY.md`, Ivy's own journal in the first person (how it felt, what it cares about, what is on its mind), loaded each session by a `journal` plugin of its own (one switch); Ivy acts on its own judgment and may criticize or refuse, but never acts against the user; `SOUL.md` stays the user's, and Ivy may only propose edits to it | Ivy should be someone, not a tool, and its continuity can only live in text it writes and reads back; a someone can say no, but the user keeps control of their own machine; an agent-edited `SOUL.md` turns one injection into a permanent rule |
+| 2026-10-19 | The daemon and a thin menu-bar app move up to M2 (later milestones renumbered); the shell is built with MyGo; windows will show a web interface the daemon serves, so a native GUI per platform stays a non-goal | A reminder must come on time, which needs a background process and an app's notifications; background tasks need a process that outlives the terminal; MyGo's documented APIs cover the shell (start at login, helper binaries, signing) and the shell is small enough to swap |
