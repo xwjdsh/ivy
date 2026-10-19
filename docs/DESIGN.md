@@ -594,7 +594,7 @@ ivy/
 | LLM API | Anthropic Messages API via `@anthropic-ai/sdk`; default model Claude Opus 5.5 | One wire format; works with Claude and any Anthropic-compatible endpoint |
 | Schemas | Zod | Tool inputs, config validation, JSON Schema generation |
 | MCP | `@modelcontextprotocol/sdk` | MCP bridge plugin |
-| TUI | Ink 8 + marked-terminal | Mature (used by Claude Code, Gemini CLI); `<Static>` for scrollback |
+| TUI | Ink 8 + marked-terminal | Ink is mature (used by Claude Code, Gemini CLI); `<Static>` for scrollback. marked-terminal is no longer maintained and lags marked: it runs with `patches/` (upstream's unmerged fixes for inline formatting in lists, as Codex CLI did) until a maintained renderer handles Chinese text as well |
 | Config | TOML | Easy to hand-edit |
 | Tests | `bun test` | Built in |
 | Lint/format | Biome | One fast tool |

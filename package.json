@@ -21,5 +21,8 @@
     "@biomejs/biome": "^2.5.15",
     "@types/bun": "^1.4.3",
     "typescript": "^7.0.2"
+  },
+  "patchedDependencies": {
+    "marked-terminal@7.3.0": "patches/marked-terminal@7.3.0.patch"
   }
 }
