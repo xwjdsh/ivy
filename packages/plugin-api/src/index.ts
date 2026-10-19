@@ -115,13 +115,20 @@ export interface IvyPlugin {
   sessionPrompt?(session: SessionInfo): Promise<string | null> | string | null;
   /**
    * Text to add to this turn's `<context>` block (e.g. the time, todos due today),
-   * or null for nothing. Capped in size and time by the host; errors are skipped.
+   * or null for nothing. Capped in size (CONTEXT_MAX_CHARS, cut off past it) and time by
+   * the host; errors are skipped.
    */
   contextFor?(turn: TurnInfo): Promise<string | null> | string | null;
   commands?: CommandDef[];
 }
 
 /** Identity helper that keeps the input type of `run` inferred from the zod schema. */
+/**
+ * The most a plugin's `contextFor` text may hold each turn; the host cuts off the rest. A
+ * plugin with more to say should fit it in and point to where the rest is.
+ */
+export const CONTEXT_MAX_CHARS = 2000;
+
 export function defineTool<S extends z.ZodType>(tool: ToolDef<S>): ToolDef {
   return tool as unknown as ToolDef;
 }

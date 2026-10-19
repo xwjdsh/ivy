@@ -2,10 +2,11 @@
 // (how it felt, what it cares about, what is on its mind). SOUL.md says who Ivy is and is
 // the user's; IVY.md is what Ivy lived and only Ivy writes it, the user reading, editing or
 // deleting as oversight. It is a plugin of its own, so `[plugins.journal] enabled = false`
-// turns off the file, its instructions and its tools together (DESIGN.md §8.1).
+// turns off the file, its instructions, its tools and /journal together (DESIGN.md §8.1).
 //
-// It shares the memory files' line format and safety scan (@ivy/plugin-memory/lines): one dated entry per line,
-// written only through visible tool calls, capped, frozen per session with a change notice.
+// It builds on memory's lines module (@ivy/plugin-memory/lines): the same line format,
+// safety scan, entry writing and change notice. One dated entry per line, written only
+// through visible tool calls, capped, frozen per session with a change notice.
 //
 // When something has settled into who Ivy is, Ivy may propose it for SOUL.md with a
 // `dangerous` tool: asked every time, no "always", the whole change shown (§5.3).
@@ -13,6 +14,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  CONTEXT_MAX_CHARS,
   definePlugin,
   defineTool,
   type IvyPlugin,
@@ -242,7 +244,13 @@ export function createJournalPlugin(): IvyPlugin {
     contextFor({ sessionId }) {
       const before = snapshots.get(sessionId);
       if (!before) return null;
-      return changeNotice(NAME, before, lineSet(shown(read())), `the file is ${ready().path}`);
+      return changeNotice(
+        NAME,
+        before,
+        lineSet(shown(read())),
+        `the file is ${ready().path}`,
+        CONTEXT_MAX_CHARS,
+      );
     },
 
     commands: [

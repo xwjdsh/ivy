@@ -2,7 +2,7 @@ import { beforeEach, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { IvyPlugin, ToolResult } from "@ivy/plugin-api";
+import { CONTEXT_MAX_CHARS, type IvyPlugin, type ToolResult } from "@ivy/plugin-api";
 import { createMemoryPlugin, localDate, tagList } from "./index.ts";
 
 let dir: string;
@@ -256,14 +256,17 @@ test("changes to the hot files during a session reach the turn's context", async
   expect(turn("s2")).toBeNull();
 });
 
-test("many changes are cut short with a pointer to search", async () => {
+test("many changes fit the turn's context: whole lines, then a pointer to search", async () => {
   await plugin.sessionPrompt?.({ id: "s" });
-  writeFileSync(
-    join(dir, "MEMORY.md"),
-    `# Memory\n\n${Array.from({ length: 30 }, (_, i) => `- [fact 2026-10-19] Fact ${i}`).join("\n")}\n`,
+  const facts = Array.from(
+    { length: 30 },
+    (_, i) => `- [fact 2026-10-19] Fact ${i}${" detail".repeat(15)}`,
   );
+  writeFileSync(join(dir, "MEMORY.md"), `# Memory\n\n${facts.join("\n")}\n`);
   const ctx = (await plugin.contextFor?.({ sessionId: "s", userText: "", now: new Date() })) ?? "";
-  expect(ctx.split("\n").filter((l) => l.startsWith("+ ")).length).toBe(20);
+  expect(ctx.length).toBeLessThanOrEqual(CONTEXT_MAX_CHARS);
+  const shown = ctx.split("\n").filter((l) => l.startsWith("+ "));
+  for (const line of shown) expect(facts).toContain(line.slice(2).trimEnd());
   // 30 added entries, plus the default header's description line that this file lacks.
-  expect(ctx).toContain("(11 more changes; search memory for the current state)");
+  expect(ctx).toEndWith(`(${31 - shown.length} more changes; search memory for the current state)`);
 });

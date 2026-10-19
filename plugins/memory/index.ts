@@ -1,4 +1,5 @@
 import {
+  CONTEXT_MAX_CHARS,
   type ConversationHistory,
   definePlugin,
   defineTool,
@@ -276,7 +277,11 @@ export function createMemoryPlugin(): IvyPlugin {
         );
       }
       const snapshot = snapshots.get(sessionId);
-      if (snapshot) parts.push(...changesSince(snapshot, current));
+      if (snapshot) {
+        // What is left of this plugin's share of the turn's context, after the due todos.
+        const used = parts.reduce((n, p) => n + p.length + 1, 0);
+        parts.push(...changesSince(snapshot, current, CONTEXT_MAX_CHARS - used));
+      }
       return parts.length ? parts.join("\n") : null;
     },
 
@@ -356,17 +361,33 @@ function overview(ctx: Context, store: MemoryFiles): string {
     .join("\n");
 }
 
-/** Changes to the hot files since the session prompt was built (see changes.ts). */
-function changesSince(snapshot: Record<HotFile, Set<string>>, current: Files): string[] {
-  return (["user", "memory"] as const).flatMap((file) => {
+/**
+ * Changes to the hot files since the session prompt was built (see changes.ts), fitting in
+ * `maxChars` together: the files that changed share it.
+ */
+function changesSince(
+  snapshot: Record<HotFile, Set<string>>,
+  current: Files,
+  maxChars: number,
+): string[] {
+  const files = (["user", "memory"] as const)
+    .map((file) => ({ file, now: lineSet(current[file]) }))
+    .filter(({ file, now }) => !sameLines(snapshot[file], now));
+  const share = Math.floor(maxChars / Math.max(1, files.length)) - 1;
+  return files.flatMap(({ file, now }) => {
     const notice = changeNotice(
       FILE_NAMES[file],
       snapshot[file],
-      lineSet(current[file]),
+      now,
       "search memory for the current state",
+      share,
     );
     return notice ? [notice] : [];
   });
+}
+
+function sameLines(a: Set<string>, b: Set<string>): boolean {
+  return a.size === b.size && [...a].every((l) => b.has(l));
 }
 
 /** The archive isn't in the prompt; say it exists and what it holds, so the model looks there. */

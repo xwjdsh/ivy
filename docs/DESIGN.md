@@ -180,7 +180,7 @@ Todos due (mention them to the user once in this conversation, briefly, whatever
 - **Deterministic:** the same history and mode always render to the same bytes and grow append-only within a turn, so the prompt cache and thinking blocks stay valid. Switching models may switch modes; that already costs a cache miss, since caches are per model.
 - **Display:** the TUI, session previews and turn counts skip the `<context>` block; the verbose view (`-v`, `/verbose`) and traces show it.
 - **Trust:** `rules.md` tells the model the block is supplied by Ivy as reference data, not written by the user.
-- **Limits:** each plugin's turn context and session section are capped in size and time (a session section is large enough for both memory files at their maximum). A plugin that fails or times out is skipped and logged, so a turn never fails because of a plugin.
+- **Limits:** each plugin's turn context and session section are capped in size and time (a session section is large enough for both memory files at their maximum). The turn-context cap is part of the plugin API (`CONTEXT_MAX_CHARS`), so a plugin with more to say fits it in and points to the rest instead of being cut off mid-line. A plugin that fails or times out is skipped and logged, so a turn never fails because of a plugin.
 
 `SOUL.md` lives in the data dir and is optional; a missing file is simply left out. A template is in `examples/`.
 
@@ -491,7 +491,7 @@ Moving between hot and cold deletes nothing (the archive stays searchable), so t
 
 #### Per-turn context
 
-`contextFor` lists todos in `MEMORY.md` that are due today or overdue (a few at most), with their time (`- Dentist appointment (today at 15:00)`, `- Taxes (overdue since 2026-10-01)`), and asks the model to mention them once in the conversation, briefly, whatever the question: without that, models saw the line and said nothing. Nothing otherwise. It also carries changes to the hot files since the session started (above), cut short past a limit with a pointer to search.
+`contextFor` lists todos in `MEMORY.md` that are due today or overdue (a few at most), with their time (`- Dentist appointment (today at 15:00)`, `- Taxes (overdue since 2026-10-01)`), and asks the model to mention them once in the conversation, briefly, whatever the question: without that, models saw the line and said nothing. Nothing otherwise. It also carries changes to the hot files since the session started (above), as whole lines within the plugin's share of the turn's context, then a count of the rest and a pointer to search.
 
 #### Search
 

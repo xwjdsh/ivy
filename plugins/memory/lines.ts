@@ -2,7 +2,7 @@
 // entries (checks, finding one, atomic writes one at a time) and the change notice. The
 // journal plugin keeps IVY.md in the same format, under the same rules.
 
-export { changeNotice, lineSet, MAX_CHANGES } from "./changes.ts";
+export { changeNotice, lineSet } from "./changes.ts";
 export {
   type Entry,
   entryLine,
