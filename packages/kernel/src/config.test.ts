@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadConfig, resolvePaths } from "./config.ts";
+import { loadConfig, modelChoices, resolvePaths } from "./config.ts";
 
 const tempPaths = () => resolvePaths(mkdtempSync(join(tmpdir(), "ivy-cfg-")));
 
@@ -12,76 +12,88 @@ function configWith(toml: string) {
   return paths;
 }
 
-const MINIMAL = '[providers.anthropic]\ndefault_model = "claude-opus-5-5"\n';
+// Ends inside [providers.anthropic], so tests can append keys to it.
+const MINIMAL = '[agent]\nmodel = "anthropic/claude-opus-5-5"\n\n[providers.anthropic]\n';
 
-test("minimal config: one provider with a default model; everything else defaulted", () => {
+test("minimal config: a model on a provider; everything else defaulted", () => {
   const config = loadConfig(configWith(MINIMAL));
-  expect(config.agent).toEqual({ provider: "anthropic", max_steps: 25 });
-  expect(config.activeProvider).toMatchObject({
+  expect(config.agent).toEqual({ model: "anthropic/claude-opus-5-5", max_steps: 25 });
+  expect(config.model.ref).toBe("anthropic/claude-opus-5-5");
+  expect(config.model.id).toBe("claude-opus-5-5");
+  expect(config.model.provider).toMatchObject({
     name: "anthropic",
     type: "anthropic",
     base_url: "https://api.anthropic.com",
-    default_model: "claude-opus-5-5",
-    models: ["claude-opus-5-5"],
+    models: [],
     refusal_fallback: true,
   });
-  expect(config.activeProvider.api_key).toBeUndefined();
+  expect(config.model.provider.api_key).toBeUndefined();
   expect(config.generation).toEqual({ effort: "medium", max_tokens: 64000 });
 });
 
-test("no provider configured fails clearly", () => {
+test("agent.model is required", () => {
   expect(() => loadConfig(tempPaths())).toThrow(
-    'agent.provider "anthropic" has no [providers.anthropic] section (configured: none)',
+    'agent.model: required, e.g. model = "anthropic/claude-opus-5-5" under [agent]',
   );
 });
 
-test("default_model is required", () => {
-  expect(() => loadConfig(configWith('[providers.anthropic]\napi_key = "k"\n'))).toThrow(
-    /default_model/,
-  );
-});
-
-test("models: default_model comes first, duplicates are dropped", () => {
-  const config = loadConfig(
-    configWith('[providers.anthropic]\ndefault_model = "b"\nmodels = ["a", "b", "c", "a"]\n'),
-  );
-  expect(config.activeProvider.models).toEqual(["b", "a", "c"]);
-});
-
-test("agent.provider picks among several providers", () => {
+test("agent.model splits at the first slash: the provider, then the model id as is", () => {
   const config = loadConfig(
     configWith(`[agent]
-provider = "proxy"
+model = "proxy/codex/gpt-6-luna"
 
 [providers.anthropic]
 api_key = "sk-official"
-default_model = "claude-opus-5-5"
 
 [providers.proxy]
 api_key = "sk-proxy"
 base_url = "https://proxy.example.com"
-default_model = "claude-sonnet-5-5"
 refusal_fallback = false
 
 [generation]
 effort = "high"
 `),
   );
-  expect(config.activeProvider).toMatchObject({
+  expect(config.model.id).toBe("codex/gpt-6-luna");
+  expect(config.model.provider).toMatchObject({
     name: "proxy",
     api_key: "sk-proxy",
     base_url: "https://proxy.example.com",
-    default_model: "claude-sonnet-5-5",
     refusal_fallback: false,
   });
   expect(Object.keys(config.providers)).toEqual(["anthropic", "proxy"]);
   expect(config.generation.effort).toBe("high");
 });
 
-test("selecting a provider that isn't configured fails clearly", () => {
-  expect(() => loadConfig(configWith(`${MINIMAL}[agent]\nprovider = "openai"\n`))).toThrow(
-    'agent.provider "openai" has no [providers.openai] section (configured: anthropic)',
+test("a model on a provider that isn't configured, or without one, fails clearly", () => {
+  const withModel = (model: string) =>
+    configWith(`[agent]\nmodel = "${model}"\n[providers.anthropic]\n`);
+  expect(() => loadConfig(withModel("openai/gpt-6"))).toThrow(
+    'agent.model: "openai/gpt-6": no [providers.openai] section (configured: anthropic)',
   );
+  expect(() => loadConfig(withModel("claude-opus-5-5"))).toThrow(
+    '"claude-opus-5-5" should be "<provider>/<model id>"',
+  );
+});
+
+test("a provider name can't contain a slash", () => {
+  expect(() => loadConfig(configWith(`${MINIMAL}[providers."a/b"]\n`))).toThrow(
+    "a provider name can't contain '/'",
+  );
+});
+
+test("modelChoices: every provider's models, in order, plus the current one if unlisted", () => {
+  const config = loadConfig(
+    configWith(`[agent]
+model = "a/x"
+[providers.a]
+models = ["y", "y", "z"]
+[providers.b]
+models = ["w/v"]
+`),
+  );
+  expect(modelChoices(config)).toEqual(["a/x", "a/y", "a/z", "b/w/v"]);
+  expect(modelChoices(config, "a/z")).toEqual(["a/y", "a/z", "b/w/v"]);
 });
 
 test("only supported provider types are accepted", () => {

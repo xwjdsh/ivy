@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-// Run eval cases against a real model: `bun run eval [filter...] [--model m] [--provider p]`.
+// Run eval cases against a real model: `bun run eval [filter...] [--model provider/model]`.
 // Each case gets a fresh data folder with a copy of your config.toml (from $IVY_HOME or
 // ./.ivy), so your own memory and sessions are never touched. Not part of `bun test`:
 // every run calls the model and costs tokens.
@@ -23,7 +23,6 @@ const { values, positionals } = parseArgs({
   allowPositionals: true,
   options: {
     model: { type: "string" },
-    provider: { type: "string" },
     config: { type: "string" },
     verbose: { type: "boolean", short: "v" },
   },
@@ -63,10 +62,7 @@ process.exit(passed === selected.length ? 0 : 1);
 
 async function runCase(c: EvalCase, home: string): Promise<string[]> {
   mkdirSync(join(home, "data", "memory"), { recursive: true });
-  writeFileSync(
-    join(home, "config.toml"),
-    withOverrides(baseConfig) + (c.config ? `\n${c.config}` : ""),
-  );
+  writeFileSync(join(home, "config.toml"), baseConfig + (c.config ? `\n${c.config}` : ""));
   for (const [name, text] of Object.entries(c.files ?? {})) {
     writeFileSync(join(home, "data", "memory", name), text);
   }
@@ -79,11 +75,11 @@ async function runCase(c: EvalCase, home: string): Promise<string[]> {
       confirm: async () => "deny", // nobody is there to answer; risky tools are refused
       interfaceInstructions: TUI_INSTRUCTIONS,
     });
+    if (values.model) ivy.agent.setModel(values.model);
   } catch (err) {
     return [`setup failed: ${errorMessage(err)}`];
   }
-  if (values.model) ivy.agent.setModel(values.model);
-  label = `${ivy.config.activeProvider.name} · ${ivy.agent.model}`;
+  label = ivy.agent.model;
 
   const failures: string[] = [];
   let session: Session | undefined;
@@ -182,12 +178,6 @@ function readFiles(home: string): Record<MemoryFile, string> {
     out[f] = existsSync(path) ? readFileSync(path, "utf8") : "";
   }
   return out;
-}
-
-/** --provider picks another [providers.*] entry from the same config. */
-function withOverrides(config: string): string {
-  if (!values.provider) return config;
-  return config.replace(/^(\s*provider\s*=\s*).*$/m, `$1"${values.provider}"`);
 }
 
 function oneLine(text: string, max = 200): string {

@@ -1,12 +1,17 @@
-import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import type { IvyPlugin } from "@ivy/plugin-api";
 import { Agent, type ToolCallRequest } from "./agent.ts";
 import { Capabilities } from "./capabilities.ts";
-import { type Config, loadConfig, type Paths, resolvePaths } from "./config.ts";
+import {
+  type Config,
+  loadConfig,
+  type Paths,
+  type ProviderConfig,
+  resolvePaths,
+} from "./config.ts";
 import { saveAllowRule } from "./config-edit.ts";
 import { SystemPrompt } from "./context.ts";
-import { AnthropicModelClient, isOfficialAnthropicApi, type ModelClient } from "./model.ts";
+import { AnthropicModelClient, type ModelClient } from "./model.ts";
 import { type PermissionChoice, Permissions } from "./permissions.ts";
 import { PluginHost } from "./plugins.ts";
 import { sessionHistory } from "./session.ts";
@@ -17,8 +22,6 @@ export * from "./capabilities.ts";
 export * from "./config.ts";
 export * from "./config-edit.ts";
 export { type PromptPart, SystemPrompt } from "./context.ts";
-
-import { createLogger, errorMessage } from "./log.ts";
 
 export { createLogger, errorMessage, type LogLevel, setLogLevel, setLogSink } from "./log.ts";
 export * from "./model.ts";
@@ -33,6 +36,7 @@ export interface IvyOptions {
   plugins: IvyPlugin[];
   confirm(call: ToolCallRequest): Promise<PermissionChoice>;
   paths?: Paths;
+  /** One client for every provider, instead of real ones (tests). */
   model?: ModelClient;
   /** How the current UI shows replies (e.g. "renders Markdown"), added to the system prompt. */
   interfaceInstructions?: string;
@@ -54,24 +58,26 @@ export interface Ivy {
 /** Wire up the kernel: config, plugins, system prompt and agent. */
 export async function createIvy(opts: IvyOptions): Promise<Ivy> {
   const paths = opts.paths ?? resolvePaths();
-  migrateLegacyPermissions(paths);
   const config = loadConfig(paths);
   pruneTraces(paths.traces, config.trace.retention_days);
   const plugins = new PluginHost(paths.data, config.plugins, sessionHistory(paths.sessions));
   for (const plugin of opts.plugins) await plugins.register(plugin);
 
   const systemPrompt = new SystemPrompt(paths, plugins, opts.interfaceInstructions);
-  const p = config.activeProvider;
-  const capabilities = new Capabilities(
-    paths.modelsCache,
-    p.base_url,
-    isOfficialAnthropicApi(p.base_url),
-    { effort: config.generation.effort, refusalFallback: p.refusal_fallback },
-  );
-  const model = opts.model ?? createModelClient(config, paths);
-  // Refresh model facts in the background; startup never waits on the network.
-  const lister = model.listModels?.bind(model);
-  if (lister) void capabilities.refresh({ listModels: lister });
+  const capabilities = new Capabilities(paths.modelsCache, config.generation.effort);
+  const clients = new Map<string, ModelClient>();
+  const clientFor = (provider: ProviderConfig): ModelClient => {
+    let client = clients.get(provider.name);
+    if (!client) {
+      client = opts.model ?? createModelClient(provider, paths);
+      clients.set(provider.name, client);
+      // Refresh model facts in the background; nothing waits on the network.
+      const lister = client.listModels?.bind(client);
+      if (lister) void capabilities.refresh(provider, { listModels: lister });
+    }
+    return client;
+  };
+  clientFor(config.model.provider); // a missing API key fails at startup, not on the first turn
 
   const permissions = new Permissions(
     config.permissions,
@@ -81,7 +87,7 @@ export async function createIvy(opts: IvyOptions): Promise<Ivy> {
 
   const agent = new Agent({
     config,
-    model,
+    clientFor,
     capabilities,
     permissions,
     plugins,
@@ -102,37 +108,8 @@ export async function createIvy(opts: IvyOptions): Promise<Ivy> {
   };
 }
 
-/**
- * *Always* rules used to live in permissions.json, out of sight when reading the config.
- * Move them into `[permissions] allow` once, then remove the file.
- */
-function migrateLegacyPermissions(paths: Paths): void {
-  if (!existsSync(paths.legacyPermissions) || !existsSync(paths.config)) return;
-  const log = createLogger("permissions");
-  try {
-    const data = JSON.parse(readFileSync(paths.legacyPermissions, "utf8")) as { allow?: unknown };
-    const rules = Array.isArray(data.allow) ? data.allow.filter((x) => typeof x === "string") : [];
-    let allow = loadConfig(paths).permissions.allow;
-    for (const tool of rules) {
-      if (!allow.includes(tool)) allow = saveAllowRule(paths, tool).permissions.allow;
-    }
-    unlinkSync(paths.legacyPermissions);
-    if (rules.length) {
-      log.warn(
-        `moved ${rules.length} "Always" rule(s) from permissions.json into config.toml [permissions] allow`,
-      );
-    }
-  } catch (err) {
-    log.warn(
-      "could not move permissions.json into config.toml; it is left as it was",
-      errorMessage(err),
-    );
-  }
-}
-
-/** The client for the active provider's API kind. */
-function createModelClient(config: Config, paths: Paths): ModelClient {
-  const p = config.activeProvider;
+/** The client for a provider's API kind. */
+function createModelClient(p: ProviderConfig, paths: Paths): ModelClient {
   if (!p.api_key) {
     throw new Error(`No API key. Set api_key under [providers.${p.name}] in ${paths.config}`);
   }

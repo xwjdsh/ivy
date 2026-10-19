@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { RiskLevel } from "@ivy/plugin-api";
 import { type Capabilities, type OptionalFeature, rejectedFeature } from "./capabilities.ts";
-import type { Config } from "./config.ts";
+import { type Config, type ModelRef, type ProviderConfig, resolveModel } from "./config.ts";
 import { createLogger, errorMessage } from "./log.ts";
 import { estimateCost, type ModelClient, type ModelMessage, type ModelRequest } from "./model.ts";
 import type { PermissionChoice, Permissions } from "./permissions.ts";
@@ -69,11 +69,12 @@ export interface ToolCallRequest {
 
 export interface AgentOptions {
   config: Config;
-  model: ModelClient;
+  /** The API client for a provider (made on first use, then reused). */
+  clientFor(provider: ProviderConfig): ModelClient;
   plugins: PluginHost;
   /** The system prompt for a session, frozen once the session starts (see SystemPrompt). */
   systemPrompt(sessionId: string): Promise<string>;
-  /** What the current model supports on the active endpoint. */
+  /** What each model supports on its provider's endpoint. */
   capabilities: Capabilities;
   /** Who may run which tool without asking. */
   permissions: Permissions;
@@ -98,20 +99,31 @@ const MAX_PARSE_RETRIES = 2;
 const log = createLogger("agent");
 
 export class Agent {
-  /** Current model; starts as the provider's default_model and can be switched at runtime. */
-  private modelName: string;
+  /** Current model; starts as `agent.model` and can be switched at runtime. */
+  private current: ModelRef;
 
   constructor(private readonly opts: AgentOptions) {
-    this.modelName = opts.config.activeProvider.default_model;
+    this.current = opts.config.model;
   }
 
+  /** The current model as "<provider>/<model id>". */
   get model(): string {
-    return this.modelName;
+    return this.current.ref;
   }
 
-  /** Switch models for later turns (not saved). The prompt cache is per model, so the next call misses it. */
-  setModel(name: string): void {
-    this.modelName = name;
+  get modelRef(): ModelRef {
+    return this.current;
+  }
+
+  /**
+   * Switch models for later turns (not saved), on any configured provider; throws if the
+   * reference doesn't resolve or the provider can't be reached (no API key). The prompt
+   * cache is per model, so the next call misses it.
+   */
+  setModel(ref: string): void {
+    const next = resolveModel(this.opts.config.providers, ref);
+    this.opts.clientFor(next.provider);
+    this.current = next;
   }
 
   /**
@@ -135,14 +147,17 @@ export class Agent {
     let costUsd = 0;
     let parseRetries = 0;
 
+    // One model for the whole turn; a switch applies from the next one.
+    const target = this.current;
+    const client = this.opts.clientFor(target.provider);
     for (let step = 1; step <= config.agent.max_steps; step++) {
-      const request = this.buildRequest(session, system);
+      const request = this.buildRequest(target, session, system);
       turn.onEvent({ type: "request", step, info: this.describe(request, context !== "") });
       const startedAt = new Date();
       let message: ModelMessage;
 
       try {
-        message = await this.opts.model.stream(
+        message = await client.stream(
           request,
           { onText: (delta) => turn.onEvent({ type: "text", delta }) },
           turn.signal,
@@ -160,10 +175,10 @@ export class Agent {
         // this model, remember that, and resend. Nothing was appended, so this is safe.
         const feature = downgradable(err, request);
         if (feature) {
-          this.opts.capabilities.markUnsupported(this.modelName, feature);
+          this.opts.capabilities.markUnsupported(target, feature);
           turn.onEvent({
             type: "notice",
-            text: `${this.modelName} doesn't support ${FEATURE_NAMES[feature]} here; continuing without it.`,
+            text: `${target.ref} doesn't support ${FEATURE_NAMES[feature]} here; continuing without it.`,
           });
           step--;
           continue;
@@ -241,11 +256,11 @@ export class Agent {
     return { stopReason: "max_steps", steps: config.agent.max_steps, costUsd };
   }
 
-  private buildRequest(session: Session, systemPrompt: string): ModelRequest {
+  private buildRequest(target: ModelRef, session: Session, systemPrompt: string): ModelRequest {
     const { config, plugins } = this.opts;
-    const caps = this.opts.capabilities.for(this.modelName);
+    const caps = this.opts.capabilities.for(target);
     const request: ModelRequest = {
-      model: this.modelName,
+      model: target.id,
       max_tokens: Math.min(
         config.generation.max_tokens,
         caps.maxTokens ?? Number.POSITIVE_INFINITY,

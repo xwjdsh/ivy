@@ -7,14 +7,9 @@ import { definePlugin, defineTool, type IvyPlugin, type RiskLevel } from "@ivy/p
 import { z } from "zod";
 import { Agent, type AgentEvent, type ToolCallRequest } from "./agent.ts";
 import { Capabilities } from "./capabilities.ts";
-import { loadConfig, resolvePaths } from "./config.ts";
+import { loadConfig, type ProviderConfig, resolvePaths } from "./config.ts";
 import { saveAllowRule } from "./config-edit.ts";
-import {
-  isOfficialAnthropicApi,
-  type ModelClient,
-  type ModelMessage,
-  type ModelRequest,
-} from "./model.ts";
+import type { ModelClient, ModelMessage, ModelRequest } from "./model.ts";
 import { type PermissionChoice, Permissions } from "./permissions.ts";
 import { PluginHost } from "./plugins.ts";
 import { Session } from "./session.ts";
@@ -82,36 +77,42 @@ describe("Agent.runTurn", () => {
     events = [];
   });
 
+  const OPUS = '[agent]\nmodel = "anthropic/claude-opus-5-5"\n[providers.anthropic]\n';
+
+  /** `model` answers for every provider, or give one client per provider name. */
   async function makeAgent(
-    model: ModelClient,
+    model: ModelClient | Record<string, ModelClient>,
     risk: RiskLevel = "read",
     confirm: (c: ToolCallRequest) => Promise<PermissionChoice> = async () => "once",
     systemPrompt = "sys",
     extraPlugins: IvyPlugin[] = [],
-    providerToml = 'default_model = "claude-opus-5-5"\n',
+    toml = OPUS,
     extraToml = "",
   ) {
     const paths = resolvePaths(dir);
-    writeFileSync(paths.config, `[providers.anthropic]\n${providerToml}${extraToml}`);
+    writeFileSync(paths.config, `${toml}${extraToml}`);
     const plugins = new PluginHost(paths.data, {});
     await plugins.register(testPlugin(risk));
     for (const p of extraPlugins) await plugins.register(p);
     const config = loadConfig(paths);
-    const p = config.activeProvider;
     const capabilities = new Capabilities(
       join(dir, "cache", "models.json"),
-      p.base_url,
-      isOfficialAnthropicApi(p.base_url),
-      { effort: config.generation.effort, refusalFallback: p.refusal_fallback },
+      config.generation.effort,
     );
     const permissions = new Permissions(
       config.permissions,
       (tool) => saveAllowRule(paths, tool),
       (tool) => plugins.isDefaultAllowed(tool),
     );
+    const clientFor = (provider: ProviderConfig) => {
+      if ("stream" in model) return model as ModelClient;
+      const client = (model as Record<string, ModelClient>)[provider.name];
+      if (!client) throw new Error(`no client for ${provider.name}`);
+      return client;
+    };
     return new Agent({
       config,
-      model,
+      clientFor,
       plugins,
       systemPrompt: async () => systemPrompt,
       confirm,
@@ -356,21 +357,43 @@ describe("Agent.runTurn", () => {
   test("setModel switches later requests; params a model rejects are left out", async () => {
     const model = new FakeModel([reply("end_turn", [text("a")]), reply("end_turn", [text("b")])]);
     const agent = await makeAgent(model);
-    expect(agent.model).toBe("claude-opus-5-5");
-    agent.setModel("claude-haiku-4-5");
+    expect(agent.model).toBe("anthropic/claude-opus-5-5");
+    agent.setModel("anthropic/claude-haiku-4-5");
     await run(agent, "one");
     expect(model.requests[0]?.model).toBe("claude-haiku-4-5");
     expect(model.requests[0]).not.toHaveProperty("output_config");
     expect(model.requests[0]).not.toHaveProperty("fallbacks");
     expect(model.requests[0]).not.toHaveProperty("betas");
 
-    agent.setModel("claude-sonnet-5-5");
+    agent.setModel("anthropic/claude-sonnet-5-5");
     await run(agent, "two");
     expect(model.requests[1]).toMatchObject({
       model: "claude-sonnet-5-5",
       output_config: { effort: "medium" },
       fallbacks: "default",
     });
+  });
+
+  test("setModel can switch to another provider: its client, its id, its endpoint's features", async () => {
+    const official = new FakeModel([reply("end_turn", [text("a")])]);
+    const proxy = new FakeModel([reply("end_turn", [text("b")])]);
+    const agent = await makeAgent(
+      { anthropic: official, magpie: proxy },
+      "read",
+      undefined,
+      "sys",
+      [],
+      `${OPUS}[providers.magpie]\nbase_url = "http://127.0.0.1:3425"\n`,
+    );
+    await run(agent, "one");
+    agent.setModel("magpie/codex/gpt-6-luna");
+    await run(agent, "two");
+    expect(official.requests.map((r) => r.model)).toEqual(["claude-opus-5-5"]);
+    expect(proxy.requests[0]?.model).toBe("codex/gpt-6-luna");
+    expect(proxy.requests[0]).not.toHaveProperty("fallbacks");
+
+    expect(() => agent.setModel("nope/x")).toThrow("no [providers.nope] section");
+    expect(agent.model).toBe("magpie/codex/gpt-6-luna");
   });
 
   const clock = definePlugin({
@@ -380,7 +403,8 @@ describe("Agent.runTurn", () => {
     contextFor: (t) => `user said: ${t.userText}`,
   });
   const CTX = "<context>\n## clock\nuser said: what time is it\n</context>";
-  const PROXY = 'default_model = "claude-opus-5-5"\nbase_url = "http://127.0.0.1:8080"\n';
+  const PROXY = `${OPUS}base_url = "http://127.0.0.1:8080"\n`;
+  const HAIKU = OPUS.replace("claude-opus-5-5", "claude-haiku-4-5");
 
   test("context is stored apart from what the user typed", async () => {
     const model = new FakeModel([reply("end_turn", [text("ok")])]);
@@ -414,13 +438,10 @@ describe("Agent.runTurn", () => {
   });
 
   test("a proxy or an older model gets a <context> text block instead", async () => {
-    for (const providerToml of [PROXY, 'default_model = "claude-haiku-4-5"\n']) {
+    for (const toml of [PROXY, HAIKU]) {
       session = Session.create(join(dir, "sessions"), "m");
       const model = new FakeModel([reply("end_turn", [text("ok")])]);
-      await run(
-        await makeAgent(model, "read", undefined, "sys", [clock], providerToml),
-        "what time is it",
-      );
+      await run(await makeAgent(model, "read", undefined, "sys", [clock], toml), "what time is it");
       expect(model.requests[0]?.messages).toEqual([
         {
           role: "user",
@@ -461,7 +482,7 @@ describe("Agent.runTurn", () => {
     expect(model.requests[1]?.messages.some((m) => m.role === "system")).toBe(false);
     expect(events).toContainEqual({
       type: "notice",
-      text: "claude-opus-5-5 doesn't support mid-conversation system messages here; continuing without it.",
+      text: "anthropic/claude-opus-5-5 doesn't support mid-conversation system messages here; continuing without it.",
     });
     // Remembered: the next turn goes straight to blocks, even for a fresh agent.
     const fresh = await makeAgent(model, "read", undefined, "sys", [clock]);

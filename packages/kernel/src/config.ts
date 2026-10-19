@@ -9,7 +9,7 @@ const Effort = z.enum(EFFORT_LEVELS);
 /** API kinds Ivy can talk to. Adding one also needs a ModelClient (see createModelClient). */
 export const PROVIDER_TYPES = ["anthropic"] as const;
 
-/** One way to reach a model API. Several can be configured; `agent.provider` picks one. */
+/** One way to reach a model API. Several can be configured; models name theirs (`agent.model`). */
 const ProviderSchema = z.strictObject({
   /** API kind; see PROVIDER_TYPES. */
   type: z
@@ -21,9 +21,7 @@ const ProviderSchema = z.strictObject({
   /** Required to call the API. Environment variables are intentionally not used. */
   api_key: z.string().optional(),
   base_url: z.url().default("https://api.anthropic.com"),
-  /** Model used at startup. */
-  default_model: z.string().min(1),
-  /** Other models /model can switch to; default_model is always included. */
+  /** Models /model can switch to on this provider (by id, without the provider prefix). */
   models: z.array(z.string().min(1)).default([]),
   /**
    * Server-side refusal fallback where supported: if the model declines, Anthropic re-runs
@@ -44,8 +42,8 @@ const ConfigSchema = z.strictObject({
     .prefault({}),
   agent: z
     .strictObject({
-      /** Which entry of `providers` to use. */
-      provider: z.string().default("anthropic"),
+      /** The model to use, as "<provider>/<model id>" (see resolveModel). Required. */
+      model: z.string().min(1).optional(),
       /** Max model calls per user turn before the loop stops. */
       max_steps: z.number().int().positive().default(25),
     })
@@ -71,10 +69,23 @@ const ConfigSchema = z.strictObject({
 
 export type ProviderConfig = z.infer<typeof ProviderSchema> & { name: string };
 
+/**
+ * A model reference, "<provider>/<model id>", resolved: the part before the first "/" names
+ * a [providers.*] entry, the rest is the model id as that provider knows it, slashes and
+ * all ("magpie/codex/gpt-6-luna" is model "codex/gpt-6-luna" on provider "magpie").
+ */
+export interface ModelRef {
+  /** The reference as written. */
+  ref: string;
+  provider: ProviderConfig;
+  /** The model id sent to the provider. */
+  id: string;
+}
+
 export type Config = Omit<z.infer<typeof ConfigSchema>, "providers"> & {
   providers: Record<string, ProviderConfig>;
-  /** The provider selected by `agent.provider`. */
-  activeProvider: ProviderConfig;
+  /** `agent.model`, resolved. */
+  model: ModelRef;
 };
 export type Effort = z.infer<typeof Effort>;
 
@@ -86,8 +97,6 @@ export interface Paths {
   sessions: string;
   traces: string;
   data: string;
-  /** Where *Always* rules were kept before they moved into config.toml; migrated on startup. */
-  legacyPermissions: string;
   /** Model capabilities: Models API facts and features learned unsupported. */
   modelsCache: string;
 }
@@ -101,7 +110,6 @@ export function resolvePaths(home = process.env.IVY_HOME ?? join(homedir(), ".iv
     sessions: join(home, "sessions"),
     traces: join(home, "traces"),
     data: join(home, "data"),
-    legacyPermissions: join(home, "permissions.json"),
     modelsCache: join(home, "cache", "models.json"),
   };
 }
@@ -116,17 +124,44 @@ export function loadConfig(paths: Paths): Config {
   }
   const providers: Record<string, ProviderConfig> = {};
   for (const [name, p] of Object.entries(parsed.data.providers)) {
-    // default_model first, then the others without duplicates.
-    const models = [...new Set([p.default_model, ...p.models])];
-    providers[name] = { ...p, name, models };
+    // Model references split at the first "/", so a name with one could never be used.
+    if (name.includes("/")) {
+      throw new Error(
+        `Invalid ${paths.config}: [providers."${name}"]: a provider name can't contain '/'`,
+      );
+    }
+    providers[name] = { ...p, name, models: [...new Set(p.models)] };
   }
-  const selected = parsed.data.agent.provider;
-  const activeProvider = providers[selected];
-  if (!activeProvider) {
+  try {
+    const ref = parsed.data.agent.model;
+    if (!ref) throw new Error('required, e.g. model = "anthropic/claude-opus-5-5" under [agent]');
+    const model = resolveModel(providers, ref);
+    return { ...parsed.data, providers, model };
+  } catch (err) {
+    throw new Error(`Invalid ${paths.config}: agent.model: ${(err as Error).message}`);
+  }
+}
+
+/** Resolve "<provider>/<model id>" against the configured providers; throws if it can't. */
+export function resolveModel(providers: Record<string, ProviderConfig>, ref: string): ModelRef {
+  const slash = ref.indexOf("/");
+  const name = ref.slice(0, Math.max(0, slash));
+  const id = ref.slice(slash + 1);
+  if (slash <= 0 || !id) {
+    throw new Error(`"${ref}" should be "<provider>/<model id>", e.g. "anthropic/claude-opus-5-5"`);
+  }
+  const provider = providers[name];
+  if (!provider) {
     const known = Object.keys(providers).join(", ") || "none";
-    throw new Error(
-      `Invalid ${paths.config}: agent.provider "${selected}" has no [providers.${selected}] section (configured: ${known})`,
-    );
+    throw new Error(`"${ref}": no [providers.${name}] section (configured: ${known})`);
   }
-  return { ...parsed.data, providers, activeProvider };
+  return { ref, provider, id };
+}
+
+/** What /model offers: every provider's `models`, and the current model if it isn't listed. */
+export function modelChoices(config: Config, current = config.model.ref): string[] {
+  const listed = Object.values(config.providers).flatMap((p) =>
+    p.models.map((id) => `${p.name}/${id}`),
+  );
+  return listed.includes(current) ? listed : [current, ...listed];
 }

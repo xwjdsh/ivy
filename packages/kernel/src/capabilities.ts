@@ -3,9 +3,10 @@ import { dirname } from "node:path";
 import type Anthropic from "@anthropic-ai/sdk";
 import { EFFORT_LEVELS, type Effort } from "./config.ts";
 import { createLogger } from "./log.ts";
+import { isOfficialAnthropicApi } from "./model.ts";
 
 /**
- * What a model supports on the active endpoint, resolved from three sources:
+ * What a model supports on its provider's endpoint, resolved from three sources:
  *
  * 1. The Models API (official endpoint only), cached on disk for a day: effort and its
  *    levels, max output tokens. New models need no code change.
@@ -53,16 +54,27 @@ export interface ModelLister {
   listModels(): Promise<Anthropic.Models.ModelInfo[]>;
 }
 
+/** The provider settings capabilities depend on (a ProviderConfig has them). */
+export interface Endpoint {
+  base_url: string;
+  refusal_fallback: boolean;
+}
+
+/** A model on an endpoint (a ModelRef is one). */
+export interface ModelTarget {
+  provider: Endpoint;
+  id: string;
+}
+
 export class Capabilities {
   private cache: Record<string, EndpointCache> = {};
   private readonly log = createLogger("capabilities");
 
   constructor(
+    /** One file for all endpoints, keyed by base URL. */
     private readonly cacheFile: string,
-    /** The active provider's base URL; caches are kept per endpoint. */
-    private readonly endpoint: string,
-    private readonly official: boolean,
-    private readonly settings: { effort: Effort; refusalFallback: boolean },
+    /** The configured effort, for every model (adjusted per model in `for`). */
+    private configuredEffort: Effort,
   ) {
     try {
       if (existsSync(cacheFile)) {
@@ -76,31 +88,32 @@ export class Capabilities {
     }
   }
 
-  private get entry(): EndpointCache {
-    let entry = this.cache[this.endpoint];
+  private entry(endpoint: Endpoint): EndpointCache {
+    let entry = this.cache[endpoint.base_url];
     if (!entry) {
       entry = { models: {}, unsupported: {} };
-      this.cache[this.endpoint] = entry;
+      this.cache[endpoint.base_url] = entry;
     }
     return entry;
   }
 
-  for(model: string): ResolvedCapabilities {
-    const facts = this.entry.models[model];
-    const off = new Set(this.entry.unsupported[model] ?? []);
+  for({ provider, id: model }: ModelTarget): ResolvedCapabilities {
+    const entry = this.entry(provider);
+    const facts = entry.models[model];
+    const off = new Set(entry.unsupported[model] ?? []);
     const claude = model.startsWith("claude-");
-    const modern = this.official && claude && !OLD_MODEL.test(model);
+    const modern = isOfficialAnthropicApi(provider.base_url) && claude && !OLD_MODEL.test(model);
 
-    let effort: Effort | undefined = this.settings.effort;
+    let effort: Effort | undefined = this.configuredEffort;
     if (off.has("effort") || facts?.effortSupported === false || model.startsWith("claude-haiku")) {
       effort = undefined;
     } else if (facts?.effortLevels?.length) {
-      effort = nearestLevel(this.settings.effort, facts.effortLevels);
+      effort = nearestLevel(this.configuredEffort, facts.effortLevels);
     }
 
     return {
       effort,
-      fallbacks: modern && this.settings.refusalFallback && !off.has("fallbacks"),
+      fallbacks: modern && provider.refusal_fallback && !off.has("fallbacks"),
       systemMessages: modern && !off.has("systemMessages"),
       maxTokens: facts?.maxTokens,
     };
@@ -108,58 +121,66 @@ export class Capabilities {
 
   /** The configured effort (before per-model adjustment). */
   get effort(): Effort {
-    return this.settings.effort;
+    return this.configuredEffort;
   }
 
   /** Change the configured effort for later requests (e.g. from /effort). */
   setEffort(effort: Effort): void {
-    this.settings.effort = effort;
+    this.configuredEffort = effort;
   }
 
   /** Why each optional feature is on or off for a model (verbose view). */
-  explain(model: string): string[] {
-    const caps = this.for(model);
-    const facts = this.entry.models[model];
-    const learned = this.entry.unsupported[model] ?? [];
+  explain(target: ModelTarget): string[] {
+    const { provider, id: model } = target;
+    const caps = this.for(target);
+    const entry = this.entry(provider);
+    const official = isOfficialAnthropicApi(provider.base_url);
+    const facts = entry.models[model];
+    const learned = entry.unsupported[model] ?? [];
     const claude = model.startsWith("claude-");
     const oldModel = OLD_MODEL.test(model);
     const why = (on: boolean, feature: OptionalFeature, extra?: string) => {
       if (learned.includes(feature)) return "off: rejected by this endpoint earlier (learned)";
       if (extra) return extra;
       if (on) return "on";
-      if (!this.official) return "off: compatible endpoint";
+      if (!official) return "off: compatible endpoint";
       if (!claude) return "off: not a Claude model";
       if (oldModel) return "off: older model";
       return "off";
     };
     return [
-      `endpoint: ${this.endpoint} (${this.official ? "official Anthropic API" : "compatible"})`,
-      `model facts: ${facts ? "from the Models API" : this.official ? "none cached yet" : "n/a (compatible endpoint)"}`,
-      `effort: ${caps.effort ?? "not sent"} (configured ${this.settings.effort}${facts?.effortLevels ? `; model has ${facts.effortLevels.join("/")}` : ""}${learned.includes("effort") ? "; rejected earlier (learned)" : ""})`,
-      `refusal fallback: ${why(caps.fallbacks, "fallbacks", !this.settings.refusalFallback ? "off: refusal_fallback = false" : undefined)}`,
+      `endpoint: ${provider.base_url} (${official ? "official Anthropic API" : "compatible"})`,
+      `model facts: ${facts ? "from the Models API" : official ? "none cached yet" : "n/a (compatible endpoint)"}`,
+      `effort: ${caps.effort ?? "not sent"} (configured ${this.configuredEffort}${facts?.effortLevels ? `; model has ${facts.effortLevels.join("/")}` : ""}${learned.includes("effort") ? "; rejected earlier (learned)" : ""})`,
+      `refusal fallback: ${why(caps.fallbacks, "fallbacks", !provider.refusal_fallback ? "off: refusal_fallback = false" : undefined)}`,
       `system messages for context: ${why(caps.systemMessages, "systemMessages")}`,
       ...(caps.maxTokens ? [`max_tokens cap: ${caps.maxTokens}`] : []),
     ];
   }
 
-  /** Turn a feature off for a model after the endpoint rejected it; remembered on disk. */
-  markUnsupported(model: string, feature: OptionalFeature): void {
-    const list = this.entry.unsupported[model] ?? [];
+  /** Turn a feature off for a model after its endpoint rejected it; remembered on disk. */
+  markUnsupported({ provider, id: model }: ModelTarget, feature: OptionalFeature): void {
+    const entry = this.entry(provider);
+    const list = entry.unsupported[model] ?? [];
     if (!list.includes(feature)) list.push(feature);
-    this.entry.unsupported[model] = list;
+    entry.unsupported[model] = list;
     this.save();
   }
 
-  /** Refresh model facts from the Models API if stale. Official endpoint only; never throws. */
-  async refresh(lister: ModelLister, now = Date.now()): Promise<void> {
-    if (!this.official) return;
-    const fetchedAt = this.entry.fetchedAt ? Date.parse(this.entry.fetchedAt) : 0;
+  /**
+   * Refresh an endpoint's model facts from the Models API if stale. Official endpoint
+   * only; never throws.
+   */
+  async refresh(endpoint: Endpoint, lister: ModelLister, now = Date.now()): Promise<void> {
+    if (!isOfficialAnthropicApi(endpoint.base_url)) return;
+    const entry = this.entry(endpoint);
+    const fetchedAt = entry.fetchedAt ? Date.parse(entry.fetchedAt) : 0;
     if (now - fetchedAt < CACHE_TTL_MS) return;
     try {
       const models: Record<string, ModelFacts> = {};
       for (const info of await lister.listModels()) models[info.id] = factsOf(info);
-      this.entry.models = models;
-      this.entry.fetchedAt = new Date(now).toISOString();
+      entry.models = models;
+      entry.fetchedAt = new Date(now).toISOString();
       this.save();
     } catch (err) {
       this.log.warn("model list refresh failed", String(err));

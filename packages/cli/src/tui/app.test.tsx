@@ -101,7 +101,7 @@ beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), "ivy-tui-"));
   writeFileSync(
     join(home, "config.toml"),
-    '[providers.anthropic]\napi_key = "test"\ndefault_model = "claude-opus-5-5"\nmodels = ["claude-sonnet-5-5", "claude-haiku-4-5"]\n',
+    '[agent]\nmodel = "anthropic/claude-opus-5-5"\n[providers.anthropic]\napi_key = "test"\nmodels = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-4-5"]\n',
   );
 });
 afterEach(() => cleanup?.());
@@ -152,7 +152,7 @@ test("sends a message and renders the streamed Markdown answer", async () => {
   expect(frame()).toContain("Hello there");
   expect(frame()).not.toContain("**");
   expect(frame()).toMatch(/1 step\(s\) · [\d.]+s · 10 in \/ 5 out tokens/);
-  expect(frame()).toMatch(/anthropic · claude-opus-5-5 · medium · .* · 10 in \/ 5 out/); // status bar
+  expect(frame()).toMatch(/anthropic\/claude-opus-5-5 · medium · .* · 10 in \/ 5 out/); // status bar
   expect(frame()).not.toContain("$");
 });
 
@@ -385,15 +385,15 @@ test("/model opens a picker; choosing switches the model for later turns", async
   const { type, frame, model } = await start([{ stop: "end_turn", content: [text("ok")] }]);
   await type("/model");
   await type(ENTER);
-  expect(frame()).toContain("Switch model on anthropic (saved as default)");
-  expect(frame()).toContain("❯ claude-opus-5-5  (current)");
+  expect(frame()).toContain("Switch model (saved as default)");
+  expect(frame()).toContain("❯ anthropic/claude-opus-5-5  (current)");
   await type(DOWN);
   await type(ENTER);
-  expect(frame()).toContain("Model: claude-sonnet-5-5 (saved to config.toml)");
+  expect(frame()).toContain("Model: anthropic/claude-sonnet-5-5 (saved to config.toml)");
   expect(readFileSync(join(home, "config.toml"), "utf8")).toContain(
-    'default_model = "claude-sonnet-5-5"',
+    'model = "anthropic/claude-sonnet-5-5"',
   );
-  expect(frame()).toContain("claude-sonnet-5-5 · medium");
+  expect(frame()).toContain("anthropic/claude-sonnet-5-5 · medium");
   await type("hi");
   await type(ENTER);
   await tick(50);
@@ -402,20 +402,20 @@ test("/model opens a picker; choosing switches the model for later turns", async
 
 test("/model <name> switches directly; unknown names are rejected", async () => {
   const { type, frame } = await start([]);
-  await type("/model claude-haiku-4-5");
+  await type("/model claude-haiku-4-5"); // the provider can be left out when unambiguous
   await type(ENTER);
-  expect(frame()).toMatch(/claude-haiku-4-5 · \d{4}-/); // Haiku takes no effort setting
+  expect(frame()).toMatch(/anthropic\/claude-haiku-4-5 · \d{4}-/); // Haiku takes no effort setting
   await type("/model gpt-4");
   await type(ENTER);
-  expect(frame()).toContain(
-    "Unknown model gpt-4. Available: claude-opus-5-5, claude-sonnet-5-5, claude-haiku-4-5",
+  expect(frame().replace(/\s+/g, " ")).toContain(
+    "Unknown model gpt-4. Available: anthropic/claude-opus-5-5, anthropic/claude-sonnet-5-5, anthropic/claude-haiku-4-5",
   );
 });
 
 test("with a single model, /model is hidden and explains why when typed", async () => {
   const { type, frame } = await start(
     [],
-    '[providers.local]\napi_key = "k"\ndefault_model = "my/model"\n[agent]\nprovider = "local"\n',
+    '[agent]\nmodel = "local/my/model"\n[providers.local]\napi_key = "k"\n',
   );
   await type("/");
   expect(frame()).toContain("/usage");
@@ -427,7 +427,7 @@ test("with a single model, /model is hidden and explains why when typed", async 
   expect(frame()).not.toContain("Switch model");
   await type("/model x");
   await type(ENTER);
-  expect(frame()).toContain("Only one model is configured (my/model)");
+  expect(frame()).toContain("Only one model is configured (local/my/model)");
 });
 
 const notes = definePlugin({
@@ -531,7 +531,7 @@ test("a plugin's session section is frozen for the session and re-read on /new",
 test("a disabled plugin contributes no command and no context", async () => {
   const { type, frame, model } = await start(
     [{ stop: "end_turn", content: [text("ok")] }],
-    '[providers.anthropic]\napi_key = "k"\ndefault_model = "claude-opus-5-5"\n[plugins.notes]\nenabled = false\n',
+    '[agent]\nmodel = "anthropic/claude-opus-5-5"\n[providers.anthropic]\napi_key = "k"\n[plugins.notes]\nenabled = false\n',
     [notes],
   );
   await type("/");
@@ -577,7 +577,7 @@ test("/effort on a model without effort support says it isn't sent", async () =>
   await type("/effort high");
   await type(ENTER);
   expect(frame().replace(/\s+/g, " ")).toContain(
-    "claude-haiku-4-5 doesn't take an effort setting, so it isn't sent.",
+    "anthropic/claude-haiku-4-5 doesn't take an effort setting, so it isn't sent.",
   );
 });
 
@@ -619,7 +619,7 @@ test("/status shows provider, capabilities, prompt parts, plugins and paths", as
   await type(ENTER);
   const f = frame().replace(/\s+/g, " ");
   expect(f).toContain("provider: anthropic · https://api.anthropic.com");
-  expect(f).toContain("model: claude-opus-5-5");
+  expect(f).toContain("model: anthropic/claude-opus-5-5");
   expect(f).toMatch(/system prompt: rules\.md \d+ · total \d+ chars/);
   expect(f).toContain("notes (context, /note)");
   expect(f).toContain("config: ");
@@ -667,7 +667,7 @@ test("a dangerous tool offers only Yes/No and shows the full input", async () =>
 test("/status lists tools with their declared risk and the rules in effect", async () => {
   const { type, frame } = await start(
     [],
-    '[providers.anthropic]\napi_key = "k"\ndefault_model = "claude-opus-5-5"\n[permissions]\nask = ["t__lines"]\n',
+    '[agent]\nmodel = "anthropic/claude-opus-5-5"\n[providers.anthropic]\napi_key = "k"\n[permissions]\nask = ["t__lines"]\n',
   );
   await type("/status");
   await type(ENTER);

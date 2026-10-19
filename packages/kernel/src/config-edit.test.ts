@@ -3,80 +3,73 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resolvePaths } from "./config.ts";
-import {
-  saveAllowRule,
-  saveDefaultModel,
-  saveEffort,
-  withListItem,
-  withValue,
-} from "./config-edit.ts";
+import { saveAllowRule, saveEffort, saveModel, withListItem, withValue } from "./config-edit.ts";
 
 const CONFIG = `# my notes
 [agent]
-provider = "my-proxy"
+model = "my-proxy/vendor/model-a"   # main model
 
 [providers.anthropic]
-default_model = "claude-opus-5-5"
+api_key = "k"
 
 [providers.my-proxy]
 base_url = "http://127.0.0.1:8080"
-default_model = "vendor/model-a"   # required; used at startup
 models = ["vendor/model-a", "vendor/model-b"]
 
 [generation]
 effort = "medium"
 `;
 
+const tempPaths = () => resolvePaths(mkdtempSync(join(tmpdir(), "ivy-edit-")));
+
 test("replaces only the value in the right section, keeping comments and layout", () => {
-  const out = withValue(CONFIG, ["providers", "my-proxy"], "default_model", "vendor/model-b");
+  const out = withValue(CONFIG, ["agent"], "model", "my-proxy/vendor/model-b");
   expect(out).toBe(
     CONFIG.replace(
-      'default_model = "vendor/model-a"   # required',
-      'default_model = "vendor/model-b"   # required',
+      'model = "my-proxy/vendor/model-a"   # main',
+      'model = "my-proxy/vendor/model-b"   # main',
     ),
   );
-  expect(out).toContain('[providers.anthropic]\ndefault_model = "claude-opus-5-5"');
 });
 
 test("quoted section names and single-quoted values work", () => {
-  const toml = `[providers."my.proxy"]\ndefault_model = 'a'\n`;
-  expect(withValue(toml, ["providers", "my.proxy"], "default_model", "b")).toBe(
-    `[providers."my.proxy"]\ndefault_model = "b"\n`,
+  const toml = `[providers."my.proxy"]\nbase_url = 'a'\n`;
+  expect(withValue(toml, ["providers", "my.proxy"], "base_url", "b")).toBe(
+    `[providers."my.proxy"]\nbase_url = "b"\n`,
   );
 });
 
-test("adds default_model right after the header when the section lacks it", () => {
-  expect(
-    withValue("[providers.p]\napi_key = 'k'\n", ["providers", "p"], "default_model", "m"),
-  ).toBe("[providers.p]\ndefault_model = \"m\"\napi_key = 'k'\n");
+test("adds the key right after the header when the section lacks it", () => {
+  expect(withValue("[providers.p]\napi_key = 'k'\n", ["providers", "p"], "base_url", "u")).toBe(
+    "[providers.p]\nbase_url = \"u\"\napi_key = 'k'\n",
+  );
 });
 
-test("an unknown provider is an error", () => {
-  expect(() => withValue(CONFIG, ["providers", "nope"], "default_model", "m")).toThrow(
+test("an unknown section is an error", () => {
+  expect(() => withValue(CONFIG, ["providers", "nope"], "base_url", "u")).toThrow(
     "No [providers.nope] section",
   );
 });
 
-test("saveDefaultModel writes, validates and returns the new config", () => {
-  const paths = resolvePaths(mkdtempSync(join(tmpdir(), "ivy-edit-")));
+test("saveModel writes [agent] model, validates and returns the new config", () => {
+  const paths = tempPaths();
   writeFileSync(paths.config, CONFIG);
-  const config = saveDefaultModel(paths, "my-proxy", "vendor/model-b");
-  expect(config.activeProvider.default_model).toBe("vendor/model-b");
-  expect(readFileSync(paths.config, "utf8")).toContain("# my notes");
+  const config = saveModel(paths, "anthropic/claude-opus-5-5");
+  expect(config.model).toMatchObject({ id: "claude-opus-5-5", provider: { name: "anthropic" } });
+  expect(readFileSync(paths.config, "utf8")).toContain(
+    'model = "anthropic/claude-opus-5-5"   # main model',
+  );
 });
 
 test("if the result doesn't validate, the file is restored", () => {
-  const paths = resolvePaths(mkdtempSync(join(tmpdir(), "ivy-edit-")));
-  const broken = `${CONFIG}\n[generation]\nefort = "x"\n`; // already invalid
-  writeFileSync(paths.config, broken);
-  expect(() => saveDefaultModel(paths, "my-proxy", "vendor/model-b")).toThrow(
-    "Could not save default_model",
-  );
-  expect(readFileSync(paths.config, "utf8")).toBe(broken);
+  const paths = tempPaths();
+  writeFileSync(paths.config, CONFIG);
+  expect(() => saveModel(paths, "nope/model")).toThrow("Could not save the model");
+  expect(readFileSync(paths.config, "utf8")).toBe(CONFIG);
 });
 
 test("saveEffort replaces [generation] effort in place", () => {
-  const paths = resolvePaths(mkdtempSync(join(tmpdir(), "ivy-edit-")));
+  const paths = tempPaths();
   writeFileSync(paths.config, CONFIG);
   expect(saveEffort(paths, "high").generation.effort).toBe("high");
   expect(readFileSync(paths.config, "utf8")).toBe(
@@ -85,8 +78,8 @@ test("saveEffort replaces [generation] effort in place", () => {
 });
 
 test("saveEffort adds a [generation] table when there is none", () => {
-  const paths = resolvePaths(mkdtempSync(join(tmpdir(), "ivy-edit-")));
-  const noGeneration = '[providers.anthropic]\ndefault_model = "claude-opus-5-5"\n';
+  const paths = tempPaths();
+  const noGeneration = '[agent]\nmodel = "anthropic/claude-opus-5-5"\n[providers.anthropic]\n';
   writeFileSync(paths.config, noGeneration);
   expect(saveEffort(paths, "low").generation.effort).toBe("low");
   expect(readFileSync(paths.config, "utf8")).toBe(
@@ -95,9 +88,9 @@ test("saveEffort adds a [generation] table when there is none", () => {
 });
 
 test("a dotted table name is not mistaken for a shorter one", () => {
-  const toml = '[providers.a.b]\ndefault_model = "x"\n[providers.a]\ndefault_model = "y"\n';
-  expect(withValue(toml, ["providers", "a"], "default_model", "z")).toBe(
-    '[providers.a.b]\ndefault_model = "x"\n[providers.a]\ndefault_model = "z"\n',
+  const toml = '[providers.a.b]\nbase_url = "x"\n[providers.a]\nbase_url = "y"\n';
+  expect(withValue(toml, ["providers", "a"], "base_url", "z")).toBe(
+    '[providers.a.b]\nbase_url = "x"\n[providers.a]\nbase_url = "z"\n',
   );
 });
 

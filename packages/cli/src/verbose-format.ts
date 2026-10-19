@@ -43,7 +43,7 @@ export function statusReport(
   sessionFile: string,
   prompt: PromptPart[],
 ): string {
-  const p = ivy.config.activeProvider;
+  const ref = ivy.agent.modelRef;
   const total = prompt.reduce((n, part) => n + part.text.length, 0);
   const plugins = ivy.plugins.list().map((plugin) => {
     const tools = plugin.tools?.length ?? 0;
@@ -57,9 +57,9 @@ export function statusReport(
   });
   const lines = [
     "Status",
-    `  provider: ${p.name} · ${p.base_url}`,
     `  model: ${model}`,
-    ...ivy.capabilities.explain(model).map((l) => `    ${l}`),
+    `  provider: ${ref.provider.name} · ${ref.provider.base_url}`,
+    ...ivy.capabilities.explain(ref).map((l) => `    ${l}`),
     `  system prompt: ${prompt.map((part) => `${part.name} ${part.text.length}`).join(" · ")} · total ${total} chars`,
     `  tools: ${
       ivy.plugins

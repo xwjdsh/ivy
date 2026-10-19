@@ -8,13 +8,13 @@ import { errorMessage } from "./log.ts";
  * keeps them). Every edit is re-validated; on any problem the file is left as it was.
  */
 
-/** Save `/model`'s choice as the provider's `default_model`. */
-export function saveDefaultModel(paths: Paths, provider: string, model: string): Config {
+/** Save `/model`'s choice, "<provider>/<model id>", as `[agent] model`. */
+export function saveModel(paths: Paths, model: string): Config {
   return saveEdit(
     paths,
-    (toml) => withValue(toml, ["providers", provider], "default_model", model),
-    (c) => c.providers[provider]?.default_model === model,
-    "default_model",
+    (toml) => withValue(toml, ["agent"], "model", model, { createSection: true }),
+    (c) => c.model.ref === model,
+    "the model",
   );
 }
 

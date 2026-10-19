@@ -5,12 +5,13 @@ import {
   type Effort,
   errorMessage,
   type Ivy,
+  modelChoices,
   type PermissionChoice,
   type RequestInfo,
   Session,
   type SessionSummary,
-  saveDefaultModel,
   saveEffort,
+  saveModel,
   setLogLevel,
   setLogSink,
   summarizeUsage,
@@ -326,7 +327,7 @@ export function App({
   >(null);
   const closeDialog = () => setDialog(null);
 
-  const models = ivy.config.activeProvider.models;
+  const models = modelChoices(ivy.config, ivy.agent.model);
   const commands = availableCommands(
     models.length,
     ivy.plugins
@@ -334,7 +335,7 @@ export function App({
       .map(({ def }) => ({ name: def.name, args: def.args, description: def.description })),
   );
 
-  // /model switches now and saves the choice as the provider's default_model.
+  // /model switches now, to a model on any provider, and saves the choice as [agent] model.
   const [model, setModel] = useState(ivy.agent.model);
 
   /** Save a switch to config.toml; if that fails, it still applies for this run. */
@@ -353,7 +354,7 @@ export function App({
     if (level === effort) return;
     ivy.capabilities.setEffort(level);
     setEffortState(level);
-    const used = ivy.capabilities.for(model).effort;
+    const used = ivy.capabilities.for(ivy.agent.modelRef).effort;
     const note =
       used === undefined
         ? ` ${model} doesn't take an effort setting, so it isn't sent.`
@@ -364,11 +365,14 @@ export function App({
   };
   const switchModel = (name: string) => {
     if (name === model) return;
-    ivy.agent.setModel(name);
+    try {
+      ivy.agent.setModel(name);
+    } catch (err) {
+      info(`Can't switch to ${name}: ${errorMessage(err)}`, "error");
+      return;
+    }
     setModel(name);
-    saveChoice(`Model: ${name}`, () =>
-      saveDefaultModel(ivy.paths, ivy.config.activeProvider.name, name),
-    );
+    saveChoice(`Model: ${name}`, () => saveModel(ivy.paths, name));
   };
   const openPicker = () => {
     const others = Session.list(ivy.paths.sessions).filter((s) => s.id !== sessionRef.current.id);
@@ -392,15 +396,18 @@ export function App({
         return;
       case "/model": {
         const name = args[0];
+        // The provider can be left out when only one provider has a model by that id.
+        const byId = models.filter((m) => m.slice(m.indexOf("/") + 1) === name);
+        const pick = name && models.includes(name) ? name : byId.length === 1 ? byId[0] : undefined;
         if (models.length < 2) {
           info(
-            `Only one model is configured (${model}). Add more to \`models\` under [providers.${ivy.config.activeProvider.name}] to switch.`,
+            `Only one model is configured (${model}). Add more to \`models\` under a [providers.*] section to switch.`,
             "warn",
           );
         } else if (!name) {
           setDialog({ kind: "model" });
-        } else if (models.includes(name)) {
-          switchModel(name);
+        } else if (pick) {
+          switchModel(pick);
         } else {
           info(`Unknown model ${name}. Available: ${models.join(", ")}`, "error");
         }
@@ -557,7 +564,7 @@ export function App({
       {permission && <PermissionPrompt call={permission.call} onChoose={answerPermission} />}
       {dialog?.kind === "model" && (
         <Picker
-          title={`Switch model on ${ivy.config.activeProvider.name} (saved as default)`}
+          title="Switch model (saved as default)"
           items={models}
           itemKey={(name) => name}
           initialIndex={Math.max(0, models.indexOf(model))}
@@ -604,9 +611,8 @@ export function App({
         onChange={setInputValue}
       />
       <StatusBar
-        provider={ivy.config.activeProvider.name}
         model={model}
-        effort={ivy.capabilities.for(model).effort}
+        effort={ivy.capabilities.for(ivy.agent.modelRef).effort}
         sessionId={sessionId}
         tokens={formatTokens(tokens)}
         verbose={verboseOn}
