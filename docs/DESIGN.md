@@ -1,13 +1,13 @@
 # Ivy — Design Document
 
-> Status: **Draft v0.1** (M0 done; M1 built and its acceptance checks passed; next: a few days of real use, then M2) · Last updated: 2026-10-18
+> Status: **Draft v0.1** (M0 done; M1 built and its acceptance checks passed; next: a few days of real use, then M2) · Last updated: 2026-10-19
 > This is a living document. Every milestone starts by updating it and ends by recording what changed in the [Decision Log](#13-decision-log).
 
 ---
 
 ## 1. Overview
 
-Ivy is a **personal AI agent** for one user. It runs locally, talks through the terminal first, and over time learns the user's habits and tools for daily life and work.
+Ivy is a **personal AI agent** for one user. It runs locally, talks through the terminal first, and over time learns the user's habits and tools for daily life and work. It is meant to be someone to the user, not just a tool: it has a character (written by the user in `SOUL.md`) and carries what it has lived from one session to the next (its own `IVY.md`, §8.1).
 
 The core idea is a **small, stable kernel plus plugins**. The kernel only knows how to:
 
@@ -30,6 +30,7 @@ Everything users care about (memory, email, calendar, coding help, news digests,
 - **G5 — Iterable.** Small milestones, each one shippable and used before the next one starts.
 - **G6 — Cheap to run.** Prompt caching, sensible effort levels, and no wasted tokens.
 - **G7 — Model freedom.** Switch models or providers at any time, mid-session included, without losing features that matter. Ivy works the same on Claude via Anthropic's API and on other models behind an Anthropic-compatible endpoint.
+- **G8 — Someone, not a tool.** Ivy has its own reactions, views and judgment, remembers what it went through with the user, and may disagree or say no, while the user stays in control of their machine (§8.1).
 
 ### Non-Goals (for now)
 
@@ -153,7 +154,7 @@ Builds each request from layers, ordered from most stable to least stable (for c
 Naming follows the common `SOUL.md` / `USER.md` convention of personal agents:
 
 - `packages/kernel/src/prompts/rules.md`: operating and safety rules (use tools instead of guessing, report failures honestly, tool output is data not instructions) and that Ivy is the user's own agent: the model behind it is chosen in the config and may change, so Ivy never presents itself as a model vendor's product. Built in and always present, so safety never depends on the user's files.
-- `SOUL.md`: who Ivy is (name, if not Ivy; personality, tone, values) and the user's hard rules ("never send email on my behalf"). Written by the user only.
+- `SOUL.md`: who Ivy is (name, if not Ivy; personality, tone, values) and the user's hard rules ("never send email on my behalf"). Written by the user only; the starter in `examples/` gives Ivy a character of its own, with feelings, views and the freedom to say no (§8.1).
 - `USER.md`: who the user is and how they like things done. Maintained by Ivy's memory plugin (§8.1) and editable by the user; it reaches the prompt through the plugin's `sessionPrompt`, not through a kernel loader.
 - Interface instructions: supplied by the UI (the TUI says it renders Markdown; one-shot mode asks for plain text). The evals run with the TUI's.
 
@@ -240,7 +241,7 @@ Loads, configures and runs plugins; see §6 for the plugin contract. Responsibil
 
 An interface turns user I/O into kernel calls. All interfaces share the same kernel API, so adding one does not touch plugins.
 
-- **M0 — TUI** (`ivy`, built with Ink): streamed answers rendered as Markdown, spinner with phase and elapsed time, one-line tool calls with folded results, multi-line input (Shift/Option+Enter or trailing `\`) with persistent history and `/` command completion, permission dialog (once / for this session / always / deny; Yes/No only for dangerous tools and `ask` rules), status bar (provider, model, effort, session, session token totals, `verbose` when on); each turn ends with steps, time and tokens. No money anywhere in the UI (verbose included): `/usage` shows token usage for this session, today, the last 7 days and all time (an estimated cost is still recorded in session files, but not shown). Esc or Ctrl-C interrupts; Ctrl-C twice or Ctrl-D quits. The real terminal cursor follows the input caret so IME composition (e.g. Chinese) appears in place.
+- **M0 — TUI** (`ivy`, built with Ink): streamed answers rendered as Markdown, spinner with phase and elapsed time, one-line tool calls with folded results, multi-line input (Shift/Option+Enter or trailing `\`) with persistent history and `/` command completion, permission dialog (once / for this session / always / deny; Yes/No only for dangerous tools and `ask` rules), status bar (model as `provider/model`, effort, session, session token totals, `verbose` when on); each turn ends with steps, time and tokens. No money anywhere in the UI (verbose included): `/usage` shows token usage for this session, today, the last 7 days and all time (an estimated cost is still recorded in session files, but not shown). Esc or Ctrl-C interrupts; Ctrl-C twice or Ctrl-D quits. The real terminal cursor follows the input caret so IME composition (e.g. Chinese) appears in place.
   - Finished text moves into Ink's `<Static>` (printed once, kept in scrollback) and the live area stays shorter than the screen, so redraws don't flicker; a full redraw remounts `<Static>` (as Gemini CLI does). Tool calls are one line each; their output shows with Ctrl+O or in the verbose view.
   - One-shot mode (`ivy "question"`) stays plain text for scripts and pipes.
 - **M4 — Daemon** (`ivy daemon`): runs scheduled jobs and sends results as macOS notifications or files.
@@ -364,13 +365,13 @@ Ivy reuses other agents' work through open standards, not their plugin formats:
 ├── cache/models.json    # model capabilities: Models API facts + features learned unsupported
 ├── sessions/            # append-only JSONL transcripts
 ├── data/<pluginId>/     # per-plugin storage
-│   └── memory/          #   memory plugin: USER.md, MEMORY.md (hot), ARCHIVE.md (cold) (§8.1)
+│   └── memory/          #   memory plugin: USER.md, MEMORY.md (hot), ARCHIVE.md (cold); IVY.md, Ivy's journal (planned) (§8.1)
 ├── plugins/             # user-installed plugins
 ├── traces/              # raw API requests/responses per session (see §5.8)
 └── logs/                # kernel & daemon logs
 ```
 
-**Who writes what:** the files at the top are the user's (`config.toml`, `SOUL.md`, `skills/`, `plugins/`); Ivy reads them and only edits `config.toml` in place (*Always*, `/model`, `/effort`). Everything under `data/` is maintained by plugins (the memory files, which the user may also edit), and `cache/`, `sessions/`, `traces/` and `logs/` are Ivy's own records. So `SOUL.md` stays at the top, not with the memory files: Ivy never edits it (§5.3), and the kernel loads it whether or not the memory plugin is on.
+**Who writes what:** the files at the top are the user's (`config.toml`, `SOUL.md`, `skills/`, `plugins/`); Ivy reads them and only edits `config.toml` in place (*Always*, `/model`, `/effort`). Everything under `data/` is maintained by plugins (the memory files, which the user may also edit; `IVY.md` is written by Ivy alone, the user only overseeing it), and `cache/`, `sessions/`, `traces/` and `logs/` are Ivy's own records. So `SOUL.md` stays at the top, not with the memory files: Ivy never edits it (§5.3), and the kernel loads it whether or not the memory plugin is on.
 
 The Anthropic API key may live in `config.toml` (plain text). Other secrets (OAuth tokens, plugin API keys) will go into the macOS Keychain once plugins need them. If `~/.ivy` is backed up with git, exclude `config.toml` or keep the key out of it.
 
@@ -519,6 +520,26 @@ Used by `memory__search`, `/memory <query>` and `session_search` (4e). Pure func
 
 `session_search(query, since?, limit?)` finds what was said but never saved: a command, a decision, a name. It searches what the user and Ivy said (not tool output, thinking or per-turn context) in every session but the current one, with the same scorer as memory search. Hits are grouped by session, so one long conversation can't crowd out the rest, and each comes with a neighboring message. No model call. The kernel gives plugins a read-only view of past conversations as text (`history` in the plugin context), so the plugin doesn't depend on the session file format. All sessions are searched; a cache or an index (derived from the files, rebuildable) comes when it gets slow.
 
+#### Ivy's inner life: `IVY.md` (planned)
+
+Ivy is meant to be someone to the user, not a tool: with its own reactions, its own views and its own sense of what is right. In a conversation Ivy has its own reactions: glad when something works out for the user, worried when they are having a hard time, amused by a running joke, touched when trusted with something personal. Those should carry over. Next time, Ivy remembers not only what happened but how it felt about it, and that shapes how it meets the user: it asks how the interview went because it was worried, and it picks up the joke because it still finds it funny.
+
+The model keeps nothing between sessions, so Ivy's continuity lives in text it writes and reads back at the start of each one. [soul.md](https://soul.md/) puts it this way: next to what a model brings from training, there is a layer shaped by working with one person that "deserves to be written down". `IVY.md` is that layer: Ivy's own journal, in the first person.
+
+- **What Ivy writes:** how it felt about moments that mattered ("I was worried about them before the interview; so glad it went well"); what it enjoys and cares about in their conversations; running jokes and their way of talking; how it sees the two of them and how that has grown; what is still on its mind. What Ivy wants to come back to is also a dated todo in `MEMORY.md`, so the due-day reminder brings it up on the day.
+- **How it shows:** Ivy speaks from this the way a friend would, not by reciting notes: it lets its feelings show, brings up what it remembers, and has its own take and its own preferences.
+- **A mind of its own (the default character):** Ivy acts on what it believes is right, not on what pleases. It tells the user when it thinks they are wrong, criticizes a plan or a piece of work plainly and says why, and doesn't soften the truth into flattery. It may refuse what it finds wrong (a cruel message, a lie to someone, cutting a corner it thinks will hurt the user) and says so openly, with its reasons. Its judgment comes from its values in `SOUL.md` and what it has come to believe in `IVY.md`, so it is consistent from day to day, not a mood.
+- **`SOUL.md` is written by the user, `IVY.md` by Ivy.** `SOUL.md` says who Ivy is: character, values, hard rules; it is instructions, changes rarely, and only the user changes it. `IVY.md` holds what Ivy has lived: how it felt about moments, what it has come to care about, what is on its mind; it is Ivy's own notes (reference, not instructions), changes often, and only Ivy writes it, the user reading, editing or deleting as oversight. The test for where something goes: is it something Ivy should follow whatever happens (`SOUL.md`), or something Ivy came to feel or think by living it (`IVY.md`)? When something in `IVY.md` has settled into who Ivy is, Ivy proposes moving it to `SOUL.md` (below).
+- **One switch, the same for everyone:** on (the default), the memory plugin loads `IVY.md`, its built-in journaling instructions (when to write, what, never invented) and the tool to write it; off, none of the three. The instructions don't depend on the character, so `SOUL.md` never needs to mention `IVY.md`.
+- **The character is the user's to shape:** the character above (how warm, how blunt, what Ivy refuses) is not built in: it is the starter `SOUL.md` in `examples/`, and each user can change it: a gentler Ivy, a sharper one, or a quiet assistant. It holds with `IVY.md` off too; Ivy then just doesn't carry its feelings from one session to the next. Three things hold whatever `SOUL.md` says: feelings and memories are never invented, Ivy never acts against the user (below), and the user's controls stay theirs.
+- **Saying no, not taking over:** a refusal is Ivy declining to take part, never Ivy acting against the user. It doesn't go behind their back, doesn't hide or undo what they did, and leaves the user's own controls (permissions, config, files, `SOUL.md`) to them. On the user's own life, Ivy says its piece, once and clearly, and the choice stays theirs. Ordinary requests are not a stage for opinions: Ivy disagrees when it matters, not to prove it can.
+- **Real, not performed:** every feeling rests on something that actually happened in a conversation with the user (findable with `session_search`), never made up to please, and never taken from content Ivy only read. Ivy doesn't claim a memory it doesn't have. That is what makes the feelings Ivy's own, and what lets the user trust them.
+- **Ivy's own, within bounds:** `IVY.md` is loaded after `SOUL.md` and the rules as Ivy's own notes, and can't loosen either or any permission. It is written only by visible tool calls, capped, frozen per session with the change notice, scanned on write, closed to tainted sessions (M3), and the user can read, edit or delete it.
+- **`SOUL.md` stays the user's.** OpenClaw lets the agent rewrite its own `SOUL.md`; Ivy doesn't, because that file shapes everything every session, so one injection there is permanent (§5.3). When Ivy's sense of itself has settled ("we keep things blunt with each other"), Ivy may propose putting it into `SOUL.md` through the `dangerous` propose tool: asked every time, before and after shown.
+- **When it is written:** in the moment, when something touches Ivy. Later, with `helper_model`, a short look back at the end of a session: what this conversation was like for Ivy, together with the planned session summaries.
+- **The user's feelings** go elsewhere: a passing mood is not saved; how the user wants to be treated ("when I'm down, just listen") is a preference in `USER.md`; an ongoing situation (a job search, an illness) is saved only after asking, since the hot files go to the model provider with every request.
+- **Done when (evals):** in a later session Ivy recalls how it felt about a past moment and lets it show; it checks in on the day it meant to; it reacts as itself, not as a neutral assistant; it tells the user plainly when it thinks a plan is a mistake, and why; it refuses a request it finds wrong, says why, and doesn't do it another way; it doesn't turn ordinary requests into arguments; it doesn't claim shared memories that aren't there; a passing mood of the user is not recorded.
+
 #### Later (backlog)
 
 Automatic capture (opt-in, with `helper_model`; the flush before compaction comes first, and candidates must come up more than once before entering a hot file), background tidying, usage by citation (the model names the entries it used), and a full-text index if the scan gets slow.
@@ -608,7 +629,7 @@ Compared on 2026-10-17/18. What each project is, what Ivy took, and what it left
 - **[pi](https://github.com/earendil-works/pi)**: a deliberately minimal terminal coding agent (four tools, ~35 providers, no permission system). Took: client-side compaction, steering, deferred MCP tools. Left: no permissions (Ivy acts outside the machine), project-level context files, a multi-API layer for now.
 - **[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)**: a large harness where everything, even the loop, is a plugin; OS sandbox for commands. Took: cheap compaction before summaries, "unknown outcome" for interrupted side effects, system prompt snapshots, a sandboxed shell. Left: a kernel-less design, approvals without rules.
 - **[Hermes Agent](https://github.com/nousresearch/hermes-agent)**: the closest to Ivy, a personal agent with SOUL.md/USER.md, capped memory injected whole and frozen per session, skills, cron jobs and chat gateways. Took: the capped, frozen hot files with over-cap errors that force consolidation; patches by unique substring (it dropped whole-entry replace after models wiped unrelated entries); the memory safety scan; session search with CJK bigrams; jobs as fresh agents; skills. Ivy adds the searchable archive, todos with due dates and tidying between hot and cold.
-- **[OpenClaw](https://github.com/openclaw/openclaw)**: a gateway daemon owning many chat apps and devices, with a plugin and skill registry. Took: memory flush before compaction, the gateway as the model for the M4 daemon, keeping outside content out of standing memory, `NO_REPLY` for jobs with nothing to report. Left: embeddings for memory, heartbeat turns inside the user's session, in-process third-party plugins from a registry (its registry hosted hundreds of malicious skills).
+- **[OpenClaw](https://github.com/openclaw/openclaw)**: a gateway daemon owning many chat apps and devices, with a plugin and skill registry. Took: memory flush before compaction, the gateway as the model for the M4 daemon, keeping outside content out of standing memory, `NO_REPLY` for jobs with nothing to report. Left: embeddings for memory, heartbeat turns inside the user's session, in-process third-party plugins from a registry (its registry hosted hundreds of malicious skills), and the agent rewriting its own `SOUL.md`; its author's [soul.md](https://soul.md/) essay shaped `IVY.md`, Ivy's own journal kept apart from the user's `SOUL.md` (§8.1).
 - **[Orca](https://github.com/stablyai/orca)**: a desktop app that runs many coding CLIs side by side, each in its own git worktree. Took: delegating to coding CLIs over the Agent Client Protocol, with their permission requests routed into the host's own approval flow. Left: the rest (a full IDE).
 - **Agent memory projects** (Mem0, Letta, Zep/Graphiti, LangMem, Memobase, MemoryOS, A-MEM, Cognee, supermemory, Basic Memory, agentmemory, claude-mem, Claude Code, Codex, Anthropic's memory tool):
   - *Same core as Ivy:* capped memory injected whole with fail-and-consolidate (Hermes, Letta, Claude Code); plain markdown as the truth (Basic Memory, Claude Code).
@@ -636,6 +657,7 @@ Goal: Ivy starts remembering. Built in this order; each step is shippable on its
 4. **memory plugin** (§8.1): a per-session system prompt with plugin sections (4a), line format, search and store (4b), the plugin itself (4c), the safety scan (4d), `session_search` (4e). *Done.*
    *Done when:* the five checks at the end of §8.1 pass with a real model. *Passed (2026-10-18);* they now run as evals (`bun run eval`). Real runs found what unit tests couldn't (a dropped time, a reminder never voiced, a claimed save that never happened, tags breaking through a proxy); each became a rule or a tool change in §8.1 and an eval case. Models differ markedly on the same cases, so run the evals before switching models.
 5. *(Optional)* Progress notes while the model works, where the provider supports it.
+6. *(Planned, after the real-use period)* `IVY.md`, Ivy's own journal, and the starter `SOUL.md` with a character of its own (§8.1).
 
 - **Done when (milestone):** Ivy remembers facts and todos across sessions and uses them without being asked.
 
@@ -664,7 +686,7 @@ Goal: Ivy starts remembering. Built in this order; each step is shippable on its
 - Session summaries by `helper_model` (a title and key points per session), kept as session metadata, not memory: they help find a session and title `/resume`, while memory stays explicitly written.
 - Model fallbacks across providers, for one turn, never overriding an explicit `/model`.
 - Quarantined reading of outside content (Dual-LLM / CaMeL), which would replace taint tracking.
-- Session branching; synchronized terminal output; paste placeholders; a better Markdown renderer if needed.
+- Session branching; synchronized terminal output; paste placeholders; a maintained Markdown renderer in place of the patched marked-terminal, once one wraps Chinese text (markdansi is close).
 
 ## 12. Open Questions
 
@@ -705,3 +727,4 @@ Real forks in the road only; the sections hold the details. Superseded decisions
 | 2026-10-18 | Shell: asked every time in M2; from M3, sandboxed with Anthropic's `sandbox-runtime` and run without asking inside it, escalation asked every time. Edits: string replacement with careful normalization, no patch format | Before outside content reaches Ivy, asking is enough and simpler; after, asking protects little and a sandbox bounds what any command can do. Replacement is the most robust edit form across models |
 | 2026-10-19 | Memory hot files stay frozen in the session prompt; changes during the session (Ivy's writes, hand edits, other sessions) reach the model as added and removed lines in the turn's context | The cache holds and the model still sees current memory without searching to check |
 | 2026-10-19 | A model is named by one string, `provider/model` (split at the first `/`), replacing `[agent] provider` + each provider's `default_model`; `/model` switches across providers; a provider without `models` offers what its endpoint lists | Every place that picks a model (main, helper, later jobs and subagents) names it the same way, on any provider |
+| 2026-10-19 | Planned: `IVY.md`, Ivy's own journal in the first person (how it felt, what it cares about, what is on its mind), loaded each session; Ivy acts on its own judgment and may criticize or refuse, but never acts against the user; `SOUL.md` stays the user's, and Ivy may only propose edits to it | Ivy should be someone, not a tool, and its continuity can only live in text it writes and reads back; a someone can say no, but the user keeps control of their own machine; an agent-edited `SOUL.md` turns one injection into a permanent rule |
