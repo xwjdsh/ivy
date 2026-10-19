@@ -3,10 +3,11 @@
 // lock serializes changes within the process: a model may call several memory tools in
 // one step, and they run in parallel.
 
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseFile, serializeFile } from "./format.ts";
 import { FILE_NAMES, FILES, type FileName, type Files } from "./store.ts";
+import { Serial, writeAtomic } from "./write.ts";
 
 const HEADERS: Record<FileName, string> = {
   user: "# User\nAbout the user and how they like things done. Maintained by Ivy; you can edit it. One entry per line.\n\n",
@@ -17,7 +18,7 @@ const HEADERS: Record<FileName, string> = {
 };
 
 export class MemoryFiles {
-  private queue: Promise<unknown> = Promise.resolve();
+  private readonly serial = new Serial();
 
   constructor(readonly dir: string) {}
 
@@ -37,26 +38,21 @@ export class MemoryFiles {
 
   /** Write the files that changed (by content), atomically. */
   write(before: Files, after: Files): void {
-    mkdirSync(this.dir, { recursive: true });
     for (const file of FILES) {
       const text = serializeFile(after[file]);
       if (text === serializeFile(before[file]) && existsSync(this.path(file))) continue;
-      const tmp = `${this.path(file)}.tmp`;
-      writeFileSync(tmp, text);
-      renameSync(tmp, this.path(file));
+      writeAtomic(this.path(file), text);
     }
   }
 
   /** Read, change and write as one step, one at a time. */
   change<T>(fn: (files: Files) => T & { files?: Files }): Promise<T> {
-    const run = this.queue.then(() => {
+    return this.serial.run(() => {
       const before = this.read();
       const result = fn(before);
       if (result.files) this.write(before, result.files);
       return result;
     });
-    this.queue = run.catch(() => {});
-    return run;
   }
 }
 

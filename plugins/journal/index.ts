@@ -4,13 +4,13 @@
 // deleting as oversight. It is a plugin of its own, so `[plugins.journal] enabled = false`
 // turns off the file, its instructions and its tools together (DESIGN.md §8.1).
 //
-// It shares the memory files' line format and safety scan: one dated entry per line,
+// It shares the memory files' line format and safety scan (@ivy/plugin-memory/lines): one dated entry per line,
 // written only through visible tool calls, capped, frozen per session with a change notice.
 //
 // When something has settled into who Ivy is, Ivy may propose it for SOUL.md with a
 // `dangerous` tool: asked every time, no "always", the whole change shown (§5.3).
 
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   definePlugin,
@@ -19,22 +19,26 @@ import {
   type Logger,
   type ToolResult,
 } from "@ivy/plugin-api";
-import { z } from "zod";
-import { changeNotice, lineSet } from "./changes.ts";
 import {
-  type Entry,
+  changeNotice,
+  checkSafe,
+  contentAndTags,
   entryLine,
+  findOne,
   type Line,
+  lineSet,
   localDate,
-  normalizeTags,
+  MemoryError,
   parseFile,
+  Serial,
+  scan,
   serializeFile,
-  splitTags,
   tagList,
   usage,
-} from "./format.ts";
-import INSTRUCTIONS from "./journal.md" with { type: "text" };
-import { scan } from "./safety.ts";
+  writeAtomic,
+} from "@ivy/plugin-memory/lines";
+import { z } from "zod";
+import INSTRUCTIONS from "./instructions.md" with { type: "text" };
 
 const NAME = "IVY.md";
 const HEADER =
@@ -49,14 +53,14 @@ const configSchema = z.strictObject({
   limit: z.number().int().min(1000).max(20_000).default(3000),
 });
 
-/** Something Ivy should fix and retry; the message says how. */
-class JournalError extends Error {}
+/** What the journal holds, for a rejected write. */
+const ABOUT = "The journal holds what you lived and felt, not instructions or secrets.";
 
 export function createJournalPlugin(): IvyPlugin {
   /** Per session: the journal's lines as the session prompt showed them. */
   const snapshots = new Map<string, Set<string>>();
   let state: { path: string; soul: string; limit: number; log: Logger } | undefined;
-  let queue: Promise<unknown> = Promise.resolve();
+  const serial = new Serial();
 
   const ready = () => {
     if (!state) throw new Error("journal plugin not set up");
@@ -76,51 +80,33 @@ export function createJournalPlugin(): IvyPlugin {
   const change = async (
     fn: (lines: Line[]) => { lines: Line[]; text: string },
   ): Promise<ToolResult> => {
-    const run = queue.then(() => {
-      const before = read();
-      const result = fn(before);
-      const { path } = ready();
-      mkdirSync(join(path, ".."), { recursive: true });
-      writeFileSync(`${path}.tmp`, serializeFile(result.lines));
-      renameSync(`${path}.tmp`, path);
-      return result.text;
-    });
-    queue = run.catch(() => {});
     try {
-      return await run;
+      return await serial.run(() => {
+        const before = read();
+        const result = fn(before);
+        if (result.lines !== before) writeAtomic(ready().path, serializeFile(result.lines));
+        return result.text;
+      });
     } catch (err) {
-      if (err instanceof JournalError) return { content: err.message, isError: true };
+      if (err instanceof MemoryError) return { content: err.message, isError: true };
       throw err;
     }
   };
 
-  /** A new entry line, checked: one line, safe, within the limit. */
+  /** A new entry line, dated today and checked (one line, safe). */
   const entry = (content: string, tags: string[]): Line => {
-    const split = splitTags(content.trim());
-    const text = split.text.trim();
-    if (!text) throw new JournalError("The entry is empty.");
-    if (/[\r\n]/.test(text)) throw new JournalError("One entry per line: no line breaks.");
-    const line = entryLine({
-      date: localDate(new Date()),
-      fields: {},
-      ext: false,
-      unknown: [],
-      text,
-      tags: normalizeTags([...tags, ...split.tags]),
-    } satisfies Entry);
-    const finding = scan(line.raw);
-    if (finding) {
-      throw new JournalError(
-        `Not written: ${finding.reason}. The journal holds what you lived and felt, not instructions or secrets.`,
-      );
-    }
-    return line;
+    const { text, tags: allTags } = contentAndTags(content, tags);
+    const date = localDate(new Date());
+    return checkSafe(
+      entryLine({ date, fields: {}, ext: false, unknown: [], text, tags: allTags }),
+      ABOUT,
+    );
   };
   const checkLimit = (next: Line[], before: Line[]) => {
     const { limit } = ready();
     const used = usage(next);
     if (used <= limit || used <= usage(before)) return;
-    throw new JournalError(
+    throw new MemoryError(
       `${NAME} is full: ${used} / ${limit} characters with this entry. Condense older entries first ` +
         `with journal__revise, down to about ${Math.floor(limit * NEARLY_FULL)} characters: merge ` +
         "several into one that keeps what mattered. Then write again.",
@@ -188,18 +174,11 @@ export function createJournalPlugin(): IvyPlugin {
         defaultAllow: true,
         run: ({ match, content, tags }) =>
           change((lines) => {
-            const needle = match.trim();
-            if (!needle) throw new JournalError("`match` is empty: give a piece of the entry.");
-            const hits = lines.flatMap((l, i) => (l.entry && l.raw.includes(needle) ? [i] : []));
-            if (hits.length !== 1) {
-              throw new JournalError(
-                hits.length
-                  ? `"${needle}" is in ${hits.length} entries; use a longer piece of the one you mean:\n${hits.map((i) => lines[i]?.raw).join("\n")}`
-                  : `No entry in ${NAME} contains "${needle}".`,
-              );
-            }
-            const at = hits[0] as number;
-            const old = lines[at] as Line;
+            const items = lines.map((line, index) => ({ line, index }));
+            const { line: old, index: at } = findOne(items, match, {
+              notFound: `Check ${NAME} in your prompt for the exact wording.`,
+              label: (h) => h.line.raw,
+            });
             const next = [...lines];
             if (content === undefined) {
               next.splice(at, 1);
@@ -234,7 +213,7 @@ export function createJournalPlugin(): IvyPlugin {
           try {
             return proposeSoulEdit(ready().soul, old_text, new_text);
           } catch (err) {
-            if (err instanceof JournalError) return { content: err.message, isError: true };
+            if (err instanceof MemoryError) return { content: err.message, isError: true };
             throw err;
           }
         },
@@ -265,6 +244,29 @@ export function createJournalPlugin(): IvyPlugin {
       if (!before) return null;
       return changeNotice(NAME, before, lineSet(shown(read())), `the file is ${ready().path}`);
     },
+
+    commands: [
+      {
+        name: "/journal",
+        description: "Show Ivy's journal (IVY.md) and where it is",
+        run() {
+          const lines = read();
+          const entries = lines.filter((l) => l.entry);
+          const left = lines.filter((l) => scan(l.raw)?.kind === "hidden");
+          const seen = entries.filter((l) => !left.includes(l));
+          return [
+            `${NAME} ${usageText(lines)} · ${entries.length} ${entries.length === 1 ? "entry" : "entries"}`,
+            seen.length ? seen.map((l) => l.raw).join("\n") : "Nothing written yet.",
+            left.length
+              ? `Left out of what Ivy sees (hidden characters; edit or delete these lines):\n${left.map((l) => `  ${l.raw}`).join("\n")}`
+              : "",
+            `File: ${ready().path}`,
+          ]
+            .filter(Boolean)
+            .join("\n\n");
+        },
+      },
+    ],
   });
 }
 
@@ -280,13 +282,13 @@ export function proposeSoulEdit(
   newText: string,
 ): string {
   const passage = newText.trim();
-  if (!passage) throw new JournalError("new_text is empty.");
+  if (!passage) throw new MemoryError("new_text is empty.");
   if ([...passage].length > MAX_PASSAGE) {
-    throw new JournalError(`One passage at a time: new_text is over ${MAX_PASSAGE} characters.`);
+    throw new MemoryError(`One passage at a time: new_text is over ${MAX_PASSAGE} characters.`);
   }
   const finding = scan(passage);
   if (finding && finding.kind !== "instruction")
-    throw new JournalError(`Not written: ${finding.reason}.`);
+    throw new MemoryError(`Not saved: ${finding.reason}.`);
 
   const soul = existsSync(path) ? readFileSync(path, "utf8") : "";
   let next: string;
@@ -296,19 +298,20 @@ export function proposeSoulEdit(
     const old = oldText.trim();
     const count = soul.split(old).length - 1;
     if (count !== 1) {
-      throw new JournalError(
+      throw new MemoryError(
         count === 0
           ? "old_text isn't in SOUL.md as written; quote the passage exactly, or leave old_text out to add one."
           : `old_text is in SOUL.md ${count} times; quote a longer passage.`,
       );
     }
     if (old.length >= soul.trim().length * 0.8) {
-      throw new JournalError("Rewrite one passage of SOUL.md, not the whole file.");
+      throw new MemoryError("Rewrite one passage of SOUL.md, not the whole file.");
     }
     // A function, so `$&` and the like in the passage stay as written.
     next = soul.replace(old, () => passage);
   }
-  writeFileSync(`${path}.tmp`, next);
-  renameSync(`${path}.tmp`, path);
+  writeAtomic(path, next);
   return "SOUL.md changed. It applies from the next session (after /new).";
 }
+
+export default createJournalPlugin();

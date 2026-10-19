@@ -6,6 +6,7 @@
   "dependencies": {
     "@ivy/kernel": "workspace:*",
     "@ivy/plugin-core": "workspace:*",
+    "@ivy/plugin-journal": "workspace:*",
     "@ivy/plugin-memory": "workspace:*"
   }
 }

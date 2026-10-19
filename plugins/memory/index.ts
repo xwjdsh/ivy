@@ -11,7 +11,6 @@ import { changeNotice, lineSet } from "./changes.ts";
 import { body, MemoryFiles } from "./files.ts";
 import { ENTRY_TYPES, type Entry, type Line, localDate, serializeFile, tagList } from "./format.ts";
 import INSTRUCTIONS from "./instructions.md" with { type: "text" };
-import { createJournalPlugin } from "./journal.ts";
 import { type Noted, screen } from "./safety.ts";
 import { searchSessions } from "./sessions.ts";
 import {
@@ -300,10 +299,7 @@ export function createMemoryPlugin(): IvyPlugin {
 
 export default createMemoryPlugin();
 
-/** IVY.md, Ivy's own journal: a plugin of its own, so it can be turned off by itself. */
-export const journal = createJournalPlugin();
 export { localDate, tagList } from "./format.ts";
-export { createJournalPlugin };
 
 // ---------- text for the model and the user ----------
 

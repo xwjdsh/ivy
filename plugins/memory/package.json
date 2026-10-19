@@ -7,5 +7,9 @@
   "dependencies": {
     "@ivy/plugin-api": "workspace:*",
     "zod": "^4.6.7"
+  },
+  "exports": {
+    ".": "./index.ts",
+    "./lines": "./lines.ts"
   }
 }
