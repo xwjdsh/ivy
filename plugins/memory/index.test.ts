@@ -270,3 +270,15 @@ test("many changes fit the turn's context: whole lines, then a pointer to search
   // 30 added entries, plus the default header's description line that this file lacks.
   expect(ctx).toEndWith(`(${31 - shown.length} more changes; search memory for the current state)`);
 });
+
+test("tool calls have short summaries for the transcript", () => {
+  const summary = (name: string, input: object) =>
+    plugin.tools?.find((t) => t.name === name)?.summary?.(input as never);
+  expect(summary("save", { file: "memory", content: "Dentist at 15:00" })).toBe(
+    "save to MEMORY.md: Dentist at 15:00",
+  );
+  expect(summary("update", { match: "Dentist", done: true })).toBe("done: Dentist");
+  expect(summary("update", { match: "Dentist" })).toBe("confirm: Dentist");
+  expect(summary("move", { match: "VPN", to: "archive" })).toBe("move to ARCHIVE.md: VPN");
+  expect(summary("search", {})).toBe("list the newest entries");
+});

@@ -178,12 +178,63 @@ test("sends a message and renders the streamed Markdown answer", async () => {
   await type("hi");
   await type(ENTER);
   await idle();
-  expect(frame()).toContain("> hi");
+  expect(frame()).toContain("› hi");
   expect(frame()).toContain("Hello there");
   expect(frame()).not.toContain("**");
   expect(frame()).toMatch(/1 step\(s\) · [\d.]+s · 10 in \/ 5 out tokens/);
   expect(frame()).toMatch(/anthropic\/claude-opus-5-5 · medium · .* · 10 in \/ 5 out/); // status bar
   expect(frame()).not.toContain("$");
+});
+
+test("Ivy's reply starts with a dot and is indented; later blocks of it line up, no new dot", async () => {
+  const { type, frame, idle } = await start([
+    { stop: "end_turn", content: [text("First paragraph.\n\nSecond paragraph.")] },
+  ]);
+  await type("hi");
+  await type(ENTER);
+  await idle();
+  const lines = frame().split("\n");
+  expect(lines.find((l) => l.includes("First paragraph."))).toBe("● First paragraph.");
+  expect(lines.find((l) => l.includes("Second paragraph."))).toBe("  Second paragraph.");
+  expect(frame().split("●").length).toBe(2);
+  expect(lines.some((l) => l.trim() === "› hi")).toBe(true);
+});
+
+test("tool calls read as their plugin and summary, one per line, no blank lines between", async () => {
+  const notes = definePlugin({
+    id: "notes",
+    version: "0",
+    description: "",
+    tools: [
+      defineTool({
+        name: "find",
+        description: "",
+        input: z.object({ query: z.string() }),
+        risk: "read",
+        summary: (i) => `search "${i.query}"`,
+        run: () => "found",
+      }),
+    ],
+  });
+  const { type, frame, idle } = await start(
+    [
+      {
+        stop: "tool_use",
+        content: [
+          toolUse("a", "notes__find", { query: "Wen" }),
+          toolUse("b", "notes__find", { query: "Sun" }),
+        ],
+      },
+      { stop: "end_turn", content: [text("ok")] },
+    ],
+    undefined,
+    [notes],
+  );
+  await type("who am I");
+  await type(ENTER);
+  await idle();
+  expect(frame()).toContain('✓ notes · search "Wen"\n✓ notes · search "Sun"');
+  expect(frame()).not.toContain("notes__find");
 });
 
 test("risky tool asks once; 'for this session' skips later prompts", async () => {
@@ -199,7 +250,7 @@ test("risky tool asks once; 'for this session' skips later prompts", async () =>
   await type("s"); // yes, for this session
   await idle();
   expect(frame()).toContain("done one");
-  expect(frame()).toContain("✓ t__save");
+  expect(frame()).toContain("✓ t · save");
 
   await type("again");
   await type(ENTER);
@@ -306,7 +357,7 @@ test("tool calls are one line; Ctrl+O shows the output and redraws", async () =>
   await type(ENTER);
   await idle();
   expect(frame()).toContain("done");
-  expect(frame()).toContain("✓ t__lines");
+  expect(frame()).toContain("✓ t · lines");
   expect(frame()).not.toContain("l1");
   const clears = screen.clears;
   await type(CTRL_O);
@@ -323,7 +374,7 @@ test("a failed tool shows ✗ and the first line of the error", async () => {
   await type(ENTER);
   await eventually(() => expect(frame()).toContain("Allow t__save"));
   await type("n");
-  await eventually(() => expect(frame()).toContain("✗ t__save"));
+  await eventually(() => expect(frame()).toContain("✗ t · save"));
   expect(frame()).toContain("⎿ The user denied this tool call.");
 });
 
@@ -557,7 +608,7 @@ test("plugin context reaches the model but isn't shown, live or after /resume", 
   const sent = JSON.stringify(model.requests[0]?.messages);
   expect(sent).toContain("<context>");
   expect(sent).toContain("the user likes tea");
-  expect(frame()).toContain("> what should I drink?");
+  expect(frame()).toContain("› what should I drink?");
   expect(frame()).not.toContain("<context>");
 
   await type("/new");
@@ -565,7 +616,7 @@ test("plugin context reaches the model but isn't shown, live or after /resume", 
   await type(`/resume ${session.id}`);
   await type(ENTER);
   await eventually(() => expect(frame()).toContain(`Resumed ${session.id}`));
-  expect(frame()).toContain("> what should I drink?");
+  expect(frame()).toContain("› what should I drink?");
   expect(frame()).not.toContain("likes tea");
 });
 
@@ -743,7 +794,7 @@ test("a dangerous tool offers only Yes/No and shows the full input", async () =>
   expect(frame()).not.toContain("for the rest of this session");
   expect(frame()).not.toContain("Always");
   await type("n");
-  await eventually(() => expect(frame()).toContain("✗ t__wipe"));
+  await eventually(() => expect(frame()).toContain("✗ t · wipe"));
 });
 
 test("/status lists tools with their declared risk and the rules in effect", async () => {

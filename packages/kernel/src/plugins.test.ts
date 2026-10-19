@@ -163,3 +163,45 @@ test("two tools with the same name in one plugin are rejected", async () => {
     'Duplicate tool "p__x"',
   );
 });
+
+test("tool labels: the tool's own summary, else its name and first argument", async () => {
+  const h = host();
+  const input = z.object({ query: z.string(), limit: z.number().optional() });
+  await h.register(
+    plugin("mem", {
+      tools: [
+        defineTool({
+          name: "search",
+          description: "",
+          input,
+          risk: "read",
+          run: () => "",
+          summary: (i) => `search  "${i.query}"\n`,
+        }),
+        defineTool({ name: "plain", description: "", input, risk: "read", run: () => "" }),
+        defineTool({
+          name: "broken",
+          description: "",
+          input,
+          risk: "read",
+          run: () => "",
+          summary: () => {
+            throw new Error("x");
+          },
+        }),
+      ],
+    }),
+  );
+  expect(h.toolLabel("mem__search", { query: "Wen" })).toEqual({
+    plugin: "mem",
+    text: 'search "Wen"',
+  });
+  expect(h.toolLabel("mem__plain", { query: "a\nb", limit: 3 })).toEqual({
+    plugin: "mem",
+    text: 'plain "a b"',
+  });
+  expect(h.toolLabel("mem__plain", {})).toEqual({ plugin: "mem", text: "plain" });
+  expect(h.toolLabel("mem__broken", { query: "x" })).toEqual({ plugin: "mem", text: 'broken "x"' });
+  // A name the model made up: shown as is.
+  expect(h.toolLabel("nope__x", { a: 1 })).toEqual({ plugin: "nope__x", text: "1" });
+});

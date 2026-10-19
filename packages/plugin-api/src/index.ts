@@ -26,6 +26,12 @@ export interface ToolDef<S extends z.ZodType = z.ZodType> {
    * e.g. saving a memory. Not allowed on "dangerous" tools; user deny/ask rules still win.
    */
   defaultAllow?: boolean;
+  /**
+   * One short line saying what a call does, shown to the user instead of its raw input,
+   * e.g. `save to MEMORY.md: Dentist at 15:00`. Without it, the interface shows the tool's
+   * name and its first argument.
+   */
+  summary?(input: z.infer<S>): string;
   run(input: z.infer<S>, ctx: ToolContext): Promise<ToolResult> | ToolResult;
 }
 

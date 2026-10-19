@@ -199,6 +199,26 @@ export class PluginHost {
     }));
   }
 
+  /**
+   * How a tool call is shown to the user: the plugin, then the tool's own summary of the
+   * call, or else its name and first argument. Never fails: a broken summary falls back.
+   */
+  toolLabel(fullName: string, input: unknown): { plugin: string; text: string } {
+    const tool = this.tools.get(fullName);
+    if (!tool) return { plugin: fullName, text: firstArgument(input) };
+    let summary: string | undefined;
+    try {
+      summary = tool.def
+        .summary?.(input as never)
+        ?.replace(/\s+/g, " ")
+        .trim();
+    } catch {
+      summary = undefined;
+    }
+    const text = summary || [tool.def.name, firstArgument(input)].filter(Boolean).join(" ");
+    return { plugin: tool.pluginId, text };
+  }
+
   riskOf(fullName: string): RiskLevel | undefined {
     return this.tools.get(fullName)?.def.risk;
   }
@@ -255,6 +275,17 @@ function parsePluginConfig(plugin: IvyPlugin, settings: Record<string, unknown>)
     throw new Error(`Invalid [plugins.${plugin.id}]:\n${z.prettifyError(parsed.error)}`);
   }
   return parsed.data;
+}
+
+/** A call's first plain argument, for a tool without a summary: `"Wen"`, `42`, or nothing. */
+function firstArgument(input: unknown): string {
+  if (!input || typeof input !== "object") return "";
+  for (const value of Object.values(input)) {
+    if (typeof value === "string" && value.trim())
+      return JSON.stringify(value.replace(/\s+/g, " "));
+    if (typeof value === "number" || typeof value === "boolean") return String(value);
+  }
+  return "";
 }
 
 function cap(text: string, max: number): string {

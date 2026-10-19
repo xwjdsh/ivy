@@ -203,6 +203,8 @@ export function App({
     bridge.confirm = (call) => new Promise((resolve) => setPermission({ call, resolve }));
   }, [bridge]);
 
+  const labelOf = (name: string, input: unknown) => ivy.plugins.toolLabel(name, input);
+
   // Tool inputs arrive with tool_call; keep them by id so the finished item can show them.
   const toolInputs = useRef(new Map<string, unknown>());
 
@@ -532,17 +534,22 @@ export function App({
     (dialog?.kind === "effort" ? EFFORT_LEVELS.length + 4 : 0) +
     completions.length;
   const maxLiveLines = Math.max(3, rows - reserved);
-  let liveLines = streaming.trim() === "" ? [] : renderMarkdown(streaming, width).split("\n");
+  // Ivy's text still streaming, laid out as it will be once finished (AssistantText).
+  let liveLines =
+    streaming.trim() === "" ? [] : renderMarkdown(streaming, Math.max(10, width - 2)).split("\n");
   const hiddenLines = liveLines.length > maxLiveLines ? liveLines.length - maxLiveLines + 1 : 0;
   if (hiddenLines > 0) liveLines = liveLines.slice(hiddenLines);
 
   return (
     <Box flexDirection="column">
       <Static key={staticKey} items={items}>
-        {(item) => (
+        {(item, index) => (
           <ItemView
             key={item.id}
             item={item}
+            lead={items[index - 1]?.kind !== "assistant"}
+            labelOf={labelOf}
+            tight={item.kind === "tool" && items[index - 1]?.kind === "tool"}
             width={width}
             expandedTurn={expandedTurn}
             latestTurn={turnRef.current}
@@ -551,16 +558,22 @@ export function App({
         )}
       </Static>
       {liveLines.length > 0 && (
-        <Box marginTop={1} flexDirection="column">
-          {hiddenLines > 0 && (
-            <Text dimColor>… {hiddenLines} more lines above (still writing)</Text>
-          )}
-          <Text>{liveLines.join("\n")}</Text>
+        <Box marginTop={1}>
+          <Box width={2} flexShrink={0}>
+            <Text color="magenta">{items.at(-1)?.kind !== "assistant" ? "●" : " "}</Text>
+          </Box>
+          <Box flexDirection="column">
+            {hiddenLines > 0 && (
+              <Text dimColor>… {hiddenLines} more lines above (still writing)</Text>
+            )}
+            <Text>{liveLines.join("\n")}</Text>
+          </Box>
         </Box>
       )}
-      {pendingTools.map((t) => (
-        <Box key={t.id} marginTop={1}>
-          <ToolLine name={t.name} input={t.input} />
+      {pendingTools.map((t, i) => (
+        // Running tools sit right under the turn's finished ones, like those do.
+        <Box key={t.id} marginTop={i > 0 || items.at(-1)?.kind === "tool" ? 0 : 1}>
+          <ToolLine name={t.name} input={t.input} label={labelOf(t.name, t.input)} />
         </Box>
       ))}
       {phase && !permission && (

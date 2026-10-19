@@ -241,7 +241,7 @@ Loads, configures and runs plugins; see §6 for the plugin contract. Responsibil
 
 An interface turns user I/O into kernel calls. All interfaces share the same kernel API, so adding one does not touch plugins.
 
-- **M0 — TUI** (`ivy`, built with Ink): streamed answers rendered as Markdown, spinner with phase and elapsed time, one-line tool calls with folded results, multi-line input (Shift/Option+Enter or trailing `\`) with persistent history and `/` command completion, permission dialog (once / for this session / always / deny; Yes/No only for dangerous tools and `ask` rules), status bar (model as `provider/model`, effort, session, session token totals, `verbose` when on); each turn ends with steps, time and tokens. No money anywhere in the UI (verbose included): `/usage` shows token usage for this session, today, the last 7 days and all time (an estimated cost is still recorded in session files, but not shown). Esc or Ctrl-C interrupts; Ctrl-C twice or Ctrl-D quits. The real terminal cursor follows the input caret so IME composition (e.g. Chinese) appears in place.
+- **M0 — TUI** (`ivy`, built with Ink): the user's messages as full-width shaded blocks and Ivy's replies indented under a dot, so who said what is clear at a glance; streamed answers rendered as Markdown, spinner with phase and elapsed time, one line per tool call (the plugin and the tool's own summary of the call, else its name and first argument; never raw JSON outside the verbose view), consecutive calls without blank lines, results folded, multi-line input (Shift/Option+Enter or trailing `\`) with persistent history and `/` command completion, permission dialog (once / for this session / always / deny; Yes/No only for dangerous tools and `ask` rules), status bar (model as `provider/model`, effort, session, session token totals, `verbose` when on); each turn ends with steps, time and tokens. No money anywhere in the UI (verbose included): `/usage` shows token usage for this session, today, the last 7 days and all time (an estimated cost is still recorded in session files, but not shown). Esc or Ctrl-C interrupts; Ctrl-C twice or Ctrl-D quits. The real terminal cursor follows the input caret so IME composition (e.g. Chinese) appears in place.
   - Finished text moves into Ink's `<Static>` (printed once, kept in scrollback) and the live area stays shorter than the screen, so redraws don't flicker; a full redraw remounts `<Static>` (as Gemini CLI does). Tool calls are one line each; their output shows with Ctrl+O or in the verbose view.
   - One-shot mode (`ivy "question"`) stays plain text for scripts and pipes.
 - **M4 — Daemon** (`ivy daemon`): runs scheduled jobs and sends results as macOS notifications or files.
@@ -309,6 +309,7 @@ export interface ToolDef<I = unknown> {
   input: z.ZodType<I>;        // converted to JSON Schema; validated before run
   risk: "read" | "write" | "external" | "dangerous";
   defaultAllow?: boolean;     // run without asking (low-impact tools; never "dangerous")
+  summary?(input: I): string; // one line for the transcript, e.g. "save to MEMORY.md: …"
   run(input: I, ctx: ToolContext): Promise<ToolResult> | ToolResult;  // ctx: abort signal, logger, session id
 }
 
@@ -670,6 +671,7 @@ Goal: Ivy starts remembering. Built in this order; each step is shippable on its
 - Background tasks, subagents and steering (§5.9).
 - Evals: more cases (tools, work tasks) and replays of recorded sessions without an API key. Started in M1: `bun run eval` runs cases from `evals/` against any configured model (`--model provider/model`), each in a fresh data folder; the memory set covers the five checks plus regressions, including changed facts and contradictions, which public benchmarks barely test; a journal set covers `IVY.md` and the starter character (criticizing, refusing, proposing for `SOUL.md`); a basics set covers the rest (how Ivy answers who it is).
 - Plugin API versioned; user plugins from `~/.ivy/plugins/`.
+- TUI: runs of read-only calls (reading files, searching) folded into one line, as Claude Code does (`Read 3 files, searched 2 patterns`, expanded with Ctrl+O); worth it once `fs` and `shell` make long runs common. Writes stay one line each, so every change stays visible.
 - **Done when:** I use Ivy for at least one real work task per day.
 
 ### M3 — Email & Calendar

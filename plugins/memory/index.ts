@@ -123,6 +123,7 @@ export function createMemoryPlugin(): IvyPlugin {
             .optional()
             .describe("Save even though a nearly identical entry exists"),
         }),
+        summary: (i) => `save to ${FILE_NAMES[i.file]}: ${i.content}`,
         risk: "write",
         defaultAllow: true,
         run: (input) =>
@@ -154,6 +155,12 @@ export function createMemoryPlugin(): IvyPlugin {
           done: z.boolean().optional(),
           tags: z.string().optional().describe(TAGS_HELP),
         }),
+        summary: (i) =>
+          i.done
+            ? `done: ${i.match}`
+            : i.content !== undefined
+              ? `update: ${i.content}`
+              : `confirm: ${i.match}`,
         risk: "write",
         defaultAllow: true,
         run: (input) =>
@@ -176,6 +183,7 @@ export function createMemoryPlugin(): IvyPlugin {
         description:
           "Move one entry between files: to archive when it's no longer in current use, back to memory or user when it matters again.",
         input: z.object({ match: z.string(), to: z.enum(FILES) }),
+        summary: (i) => `move to ${FILE_NAMES[i.to]}: ${i.match}`,
         risk: "write",
         defaultAllow: true,
         run: ({ match, to }) =>
@@ -194,6 +202,7 @@ export function createMemoryPlugin(): IvyPlugin {
         description:
           "Delete one entry for good (e.g. when the user wants it forgotten). To retire an entry, move it to the archive instead.",
         input: z.object({ match: z.string() }),
+        summary: (i) => `delete: ${i.match}`,
         risk: "write",
         run: ({ match }) =>
           tool((ctx) => {
@@ -210,6 +219,7 @@ export function createMemoryPlugin(): IvyPlugin {
           type: z.enum(ENTRY_TYPES).optional(),
           limit: z.number().int().min(1).max(50).optional(),
         }),
+        summary: (i) => (i.query?.trim() ? `search "${i.query}"` : "list the newest entries"),
         risk: "read",
         run: (input) => tool((ctx) => searchText(find(screen(ctx.files).files, input))),
       }),
@@ -228,6 +238,7 @@ export function createMemoryPlugin(): IvyPlugin {
             .optional()
             .describe("Sessions to show (default 3)"),
         }),
+        summary: (i) => `search past conversations "${i.query}"`,
         risk: "read",
         run: (input, ctx) => searchSessions(ready().history, input, ctx.sessionId),
       }),

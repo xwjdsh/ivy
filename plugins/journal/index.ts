@@ -148,6 +148,7 @@ export function createJournalPlugin(): IvyPlugin {
           content: z.string().describe("One moment, one line, first person"),
           tags: z.string().optional().describe('Comma-separated, e.g. "interview, 面试"'),
         }),
+        summary: (i) => `write: ${i.content}`,
         risk: "write",
         defaultAllow: true,
         run: ({ content, tags }) =>
@@ -172,6 +173,7 @@ export function createJournalPlugin(): IvyPlugin {
           content: z.string().optional().describe("The new entry; leave out to remove it"),
           tags: z.string().optional().describe("Comma-separated; leave out to keep the old tags"),
         }),
+        summary: (i) => (i.content === undefined ? `remove: ${i.match}` : `revise: ${i.content}`),
         risk: "write",
         defaultAllow: true,
         run: ({ match, content, tags }) =>
@@ -210,6 +212,7 @@ export function createJournalPlugin(): IvyPlugin {
             .describe("The exact passage of SOUL.md to rewrite; leave out to add a new passage"),
           new_text: z.string().describe("The passage as it should read"),
         }),
+        summary: (i) => `propose a SOUL.md change: ${i.new_text}`,
         risk: "dangerous",
         run: ({ old_text, new_text }) => {
           try {

@@ -30,6 +30,19 @@ const dateCalc = defineTool({
     unit: z.enum(UNITS).optional().describe('For "add"'),
     timezone: z.string().optional().describe('For "convert": target IANA timezone'),
   }),
+  summary({ op, date, to, amount, unit, timezone }) {
+    const from = date ?? "now";
+    switch (op) {
+      case "weekday":
+        return `weekday of ${from}`;
+      case "diff":
+        return `days from ${from} to ${to ?? "?"}`;
+      case "add":
+        return `${from} ${(amount ?? 0) < 0 ? "-" : "+"} ${Math.abs(amount ?? 0)} ${unit ?? ""}`.trim();
+      case "convert":
+        return `${from} in ${timezone ?? "?"}`;
+    }
+  },
   risk: "read",
   run({ op, date, to, amount, unit, timezone }) {
     const start = date ? parseDate(date) : new Date();

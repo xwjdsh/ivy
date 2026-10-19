@@ -141,9 +141,16 @@ function formatResult(result: string): string[] {
  * A tool call. Normally one line (status, name, short input) plus the first line of an
  * error; the result itself is shown with Ctrl+O (`expanded`) or in the verbose view.
  */
+/** How a tool call reads in the transcript: its plugin, then what it does. */
+export interface ToolLabel {
+  plugin: string;
+  text: string;
+}
+
 export function ToolLine({
   name,
   input,
+  label,
   result,
   isError,
   expanded = false,
@@ -152,6 +159,8 @@ export function ToolLine({
 }: {
   name: string;
   input: unknown;
+  /** From the plugin host (the tool's own summary); without it, the name and raw input. */
+  label?: ToolLabel;
   /** Undefined while the tool is still running. */
   result?: string;
   isError?: boolean;
@@ -181,8 +190,17 @@ export function ToolLine({
         ) : (
           <Text color="green">✓ </Text>
         )}
-        <Text bold>{name}</Text>
-        {args !== "{}" && <Text dimColor> {args}</Text>}
+        {label ? (
+          <>
+            <Text bold>{label.plugin}</Text>
+            {label.text && <Text dimColor> · {label.text}</Text>}
+          </>
+        ) : (
+          <>
+            <Text bold>{name}</Text>
+            {args !== "{}" && <Text dimColor> {args}</Text>}
+          </>
+        )}
       </Text>
       {verbose && args !== "{}" && (
         <Text dimColor>{JSON.stringify(input, null, 2).replace(/^/gm, "    ")}</Text>
@@ -203,39 +221,75 @@ export function ToolLine({
   );
 }
 
+/** What the user said: a full-width shaded block, easy to find again in a long reply. */
+export function UserMessage({ text, width }: { text: string; width: number }) {
+  return (
+    <Box marginTop={1} width={width} backgroundColor="gray" paddingX={1}>
+      <Box width={2} flexShrink={0}>
+        <Text dimColor>›</Text>
+      </Box>
+      <Text>{text}</Text>
+    </Box>
+  );
+}
+
+/**
+ * What Ivy said, indented under a dot. A reply streams in as several blocks; only the first
+ * (`lead`, right after the user or a tool) gets the dot, the rest line up under it.
+ */
+export function AssistantText({
+  markdown,
+  width,
+  lead,
+}: {
+  markdown: string;
+  width: number;
+  lead: boolean;
+}) {
+  return (
+    <Box marginTop={1}>
+      <Box width={2} flexShrink={0}>
+        <Text color="magenta">{lead ? "●" : " "}</Text>
+      </Box>
+      <Text>{renderMarkdown(markdown, Math.max(10, width - 2))}</Text>
+    </Box>
+  );
+}
+
 export function ItemView({
   item,
   width,
   expandedTurn = null,
   latestTurn,
   verbose = false,
+  lead = true,
+  labelOf,
+  tight = false,
 }: {
   item: Item;
   width: number;
   expandedTurn?: number | null;
   latestTurn?: number;
   verbose?: boolean;
+  /** For Ivy's text: whether it starts a reply (the item before it isn't Ivy's text too). */
+  lead?: boolean;
+  /** How tool calls read (the plugin host's labels). */
+  labelOf?(name: string, input: unknown): ToolLabel;
+  /** Right under another tool line: no blank line between them. */
+  tight?: boolean;
 }) {
   switch (item.kind) {
     case "user":
-      return (
-        <Box marginTop={1}>
-          <Text dimColor>{"> "}</Text>
-          <Text bold>{item.text}</Text>
-        </Box>
-      );
+      return <UserMessage text={item.text} width={width} />;
     case "assistant":
-      return (
-        <Box marginTop={1}>
-          <Text>{renderMarkdown(item.markdown, width)}</Text>
-        </Box>
-      );
+      return <AssistantText markdown={item.markdown} width={width} lead={lead} />;
     case "tool": {
       const latest = item.turn !== undefined && item.turn === latestTurn;
       return (
-        <Box marginTop={1}>
+        <Box marginTop={tight ? 0 : 1}>
           <ToolLine
             {...item}
+            label={labelOf?.(item.name, item.input)}
             expanded={latest && expandedTurn === item.turn}
             expandable={latest}
             verbose={verbose}
