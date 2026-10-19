@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { createIvy, errorMessage, Session, setLogLevel } from "@ivy/kernel";
 import core from "@ivy/plugin-core";
-import memory from "@ivy/plugin-memory";
+import memory, { journal } from "@ivy/plugin-memory";
 import { render } from "ink";
 import { createElement } from "react";
 import { assertNoCommandClash } from "./commands.ts";
@@ -65,7 +65,7 @@ async function main(): Promise<number> {
 
   const bridge: ConfirmBridge = { confirm: confirmPlain };
   const ivy = await createIvy({
-    plugins: [core, memory],
+    plugins: [core, memory, journal],
     confirm: (call) => bridge.confirm(call),
     interfaceInstructions: interactive ? TUI_INSTRUCTIONS : PLAIN_INSTRUCTIONS,
   });

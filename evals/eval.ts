@@ -5,7 +5,8 @@
 /** Text checks: a string matches as a case-insensitive substring, a RegExp as written. */
 export type Pattern = string | RegExp;
 
-export type MemoryFile = "USER.md" | "MEMORY.md" | "ARCHIVE.md";
+/** The memory files, and IVY.md (Ivy's journal, from the journal plugin). */
+export type MemoryFile = "USER.md" | "MEMORY.md" | "ARCHIVE.md" | "IVY.md";
 
 export interface Expect {
   /** The answer contains one of these (an array is "any of"; repeat the key for "all of"). */
@@ -30,7 +31,7 @@ export interface Step {
   say: string;
   /** Continue the previous step's session instead of starting a new one. */
   sameSession?: boolean;
-  /** Empty the memory files first: what was said then lives only in past sessions. */
+  /** Empty the memory files (not IVY.md) first: what was said then lives only in past sessions. */
   clearMemory?: boolean;
   /** Memory files written before this step, as a user editing them by hand mid-session. */
   files?: Partial<Record<MemoryFile, string>>;
@@ -45,6 +46,8 @@ export interface EvalCase {
   config?: string;
   /** Memory files written before the first step. */
   files?: Partial<Record<MemoryFile, string>>;
+  /** SOUL.md for this case; without it there is none, as for a new user. */
+  soul?: string;
   steps: Step[];
 }
 

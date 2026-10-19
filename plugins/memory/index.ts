@@ -7,9 +7,11 @@ import {
   type ToolResult,
 } from "@ivy/plugin-api";
 import { z } from "zod";
+import { changeNotice, lineSet } from "./changes.ts";
 import { body, MemoryFiles } from "./files.ts";
-import { ENTRY_TYPES, type Entry, type Line, serializeFile } from "./format.ts";
+import { ENTRY_TYPES, type Entry, type Line, localDate, serializeFile, tagList } from "./format.ts";
 import INSTRUCTIONS from "./instructions.md" with { type: "text" };
+import { createJournalPlugin } from "./journal.ts";
 import { type Noted, screen } from "./safety.ts";
 import { searchSessions } from "./sessions.ts";
 import {
@@ -298,6 +300,11 @@ export function createMemoryPlugin(): IvyPlugin {
 
 export default createMemoryPlugin();
 
+/** IVY.md, Ivy's own journal: a plugin of its own, so it can be turned off by itself. */
+export const journal = createJournalPlugin();
+export { localDate, tagList } from "./format.ts";
+export { createJournalPlugin };
+
 // ---------- text for the model and the user ----------
 
 function usageText({ used, limit }: Usage): string {
@@ -353,38 +360,17 @@ function overview(ctx: Context, store: MemoryFiles): string {
     .join("\n");
 }
 
-/** Hot-file lines in the prompt, to compare later: entries and hand-written lines, not blanks. */
-function lineSet(lines: Line[]): Set<string> {
-  return new Set(lines.map((l) => l.raw.trimEnd()).filter((l) => l.trim() !== ""));
-}
-
-/** At most this many changed lines per turn; beyond that the model is told to search. */
-const MAX_CHANGES = 20;
-
-/**
- * Lines added to or removed from a hot file since the session prompt was built: by Ivy in
- * this session, by hand, or by another session. The prompt keeps its snapshot (the cache
- * holds); the turn's context carries the difference, so the model never works from stale
- * memory and needn't search to check.
- */
+/** Changes to the hot files since the session prompt was built (see changes.ts). */
 function changesSince(snapshot: Record<HotFile, Set<string>>, current: Files): string[] {
-  const out: string[] = [];
-  for (const file of ["user", "memory"] as const) {
-    const now = lineSet(current[file]);
-    const before = snapshot[file];
-    const changes = [
-      ...[...now].filter((l) => !before.has(l)).map((l) => `+ ${l}`),
-      ...[...before].filter((l) => !now.has(l)).map((l) => `- ${l}`),
-    ];
-    if (changes.length === 0) continue;
-    const shown = changes.slice(0, MAX_CHANGES);
-    const more =
-      changes.length > shown.length
-        ? `\n(${changes.length - shown.length} more changes; search memory for the current state)`
-        : "";
-    out.push(`${FILE_NAMES[file]} changed since this session started:\n${shown.join("\n")}${more}`);
-  }
-  return out;
+  return (["user", "memory"] as const).flatMap((file) => {
+    const notice = changeNotice(
+      FILE_NAMES[file],
+      snapshot[file],
+      lineSet(current[file]),
+      "search memory for the current state",
+    );
+    return notice ? [notice] : [];
+  });
 }
 
 /** The archive isn't in the prompt; say it exists and what it holds, so the model looks there. */
@@ -414,17 +400,6 @@ function notedText({ skipped, flagged }: { skipped: Noted[]; flagged: Noted[] })
     out.push(`Worth a look:\n${list(flagged, why)}`);
   }
   return out;
-}
-
-/** "dentist, 牙医、看牙 #health" → ["dentist", "牙医", "看牙", "health"]; undefined stays undefined. */
-export function tagList(tags: string | undefined): string[] | undefined {
-  return tags === undefined ? undefined : tags.split(/[,，、;；#\n]+/).filter((t) => t.trim());
-}
-
-/** YYYY-MM-DD in the machine's timezone. */
-export function localDate(d: Date): string {
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
 function daysBetween(from: string, to: string): number {

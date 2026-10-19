@@ -135,3 +135,14 @@ function splitField(token: string): [string, string | undefined] {
 function isDateField(key: string): key is DateField {
   return (DATE_FIELDS as readonly string[]).includes(key);
 }
+
+/** "dentist, 牙医、看牙 #health" → ["dentist", "牙医", "看牙", "health"]; undefined stays undefined. */
+export function tagList(tags: string | undefined): string[] | undefined {
+  return tags === undefined ? undefined : tags.split(/[,，、;；#\n]+/).filter((t) => t.trim());
+}
+
+/** YYYY-MM-DD in the machine's timezone. */
+export function localDate(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}

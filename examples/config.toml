@@ -43,3 +43,9 @@ retention_days = 7                # delete older trace folders on startup; 0 = k
 # user_limit = 2000               # USER.md, characters (500-20000)
 # memory_limit = 8000             # MEMORY.md, characters (1000-50000)
 # enabled = false                 # turn memory off
+
+# Ivy's own journal: data/journal/IVY.md, what Ivy has lived with you, in its own words.
+# Written by Ivy; it goes into every session's prompt (capped).
+# [plugins.journal]
+# limit = 3000                    # characters (1000-20000)
+# enabled = false                 # no journal: Ivy doesn't carry its feelings between sessions

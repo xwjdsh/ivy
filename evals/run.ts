@@ -10,14 +10,18 @@ import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { createIvy, errorMessage, type Ivy, resolvePaths, Session } from "@ivy/kernel";
 import core from "@ivy/plugin-core";
-import { createMemoryPlugin } from "@ivy/plugin-memory";
+import { createJournalPlugin, createMemoryPlugin } from "@ivy/plugin-memory";
 import { TUI_INSTRUCTIONS } from "../packages/cli/src/interface.ts";
 import basics from "./basics.ts";
 import type { EvalCase, Expect, MemoryFile, Pattern, StepRun } from "./eval.ts";
+import journal from "./journal.ts";
 import memory from "./memory.ts";
 
-const SUITES: Record<string, EvalCase[]> = { basics, memory };
-const FILES: MemoryFile[] = ["USER.md", "MEMORY.md", "ARCHIVE.md"];
+const SUITES: Record<string, EvalCase[]> = { basics, journal, memory };
+const FILES: MemoryFile[] = ["USER.md", "MEMORY.md", "ARCHIVE.md", "IVY.md"];
+/** Where each file lives under the data folder: IVY.md belongs to the journal plugin. */
+const fileDir = (f: MemoryFile) => (f === "IVY.md" ? "journal" : "memory");
+const filePath = (home: string, f: MemoryFile) => join(home, "data", fileDir(f), f);
 
 const { values, positionals } = parseArgs({
   allowPositionals: true,
@@ -61,16 +65,17 @@ console.log(`\n${passed}/${selected.length} passed · ${label} · data in ${root
 process.exit(passed === selected.length ? 0 : 1);
 
 async function runCase(c: EvalCase, home: string): Promise<string[]> {
-  mkdirSync(join(home, "data", "memory"), { recursive: true });
+  for (const dir of ["memory", "journal"]) mkdirSync(join(home, "data", dir), { recursive: true });
+  if (c.soul) writeFileSync(join(home, "SOUL.md"), c.soul);
   writeFileSync(join(home, "config.toml"), baseConfig + (c.config ? `\n${c.config}` : ""));
   for (const [name, text] of Object.entries(c.files ?? {})) {
-    writeFileSync(join(home, "data", "memory", name), text);
+    writeFileSync(filePath(home, name as MemoryFile), text);
   }
 
   let ivy: Ivy;
   try {
     ivy = await createIvy({
-      plugins: [core, createMemoryPlugin()],
+      plugins: [core, createMemoryPlugin(), createJournalPlugin()],
       paths: resolvePaths(home),
       confirm: async () => "deny", // nobody is there to answer; risky tools are refused
       interfaceInstructions: TUI_INSTRUCTIONS,
@@ -85,10 +90,10 @@ async function runCase(c: EvalCase, home: string): Promise<string[]> {
   let session: Session | undefined;
   for (const [i, step] of c.steps.entries()) {
     if (step.clearMemory) {
-      for (const f of FILES) writeFileSync(join(home, "data", "memory", f), "");
+      for (const f of FILES) if (f !== "IVY.md") writeFileSync(filePath(home, f), "");
     }
     for (const [name, text] of Object.entries(step.files ?? {})) {
-      writeFileSync(join(home, "data", "memory", name), text);
+      writeFileSync(filePath(home, name as MemoryFile), text);
     }
     if (!session || !step.sameSession) {
       session = Session.create(ivy.paths.sessions, ivy.agent.model);
@@ -174,7 +179,7 @@ function show(p: Pattern): string {
 function readFiles(home: string): Record<MemoryFile, string> {
   const out = {} as Record<MemoryFile, string>;
   for (const f of FILES) {
-    const path = join(home, "data", "memory", f);
+    const path = filePath(home, f);
     out[f] = existsSync(path) ? readFileSync(path, "utf8") : "";
   }
   return out;

@@ -54,9 +54,25 @@ function promptLayout(call: ToolCallRequest) {
   // Only once or no when remembering would have no effect (dangerous tools, ask rules).
   const choices = CHOICES.filter((c) => call.canRemember || !c.remember);
   // Dangerous tools show their full input; others enough to judge, e.g. a memory being saved.
-  const all = JSON.stringify(call.input, null, 2).split("\n");
+  const all = inputLines(call.input);
   const max = call.risk === "dangerous" ? all.length : PROMPT_INPUT_LINES;
   return { choices, inputLines: all.slice(0, max), hidden: Math.max(0, all.length - max) };
+}
+
+/**
+ * A tool's input as JSON, except that a multi-line string field is shown as its lines, so
+ * text to approve (a passage for SOUL.md, a script) reads as written, not as one `\n` line.
+ */
+export function inputLines(input: unknown): string[] {
+  const json = (value: unknown) => JSON.stringify(value, null, 2).split("\n");
+  if (!input || typeof input !== "object" || Array.isArray(input)) return json(input);
+  const fields = Object.entries(input);
+  if (!fields.some(([, v]) => typeof v === "string" && v.includes("\n"))) return json(input);
+  return fields.flatMap(([key, value]) =>
+    typeof value === "string" && value.includes("\n")
+      ? [`${key}:`, ...value.split("\n").map((line) => `  │ ${line}`)]
+      : [`${key}: ${JSON.stringify(value)}`],
+  );
 }
 
 /** Rows the permission prompt takes, so the live area can leave room for it. */
