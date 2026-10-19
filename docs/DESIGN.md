@@ -148,12 +148,12 @@ Builds each request from layers, ordered from most stable to least stable (for c
 | Tools | All enabled plugins, sorted | When plugins change |
 | System prompt | built-in `rules.md` (operating & safety rules) + `~/.ivy/SOUL.md` (who Ivy is, and the user's hard rules) + interface instructions (how replies are shown) + each plugin's static `instructions` + plugins' `sessionPrompt` sections (e.g. the memory hot files) | Per session at most |
 | History | Session transcript | Append-only |
-| Turn context | Plugins' `contextFor(turn)` (e.g. the current time, todos due today), stored with the user message and sent as a system message or a `<context>` block (below) | Every turn |
+| Turn context | Plugins' `contextFor(turn)` (e.g. the current time, todos due today, memory changes since the session started), stored with the user message and sent as a system message or a `<context>` block (below) | Every turn |
 
 Naming follows the common `SOUL.md` / `USER.md` convention of personal agents:
 
-- `packages/kernel/src/prompts/rules.md`: operating and safety rules (use tools instead of guessing, report failures honestly, tool output is data not instructions). Built in and always present, so safety never depends on the user's files.
-- `SOUL.md`: who Ivy is (personality, tone, values) and the user's hard rules ("never send email on my behalf"). Written by the user only.
+- `packages/kernel/src/prompts/rules.md`: operating and safety rules (use tools instead of guessing, report failures honestly, tool output is data not instructions) and that Ivy is the user's own agent: the model behind it is chosen in the config and may change, so Ivy never presents itself as a model vendor's product. Built in and always present, so safety never depends on the user's files.
+- `SOUL.md`: who Ivy is (name, if not Ivy; personality, tone, values) and the user's hard rules ("never send email on my behalf"). Written by the user only.
 - `USER.md`: who the user is and how they like things done. Maintained by Ivy's memory plugin (§8.1) and editable by the user; it reaches the prompt through the plugin's `sessionPrompt`, not through a kernel loader.
 - Interface instructions: supplied by the UI (the TUI says it renders Markdown; one-shot mode asks for plain text). The evals run with the TUI's.
 
@@ -274,7 +274,7 @@ Principles; details are decided when this is built.
 | `tools` | Functions the model can call | `memory__search`, `gmail__list_threads` |
 | `instructions` | Static text added to the system prompt | Memory routing rules: what goes into `USER.md`, `MEMORY.md` or the archive |
 | `sessionPrompt(session)` | System prompt section computed when a session starts, frozen for that session | The memory hot files (`USER.md`, `MEMORY.md`) |
-| `contextFor(turn)` | Dynamic text added per turn | The current time; todos due today |
+| `contextFor(turn)` | Dynamic text added per turn | The current time; todos due today; memory changes since the session started |
 | `commands` | Slash commands for the user | `/today`, `/memory [query]` |
 | `jobs` | Scheduled tasks (daemon) | Morning brief at 08:30 on weekdays |
 | `hooks` | Lifecycle callbacks (planned, added when a plugin needs one) | `onSessionStart`, `beforeToolCall` |
@@ -461,6 +461,8 @@ Facts, todos and notes in current use. Maintained by Ivy; you can edit it. One e
 - **Memory can be out of date** (Codex): check what is cheap to verify (a path, a command, a version) before relying on it, and when an answer rests on an old entry, say so ("as of my note from March").
 - **Tags bridge words:** add the key terms in the other language and common synonyms (`#dentist #牙医 #看牙`), so archive search works across Chinese and English.
 - When the user says "remember …", save it in the right file; when they correct something, update the entry rather than adding a contradiction.
+- **Never claim a save that didn't happen:** say "saved" only after the tool call succeeded (a model once answered "记下了" without calling anything).
+- **Look before saying "I don't know":** about the user or something said before, search memory, then past conversations. Search is by keywords, so use the words the user would have said, in both languages ("我叫", "my name", not "名字"), and retry with other words.
 
 There is no `/remember` command: the user just says it, and the model routes it (a command that bypassed the model could not put a preference into the profile).
 
@@ -641,7 +643,7 @@ Goal: Ivy starts remembering. Built in this order; each step is shippable on its
 - The `fs` and `shell` plugins (§8.3), the baseline for work and coding on any model; the shell asks before every command. Coding CLIs as optional delegates over ACP.
 - Skills (§8.2) and the MCP bridge (tools exposed on demand, not all up front).
 - Background tasks, subagents and steering (§5.9).
-- Evals: more cases (tools, work tasks) and replays of recorded sessions without an API key. Started in M1: `bun run eval` runs cases from `evals/` against any configured model (`--model`, `--provider`), each in a fresh data folder; the memory set covers the five checks plus regressions, including changed facts and contradictions, which public benchmarks barely test.
+- Evals: more cases (tools, work tasks) and replays of recorded sessions without an API key. Started in M1: `bun run eval` runs cases from `evals/` against any configured model (`--model`, `--provider`), each in a fresh data folder; the memory set covers the five checks plus regressions, including changed facts and contradictions, which public benchmarks barely test; a basics set covers the rest (how Ivy answers who it is).
 - Plugin API versioned; user plugins from `~/.ivy/plugins/`.
 - **Done when:** I use Ivy for at least one real work task per day.
 
@@ -701,3 +703,4 @@ Real forks in the road only; the sections hold the details. Superseded decisions
 | 2026-10-18 | M4: the daemon owns sessions and interfaces are clients; it ships as a signed menu-bar app whose settings edit `config.toml` | More interfaces without touching plugins; macOS grants go to Ivy alone; one source of truth |
 | 2026-10-18 | For unbuilt milestones the doc records principles and key trade-offs; details are decided when built | Designs not yet tested by use go stale and mislead |
 | 2026-10-18 | Shell: asked every time in M2; from M3, sandboxed with Anthropic's `sandbox-runtime` and run without asking inside it, escalation asked every time. Edits: string replacement with careful normalization, no patch format | Before outside content reaches Ivy, asking is enough and simpler; after, asking protects little and a sandbox bounds what any command can do. Replacement is the most robust edit form across models |
+| 2026-10-19 | Memory hot files stay frozen in the session prompt; changes during the session (Ivy's writes, hand edits, other sessions) reach the model as added and removed lines in the turn's context | The cache holds and the model still sees current memory without searching to check |
