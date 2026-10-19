@@ -370,6 +370,8 @@ Ivy reuses other agents' work through open standards, not their plugin formats:
 └── logs/                # kernel & daemon logs
 ```
 
+**Who writes what:** the files at the top are the user's (`config.toml`, `SOUL.md`, `skills/`, `plugins/`); Ivy reads them and only edits `config.toml` in place (*Always*, `/model`, `/effort`). Everything under `data/` is maintained by plugins (the memory files, which the user may also edit), and `cache/`, `sessions/`, `traces/` and `logs/` are Ivy's own records. So `SOUL.md` stays at the top, not with the memory files: Ivy never edits it (§5.3), and the kernel loads it whether or not the memory plugin is on.
+
 The Anthropic API key may live in `config.toml` (plain text). Other secrets (OAuth tokens, plugin API keys) will go into the macOS Keychain once plugins need them. If `~/.ivy` is backed up with git, exclude `config.toml` or keep the key out of it.
 
 The data root is `$IVY_HOME`, default `~/.ivy`. During development `bun run ivy` sets it to `./.ivy` in the repo (git-ignored), so all dev data is local and easy to wipe.
