@@ -21,8 +21,14 @@ export interface Daemon {
   stop(): Promise<void>;
 }
 
-/** Comment lines keep idle event streams open through any timeout on the way. */
-const HEARTBEAT_MS = 15_000;
+/**
+ * A comment line this often keeps an event stream open: Bun closes a connection idle for
+ * 10 s (its default idleTimeout), and on a Unix socket the per-request way out,
+ * server.timeout(req, 0), does nothing (https://github.com/oven-sh/bun/issues/43816). A
+ * heartbeat inside that limit needs no setting at all, leaves the timeout guarding every
+ * other request, and finds clients that went away.
+ */
+const HEARTBEAT_MS = 5_000;
 /**
  * Events published while no client listens (the app not yet connected, or restarting) are
  * held, at most this many and this long, and go to the next client that connects.
@@ -73,13 +79,9 @@ export async function startDaemon(paths: Paths): Promise<Daemon> {
   const heartbeat = setInterval(() => send(": ping\n\n"), HEARTBEAT_MS);
   let held: Array<{ chunk: string; at: number }> = [];
 
-  const options = {
+  const server = Bun.serve({
     unix: socket,
-    // Event streams stay open for hours: no idle timeout. Bun applies it on Unix sockets
-    // too (it cut streams after 10 s), though its types only allow it on TCP servers, and
-    // a per-request server.timeout(req, 0) didn't lift it.
-    idleTimeout: 0,
-    fetch(req: Request) {
+    fetch(req) {
       const { pathname } = new URL(req.url);
       if (req.method === "GET" && pathname === "/health") {
         return Response.json({ ok: true, pid: process.pid, startedAt });
@@ -108,8 +110,7 @@ export async function startDaemon(paths: Paths): Promise<Daemon> {
       }
       return new Response("Not found", { status: 404 });
     },
-  };
-  const server = Bun.serve(options as unknown as Parameters<typeof Bun.serve>[0]);
+  });
   chmodSync(socket, 0o600);
   log.info(`listening on ${socket}`);
 

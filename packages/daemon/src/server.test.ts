@@ -87,7 +87,14 @@ test("an event stream stays open past Bun's default idle timeout of 10 s", async
   await reader.read(); // the connected event
   await Bun.sleep(11_000);
   d.publish({ type: "reminder", data: { title: "late" } });
-  expect(new TextDecoder().decode((await reader.read()).value)).toContain("late");
+  // Heartbeats come before it; the stream is open if the event arrives at all.
+  let text = "";
+  while (!text.includes("late")) {
+    const { value, done } = await reader.read();
+    if (done) throw new Error(`the stream closed; got: ${text}`);
+    text += new TextDecoder().decode(value);
+  }
+  expect(text).toContain(": ping");
   await reader.cancel();
 }, 20_000);
 
