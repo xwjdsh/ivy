@@ -1,5 +1,13 @@
 import { join } from "node:path";
-import { createIvy, createLogger, type Ivy, type ModelClient, type Paths } from "@ivy/kernel";
+import {
+  createIvy,
+  createLogger,
+  type Ivy,
+  type ModelClient,
+  type Paths,
+  setLogLevel,
+  setLogSink,
+} from "@ivy/kernel";
 import type { IvyPlugin } from "@ivy/plugin-api";
 import { api } from "./api.ts";
 import { DISPLAY_INSTRUCTIONS } from "./display.ts";
@@ -96,6 +104,10 @@ export async function runDaemon(
   plugins: IvyPlugin[],
   opts: RunOptions = {},
 ): Promise<void> {
+  // Its output goes to a log file (the app's, or ~/.ivy/daemon/daemon.log): what it did and
+  // when (started, reminders announced, stopped), each line with its time.
+  setLogLevel("info");
+  setLogSink((line) => process.stderr.write(`${new Date().toISOString()} ${line}\n`));
   const served = await serve({ paths, plugins, onDemand: opts.idleExitMs !== undefined });
   const { ivy, sessions, daemon } = served;
   const scheduler = startScheduler({

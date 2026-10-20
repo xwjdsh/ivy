@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 // Run eval cases against a real model: `bun run eval [filter...] [--model provider/model]`.
 // Each case gets a fresh data folder with a copy of your config.toml (from $IVY_HOME or
-// ./.ivy), so your own memory and sessions are never touched. Not part of `bun test`:
+// ~/.ivy), so your own memory and sessions are never touched. Not part of `bun test`:
 // every run calls the model and costs tokens.
 
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
@@ -33,8 +33,7 @@ const { values, positionals } = parseArgs({
   },
 });
 
-const configPath =
-  values.config ?? join(process.env.IVY_HOME ?? join(process.cwd(), ".ivy"), "config.toml");
+const configPath = values.config ?? join(resolvePaths().home, "config.toml");
 if (!existsSync(configPath)) {
   console.error(`No config at ${configPath}; pass --config <path>.`);
   process.exit(1);
