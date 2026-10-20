@@ -21,6 +21,7 @@ export {
   type Daemon,
   type DaemonEvent,
   DaemonRunningError,
+  health,
   isAlive,
   MAX_SOCKET_PATH,
   type Routes,

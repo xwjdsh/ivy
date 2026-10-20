@@ -9,9 +9,9 @@ function row(label: string, t: UsageTotals, showSessions: boolean): string {
   const parts = [
     `${t.calls} calls`.padEnd(10),
     (showSessions ? `${t.sessions} sessions` : "").padEnd(12),
-    `in ${compact(t.inputTokens)}`,
-    `out ${compact(t.outputTokens)}`,
-    `cache read ${compact(t.cacheReadTokens)} / write ${compact(t.cacheWriteTokens)}`,
+    `in ${compact(t.input)}`,
+    `out ${compact(t.output)}`,
+    `cache read ${compact(t.cacheRead)} / write ${compact(t.cacheWrite)}`,
   ];
   return `  ${label.padEnd(15)}${parts.join("  ")}`;
 }

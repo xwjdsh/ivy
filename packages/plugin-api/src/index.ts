@@ -163,13 +163,22 @@ export interface IvyPlugin {
   commands?: CommandDef[];
 }
 
-/** Identity helper that keeps the input type of `run` inferred from the zod schema. */
 /**
  * The most a plugin's `contextFor` text may hold each turn; the host cuts off the rest. A
  * plugin with more to say should fit it in and point to where the rest is.
  */
 export const CONTEXT_MAX_CHARS = 2000;
 
+/**
+ * A calendar date, YYYY-MM-DD, in the machine's timezone: the dates Ivy writes and the user
+ * reads. Plugins share it so they agree on what "today" is.
+ */
+export function localDate(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/** Identity helper that keeps the input type of `run` inferred from the zod schema. */
 export function defineTool<S extends z.ZodType>(tool: ToolDef<S>): ToolDef {
   return tool as unknown as ToolDef;
 }

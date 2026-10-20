@@ -5,7 +5,7 @@
 // prompt's choices. Clients only draw it. Only types are taken from the kernel, so a web
 // client can use this package without bundling the kernel.
 
-import type { PermissionChoice, RequestInfo, StopReason } from "@ivy/kernel";
+import type { PermissionChoice, RequestInfo, StopReason, TokenCounts } from "@ivy/kernel";
 import type { RiskLevel } from "@ivy/plugin-api";
 import { z } from "zod";
 
@@ -77,13 +77,8 @@ export interface Tokens {
   out: number;
 }
 
-/** One model call's usage, as the API reports it: input excludes cache reads and writes. */
-export interface Usage {
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheWrite: number;
-}
+/** One model call's usage, or a sum of them: input excludes cache reads and writes. */
+export type Usage = TokenCounts;
 
 export function tokensFromUsage(u: Usage): Tokens {
   return { in: u.input + u.cacheRead + u.cacheWrite, cached: u.cacheRead, out: u.output };

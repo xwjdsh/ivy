@@ -26,9 +26,9 @@ test("sums usage per session, across sessions, and since a time", async () => {
 
   expect(summarizeUsage(dir, { sessionId: a.id })).toMatchObject({
     calls: 2,
-    inputTokens: 300,
-    outputTokens: 30,
-    cacheReadTokens: 50,
+    input: 300,
+    output: 30,
+    cacheRead: 50,
     sessions: 1,
   });
   expect(summarizeUsage(dir, { sessionId: a.id }).costUsd).toBeCloseTo(0.03);

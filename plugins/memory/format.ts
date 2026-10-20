@@ -141,8 +141,4 @@ export function tagList(tags: string | undefined): string[] | undefined {
   return tags === undefined ? undefined : tags.split(/[,，、;；#\n]+/).filter((t) => t.trim());
 }
 
-/** YYYY-MM-DD in the machine's timezone. */
-export function localDate(d: Date): string {
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
+export { localDate } from "@ivy/plugin-api";

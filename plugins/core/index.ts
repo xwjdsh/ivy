@@ -1,9 +1,8 @@
-import { definePlugin, defineTool } from "@ivy/plugin-api";
+import { definePlugin, defineTool, localDate } from "@ivy/plugin-api";
 import { z } from "zod";
 import {
   addTo,
   daysBetween,
-  formatDate,
   inTimezone,
   localTimezone,
   nowLine,
@@ -46,7 +45,7 @@ const dateCalc = defineTool({
   risk: "read",
   run({ op, date, to, amount, unit, timezone }) {
     const start = date ? parseDate(date) : new Date();
-    const day = (d: Date) => `${formatDate(d)} (${weekdayOf(d)})`;
+    const day = (d: Date) => `${localDate(d)} (${weekdayOf(d)})`;
     switch (op) {
       case "weekday":
         return day(start);

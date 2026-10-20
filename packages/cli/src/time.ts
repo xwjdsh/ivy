@@ -1,3 +1,5 @@
+import { localDate } from "@ivy/plugin-api";
+
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
@@ -17,5 +19,5 @@ export function relativeTime(iso: string, now = new Date()): string {
   if (then.getTime() >= startOfToday) return `today ${hhmm(then)}`;
   if (then.getTime() >= startOfToday - DAY) return `yesterday ${hhmm(then)}`;
   if (diff < 7 * DAY) return `${Math.ceil((startOfToday - then.getTime()) / DAY)} days ago`;
-  return `${then.getFullYear()}-${pad(then.getMonth() + 1)}-${pad(then.getDate())}`;
+  return localDate(then);
 }

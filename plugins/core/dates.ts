@@ -1,6 +1,8 @@
 // Date helpers for the core plugin. Calendar dates are local (the machine's timezone)
 // unless a timezone is given; "2026-10-21" means that day locally, not UTC midnight.
 
+import { localDate } from "@ivy/plugin-api";
+
 const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -18,17 +20,13 @@ function utcOffset(d: Date): string {
   return `${sign}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`;
 }
 
-export function formatDate(d: Date): string {
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
-
 export function weekdayOf(d: Date): string {
   return WEEKDAYS[d.getDay()] ?? "";
 }
 
 /** The per-turn context line, minute precision: "Now: 2026-10-16 Friday 18:27 (Asia/Tokyo, UTC+09:00)". */
 export function nowLine(now: Date): string {
-  return `Now: ${formatDate(now)} ${weekdayOf(now)} ${pad(now.getHours())}:${pad(now.getMinutes())} (${localTimezone()}, UTC${utcOffset(now)})`;
+  return `Now: ${localDate(now)} ${weekdayOf(now)} ${pad(now.getHours())}:${pad(now.getMinutes())} (${localTimezone()}, UTC${utcOffset(now)})`;
 }
 
 /** Parse "YYYY-MM-DD" as a local calendar date; anything else as an ISO date-time. */

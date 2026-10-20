@@ -4,7 +4,7 @@
 import { spawn } from "node:child_process";
 import { mkdirSync, openSync } from "node:fs";
 import { join } from "node:path";
-import { codeVersion } from "@ivy/daemon";
+import { codeVersion, health } from "@ivy/daemon";
 import type { Paths } from "@ivy/kernel";
 import {
   type CommandInfo,
@@ -12,7 +12,6 @@ import {
   type DaemonState,
   type Display,
   type ErrorBody,
-  type Health,
   type PermissionAnswer,
   PROTOCOL_VERSION,
   type Prompt,
@@ -67,7 +66,6 @@ export class DaemonClient {
     return (text ? JSON.parse(text) : undefined) as T;
   }
 
-  health = () => this.request<Health>("GET", "/health");
   state = () => this.request<DaemonState>("GET", "/state");
   models = () => this.request<{ models: string[]; errors: string[] }>("GET", "/models");
   setModel = (model: string) => this.request<Switched>("PUT", "/model", { model });
@@ -137,19 +135,6 @@ export class DaemonClient {
 export async function connect(paths: Paths): Promise<DaemonClient> {
   await ensureDaemon(paths);
   return new DaemonClient(paths.daemonSocket, () => ensureDaemon(paths));
-}
-
-/** The daemon's /health, or undefined when none answers. */
-async function health(socket: string): Promise<Health | undefined> {
-  try {
-    const res = await fetch("http://ivy/health", {
-      unix: socket,
-      signal: AbortSignal.timeout(1000),
-    });
-    return res.ok ? ((await res.json()) as Health) : undefined;
-  } catch {
-    return undefined;
-  }
 }
 
 /**

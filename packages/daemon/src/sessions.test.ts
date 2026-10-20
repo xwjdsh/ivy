@@ -2,53 +2,13 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type ModelClient, type ModelMessage, type ModelRequest, resolvePaths } from "@ivy/kernel";
+import { resolvePaths } from "@ivy/kernel";
+import { ScriptedModel, type Step, text, toolUse } from "@ivy/kernel/testing";
 import { definePlugin, defineTool } from "@ivy/plugin-api";
 import type { SessionEvent, SessionSummary, SessionView } from "@ivy/protocol";
 import { z } from "zod";
 import { type Served, serve } from "./index.ts";
 import { IDLE_MS } from "./sessions.ts";
-
-type Block = ModelMessage["content"][number];
-const text = (t: string) => ({ type: "text", text: t, citations: null }) as unknown as Block;
-const toolUse = (id: string, name: string, input: unknown = {}) =>
-  ({ type: "tool_use", id, name, input }) as unknown as Block;
-
-/** A reply, sent once `gate` (if any) opens; an aborted call rejects, as the SDK's does. */
-interface Step {
-  content: Block[];
-  stop?: string;
-  gate?: Promise<void>;
-}
-
-class FakeModel implements ModelClient {
-  readonly requests: ModelRequest[] = [];
-  constructor(private readonly script: Step[]) {}
-  async stream(request: ModelRequest, handlers: { onText?(d: string): void }, signal: AbortSignal) {
-    this.requests.push(request);
-    const step = this.script.shift();
-    if (!step) throw new Error("script exhausted");
-    for (const b of step.content) if (b.type === "text") handlers.onText?.(b.text);
-    if (step.gate) {
-      await Promise.race([
-        step.gate,
-        new Promise((_, reject) =>
-          signal.addEventListener("abort", () => reject(new Error("aborted"))),
-        ),
-      ]);
-    }
-    return {
-      id: "msg",
-      type: "message",
-      role: "assistant",
-      model: "claude-opus-5-5",
-      content: step.content,
-      stop_reason: step.stop ?? "end_turn",
-      stop_sequence: null,
-      usage: { input_tokens: 10, output_tokens: 5 },
-    } as unknown as ModelMessage;
-  }
-}
 
 const tools = definePlugin({
   id: "t",
@@ -86,7 +46,7 @@ async function start(script: Step[], permissionTimeoutMs?: number) {
     '[agent]\nmodel = "anthropic/claude-opus-5-5"\n[providers.anthropic]\napi_key = "test"\nmodels = ["claude-opus-5-5"]\n',
   );
   const paths = resolvePaths(home);
-  const model = new FakeModel(script);
+  const model = new ScriptedModel(script);
   const clock = { now: Date.now() };
   const served = await serve({
     paths,

@@ -61,7 +61,7 @@ export class Session {
 
   static load(dir: string, id: string): Session {
     const file = join(dir, `${id}.jsonl`);
-    if (!existsSync(file)) throw new Error(`Session not found: ${id}`);
+    if (!isSessionId(id) || !existsSync(file)) throw new Error(`Session not found: ${id}`);
     const session = new Session(id, file);
     const content = readFileSync(file, "utf8");
     session.needsNewline = content.length > 0 && !content.endsWith("\n");
@@ -142,6 +142,11 @@ export class Session {
   }
 }
 
+/** A session id names a file in the sessions folder, so it may not reach outside it. */
+export function isSessionId(id: string): boolean {
+  return /^[\w-]+$/.test(id);
+}
+
 export function readRecords(file: string): SessionRecord[] {
   return parseRecords(readFileSync(file, "utf8"));
 }
@@ -195,7 +200,7 @@ export function sessionHistory(dir: string): ConversationHistory {
     },
     messages(sessionId) {
       const file = join(dir, `${sessionId}.jsonl`);
-      if (!/^[\w-]+$/.test(sessionId) || !existsSync(file)) return [];
+      if (!isSessionId(sessionId) || !existsSync(file)) return [];
       return readRecords(file).flatMap((r): PastMessage[] => {
         if (r.type !== "message" || r.message.role === "system") return [];
         const { role } = r.message;

@@ -1,15 +1,30 @@
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import type Anthropic from "@anthropic-ai/sdk";
 import { readRecords } from "./session.ts";
 
-export interface UsageTotals {
+/** Tokens of model calls, as the API counts them: input excludes cache reads and writes. */
+export interface TokenCounts {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+}
+
+/** One response's usage as TokenCounts. */
+export function tokenCounts(u: Anthropic.Beta.BetaUsage): TokenCounts {
+  return {
+    input: u.input_tokens,
+    output: u.output_tokens,
+    cacheRead: u.cache_read_input_tokens ?? 0,
+    cacheWrite: u.cache_creation_input_tokens ?? 0,
+  };
+}
+
+export interface UsageTotals extends TokenCounts {
   costUsd: number;
   /** Model calls (one per agent loop step). */
   calls: number;
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadTokens: number;
-  cacheWriteTokens: number;
   /** Sessions with at least one call in range. */
   sessions: number;
 }
@@ -26,10 +41,10 @@ export function summarizeUsage(sessionsDir: string, filter: UsageFilter = {}): U
   const totals: UsageTotals = {
     costUsd: 0,
     calls: 0,
-    inputTokens: 0,
-    outputTokens: 0,
-    cacheReadTokens: 0,
-    cacheWriteTokens: 0,
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
     sessions: 0,
   };
   if (!existsSync(sessionsDir)) return totals;
@@ -45,13 +60,13 @@ export function summarizeUsage(sessionsDir: string, filter: UsageFilter = {}): U
     let counted = false;
     for (const record of readRecords(file)) {
       if (record.type !== "usage" || (since && record.ts < since)) continue;
-      const u = record.usage;
+      const u = tokenCounts(record.usage);
       totals.costUsd += record.costUsd;
       totals.calls += 1;
-      totals.inputTokens += u.input_tokens;
-      totals.outputTokens += u.output_tokens;
-      totals.cacheReadTokens += u.cache_read_input_tokens ?? 0;
-      totals.cacheWriteTokens += u.cache_creation_input_tokens ?? 0;
+      totals.input += u.input;
+      totals.output += u.output;
+      totals.cacheRead += u.cacheRead;
+      totals.cacheWrite += u.cacheWrite;
       counted = true;
     }
     if (counted) totals.sessions += 1;

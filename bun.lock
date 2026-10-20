@@ -30,6 +30,7 @@
       "dependencies": {
         "@ivy/daemon": "workspace:*",
         "@ivy/kernel": "workspace:*",
+        "@ivy/plugin-api": "workspace:*",
         "@ivy/plugin-core": "workspace:*",
         "@ivy/plugin-journal": "workspace:*",
         "@ivy/plugin-memory": "workspace:*",
@@ -41,7 +42,6 @@
         "string-width": "^8.3.0",
       },
       "devDependencies": {
-        "@ivy/plugin-api": "workspace:*",
         "@types/marked-terminal": "^6.1.1",
         "@types/react": "^19.3.0",
         "ink-testing-library": "^4.0.0",

@@ -3,59 +3,14 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type Served, serve } from "@ivy/daemon";
-import {
-  type ModelClient,
-  type ModelMessage,
-  type ModelRequest,
-  resolvePaths,
-  Session,
-} from "@ivy/kernel";
+import { resolvePaths, Session } from "@ivy/kernel";
+import { type Reply, ScriptedModel, type Step, text, toolUse } from "@ivy/kernel/testing";
 import { definePlugin, defineTool, type IvyPlugin } from "@ivy/plugin-api";
 import { render } from "ink-testing-library";
 import { z } from "zod";
 import { DaemonClient } from "../client.ts";
 import { InputHistory } from "../history.ts";
 import { App } from "./app.tsx";
-
-type Block = ModelMessage["content"][number];
-type Reply = { stop: string; content: Block[] };
-/** A reply, or one made when the model is called (e.g. after waiting, or failing on abort). */
-type Step = Reply | ((signal: AbortSignal) => Promise<Reply>);
-
-const text = (t: string) => ({ type: "text", text: t, citations: null }) as unknown as Block;
-const toolUse = (id: string, name: string, input: unknown = {}) =>
-  ({ type: "tool_use", id, name, input }) as unknown as Block;
-
-class FakeModel implements ModelClient {
-  readonly requests: ModelRequest[] = [];
-  listModels?: ModelClient["listModels"];
-  /** `listed`: what the endpoint lists (/model on a provider without `models`). */
-  constructor(
-    private readonly script: Step[],
-    listed?: string[],
-  ) {
-    if (listed) {
-      this.listModels = async () => listed.map((id) => ({ id }) as never);
-    }
-  }
-  async stream(request: ModelRequest, handlers: { onText?(d: string): void }, signal: AbortSignal) {
-    this.requests.push(request);
-    const next = this.script.shift();
-    if (!next) throw new Error("script exhausted");
-    const step = typeof next === "function" ? await next(signal) : next;
-    for (const b of step.content) if (b.type === "text") handlers.onText?.(b.text);
-    return {
-      id: "msg",
-      type: "message",
-      role: "assistant",
-      model: "claude-opus-5-5",
-      content: step.content,
-      stop_reason: step.stop,
-      stop_sequence: null,
-      usage: { input_tokens: 10, output_tokens: 5 },
-    } as unknown as ModelMessage;
-  }
-}
 
 const writeTool = definePlugin({
   id: "t",
@@ -158,7 +113,7 @@ async function start(
   listed?: string[],
 ) {
   if (configToml) writeFileSync(join(home, "config.toml"), configToml);
-  const model = new FakeModel(script, listed);
+  const model = new ScriptedModel(script, listed);
   // Ivy runs in a daemon on a socket in the test's home, as it does for real; the TUI is
   // its client.
   const served: Served = await serve({

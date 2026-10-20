@@ -17,6 +17,7 @@ import {
   summarizeUsage,
   type ToolCallRequest,
   type Tracer,
+  tokenCounts,
 } from "@ivy/kernel";
 import {
   type Display,
@@ -28,6 +29,7 @@ import {
   type SessionSummary,
   type SessionView,
   type TurnEnd,
+  tokensFromUsage,
 } from "@ivy/protocol";
 import { DISPLAY_INSTRUCTIONS } from "./display.ts";
 
@@ -139,7 +141,7 @@ export class Sessions {
       running: live.running?.prompt,
       ...(streaming !== undefined && { streaming }),
       queue: [...live.queue],
-      tokens: tokensOf(summarizeUsage(this.ivy.paths.sessions, { sessionId: id })),
+      tokens: tokensFromUsage(summarizeUsage(this.ivy.paths.sessions, { sessionId: id })),
       ...(permission && { permission }),
     };
   }
@@ -266,7 +268,6 @@ export class Sessions {
     if (live) {
       live.touched = this.now();
     } else {
-      if (!/^[\w-]+$/.test(id)) throw new SessionNotFoundError(`Session not found: ${id}`);
       let session: Session;
       try {
         session = Session.load(this.ivy.paths.sessions, id);
@@ -378,14 +379,7 @@ export class Sessions {
       }
       case "step": {
         running.open = false;
-        const { usage: u, ...rest } = e;
-        const usage = {
-          input: u.input_tokens,
-          output: u.output_tokens,
-          cacheRead: u.cache_read_input_tokens ?? 0,
-          cacheWrite: u.cache_creation_input_tokens ?? 0,
-        };
-        this.publish({ sessionId, ...rest, usage });
+        this.publish({ sessionId, ...e, usage: tokenCounts(e.usage) });
         return;
       }
       case "notice":
@@ -438,17 +432,4 @@ export class Sessions {
     }
     return entries;
   }
-}
-
-function tokensOf(u: {
-  inputTokens: number;
-  cacheReadTokens: number;
-  cacheWriteTokens: number;
-  outputTokens: number;
-}) {
-  return {
-    in: u.inputTokens + u.cacheReadTokens + u.cacheWriteTokens,
-    cached: u.cacheReadTokens,
-    out: u.outputTokens,
-  };
 }

@@ -117,3 +117,8 @@ test("history for plugins: only what was said, newest session first", async () =
   expect(history.messages("missing")).toEqual([]);
   expect(sessionHistory(join(dir, "none")).sessions()).toEqual([]);
 });
+
+test("a session id can't reach outside the sessions folder", () => {
+  const dir = mkdtempSync(join(tmpdir(), "ivy-sid-"));
+  expect(() => Session.load(dir, "../config")).toThrow("Session not found: ../config");
+});

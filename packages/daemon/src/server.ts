@@ -211,13 +211,18 @@ export async function startDaemon(
 
 /** Whether a daemon answers on this socket. */
 export async function isAlive(socket: string): Promise<boolean> {
+  return (await health(socket)) !== undefined;
+}
+
+/** What the daemon on this socket says of itself, or undefined when none answers. */
+export async function health(socket: string): Promise<Health | undefined> {
   try {
-    const res = await fetch("http://localhost/health", {
+    const res = await fetch("http://ivy/health", {
       unix: socket,
       signal: AbortSignal.timeout(1000),
     });
-    return res.ok;
+    return res.ok ? ((await res.json()) as Health) : undefined;
   } catch {
-    return false;
+    return undefined;
   }
 }
