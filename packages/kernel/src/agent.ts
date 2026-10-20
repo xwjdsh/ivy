@@ -58,8 +58,6 @@ export interface RequestInfo {
 }
 
 export interface ToolCallRequest {
-  /** The session whose turn asks. */
-  sessionId: string;
   name: string;
   input: unknown;
   risk: RiskLevel;
@@ -80,13 +78,13 @@ export interface AgentOptions {
   capabilities: Capabilities;
   /** Who may run which tool without asking. */
   permissions: Permissions;
-  /** Asked when the permission rules say "ask". */
-  confirm(call: ToolCallRequest): Promise<PermissionChoice>;
 }
 
 export interface TurnOptions {
   signal: AbortSignal;
   onEvent(event: AgentEvent): void;
+  /** Asked when the permission rules say "ask": whoever runs the turn answers. */
+  confirm(call: ToolCallRequest): Promise<PermissionChoice>;
   tracer?: Tracer;
 }
 
@@ -312,7 +310,7 @@ export class Agent {
     toolUses: ToolUseBlock[],
     turn: TurnOptions,
   ): Promise<ToolResultBlock[]> {
-    const { plugins, confirm, permissions } = this.opts;
+    const { plugins, permissions } = this.opts;
     const toolLog = createLogger("tool");
 
     type Verdict =
@@ -339,8 +337,7 @@ export class Agent {
         verdicts.push(decided.decision === "allow" ? "run" : "denied by rule");
         continue;
       }
-      const choice = await confirm({
-        sessionId,
+      const choice = await turn.confirm({
         name: use.name,
         input: use.input,
         risk,

@@ -1,8 +1,4 @@
-export interface CommandInfo {
-  name: string;
-  args?: string;
-  description: string;
-}
+import type { CommandInfo } from "@ivy/protocol";
 
 export const COMMANDS: CommandInfo[] = [
   { name: "/new", description: "Start a new session and clear the screen" },

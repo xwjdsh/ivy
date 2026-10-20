@@ -1,5 +1,4 @@
-import type { PermissionChoice } from "@ivy/kernel";
-import type { PermissionAsk, ToolLabel } from "@ivy/protocol";
+import type { PermissionAnswer, PermissionAsk, ToolLabel } from "@ivy/protocol";
 import { Box, Text, useAnimation, useInput } from "ink";
 import { useState } from "react";
 import { renderMarkdown } from "../markdown.ts";
@@ -41,10 +40,10 @@ export function StatusBar(props: {
   );
 }
 
-const CHOICES: Array<{ value: PermissionChoice; label: string; key: string; remember?: true }> = [
+const CHOICES: Array<{ value: PermissionAnswer; label: string; key: string }> = [
   { value: "once", label: "Yes", key: "y" },
-  { value: "session", label: "Yes, for the rest of this session", key: "s", remember: true },
-  { value: "always", label: "Always (saved to config.toml)", key: "a", remember: true },
+  { value: "session", label: "Yes, for the rest of this session", key: "s" },
+  { value: "always", label: "Always (saved to config.toml)", key: "a" },
   { value: "deny", label: "No", key: "n" },
 ];
 
@@ -53,7 +52,7 @@ const PROMPT_INPUT_LINES = 12;
 
 function promptLayout(call: PermissionAsk) {
   // The daemon offers "for this session" and "always" only where they take effect.
-  const choices = CHOICES.filter((c) => (call.choices as string[]).includes(c.value));
+  const choices = CHOICES.filter((c) => call.choices.includes(c.value));
   // Dangerous tools show their full input; others enough to judge, e.g. a memory being saved.
   const all = inputLines(call.input);
   const max = call.risk === "dangerous" ? all.length : PROMPT_INPUT_LINES;
@@ -87,7 +86,7 @@ export function PermissionPrompt({
   onChoose,
 }: {
   call: PermissionAsk;
-  onChoose(choice: PermissionChoice): void;
+  onChoose(choice: PermissionAnswer): void;
 }) {
   const { choices, inputLines, hidden } = promptLayout(call);
   const [index, setIndex] = useState(0);

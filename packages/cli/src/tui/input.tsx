@@ -1,6 +1,7 @@
+import type { CommandInfo } from "@ivy/protocol";
 import { Box, type DOMElement, Text, useBoxMetrics, useCursor, useInput, usePaste } from "ink";
 import { useEffect, useRef, useState } from "react";
-import { type CommandInfo, matchCommands } from "../commands.ts";
+import { matchCommands } from "../commands.ts";
 import * as E from "./editor.ts";
 
 const PROMPT = "› ";

@@ -64,6 +64,8 @@ export class PluginHost {
     private readonly dataRoot: string,
     private readonly configs: Record<string, Record<string, unknown>>,
     private readonly history: ConversationHistory = NO_HISTORY,
+    /** SOUL.md; by default where the data folder's parent keeps it (tests). */
+    private readonly soulFile = join(dataRoot, "..", "SOUL.md"),
   ) {}
 
   async register(plugin: IvyPlugin): Promise<void> {
@@ -112,6 +114,7 @@ export class PluginHost {
     await plugin.setup?.({
       config,
       dataDir,
+      soulFile: this.soulFile,
       log: createLogger(plugin.id),
       history: this.history,
     });

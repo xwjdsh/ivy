@@ -131,8 +131,7 @@ export function createJournalPlugin(): IvyPlugin {
       const config = ctx.config as z.infer<typeof configSchema>;
       state = {
         path: join(ctx.dataDir, NAME),
-        // SOUL.md is at the top of the Ivy folder, above data/<plugin> (DESIGN.md §7).
-        soul: join(ctx.dataDir, "..", "..", "SOUL.md"),
+        soul: ctx.soulFile,
         limit: config.limit,
         log: ctx.log,
       };

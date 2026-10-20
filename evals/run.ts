@@ -22,7 +22,7 @@ const SUITES: Record<string, EvalCase[]> = { basics, journal, memory };
 const FILES: MemoryFile[] = ["USER.md", "MEMORY.md", "ARCHIVE.md", "IVY.md"];
 /** Where each file lives under the data folder: IVY.md belongs to the journal plugin. */
 const fileDir = (f: MemoryFile) => (f === "IVY.md" ? "journal" : "memory");
-const filePath = (home: string, f: MemoryFile) => join(home, "data", fileDir(f), f);
+const filePath = (home: string, f: MemoryFile) => join(resolvePaths(home).data, fileDir(f), f);
 
 const { values, positionals } = parseArgs({
   allowPositionals: true,
@@ -65,9 +65,10 @@ console.log(`\n${passed}/${selected.length} passed · ${label} · data in ${root
 process.exit(passed === selected.length ? 0 : 1);
 
 async function runCase(c: EvalCase, home: string): Promise<string[]> {
-  for (const dir of ["memory", "journal"]) mkdirSync(join(home, "data", dir), { recursive: true });
-  if (c.soul) writeFileSync(join(home, "SOUL.md"), c.soul);
-  writeFileSync(join(home, "config.toml"), baseConfig + (c.config ? `\n${c.config}` : ""));
+  const paths = resolvePaths(home);
+  for (const dir of ["memory", "journal"]) mkdirSync(join(paths.data, dir), { recursive: true });
+  if (c.soul) writeFileSync(paths.soul, c.soul);
+  writeFileSync(paths.config, baseConfig + (c.config ? `\n${c.config}` : ""));
   for (const [name, text] of Object.entries(c.files ?? {})) {
     writeFileSync(filePath(home, name as MemoryFile), text);
   }
@@ -76,9 +77,7 @@ async function runCase(c: EvalCase, home: string): Promise<string[]> {
   try {
     ivy = await createIvy({
       plugins: [core, createMemoryPlugin(), createJournalPlugin()],
-      paths: resolvePaths(home),
-      confirm: async () => "deny", // nobody is there to answer; risky tools are refused
-      interfaceInstructions: DISPLAY_INSTRUCTIONS.markdown,
+      paths,
     });
     if (values.model) ivy.agent.setModel(values.model);
   } catch (err) {
@@ -97,12 +96,13 @@ async function runCase(c: EvalCase, home: string): Promise<string[]> {
     }
     if (!session || !step.sameSession) {
       session = Session.create(ivy.paths.sessions, ivy.agent.model);
-      await ivy.systemPrompt.start(session.id);
+      await ivy.systemPrompt.start(session.id, DISPLAY_INSTRUCTIONS.markdown);
     }
     const run: StepRun = { answer: "", tools: [], files: readFiles(home) };
     const calls = new Map<string, { name: string; input: unknown }>();
     const result = await ivy.agent.runTurn(session, step.say, {
       signal: new AbortController().signal,
+      confirm: async () => "deny", // nobody is there to answer; risky tools are refused
       onEvent: (e) => {
         if (e.type === "text") run.answer += e.delta;
         if (e.type === "tool_call") calls.set(e.id, { name: e.name, input: e.input });

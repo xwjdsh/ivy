@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import type { IvyPlugin } from "@ivy/plugin-api";
-import { Agent, type ToolCallRequest } from "./agent.ts";
+import { Agent } from "./agent.ts";
 import { Capabilities } from "./capabilities.ts";
 import {
   type Config,
@@ -13,7 +13,7 @@ import {
 import { saveAllowRule } from "./config-edit.ts";
 import { SystemPrompt } from "./context.ts";
 import { AnthropicModelClient, type ModelClient } from "./model.ts";
-import { type PermissionChoice, Permissions } from "./permissions.ts";
+import { Permissions } from "./permissions.ts";
 import { PluginHost } from "./plugins.ts";
 import { sessionHistory } from "./session.ts";
 import { pruneTraces, Tracer } from "./trace.ts";
@@ -37,12 +37,9 @@ export * from "./usage.ts";
 
 export interface IvyOptions {
   plugins: IvyPlugin[];
-  confirm(call: ToolCallRequest): Promise<PermissionChoice>;
   paths?: Paths;
   /** One client for every provider, instead of real ones (tests). */
   model?: ModelClient;
-  /** How the current UI shows replies (e.g. "renders Markdown"), added to the system prompt. */
-  interfaceInstructions?: string;
 }
 
 export interface Ivy {
@@ -73,10 +70,15 @@ export async function createIvy(opts: IvyOptions): Promise<Ivy> {
   const paths = opts.paths ?? resolvePaths();
   const config = loadConfig(paths);
   pruneTraces(paths.traces, config.trace.retention_days);
-  const plugins = new PluginHost(paths.data, config.plugins, sessionHistory(paths.sessions));
+  const plugins = new PluginHost(
+    paths.data,
+    config.plugins,
+    sessionHistory(paths.sessions),
+    paths.soul,
+  );
   for (const plugin of opts.plugins) await plugins.register(plugin);
 
-  const systemPrompt = new SystemPrompt(paths, plugins, opts.interfaceInstructions);
+  const systemPrompt = new SystemPrompt(paths, plugins);
   const capabilities = new Capabilities(paths.modelsCache, config.generation.effort);
   const clients = new Map<string, ModelClient>();
   const clientFor = (provider: ProviderConfig): ModelClient => {
@@ -105,7 +107,6 @@ export async function createIvy(opts: IvyOptions): Promise<Ivy> {
     permissions,
     plugins,
     systemPrompt: (sessionId) => systemPrompt.textFor(sessionId),
-    confirm: opts.confirm,
   });
   const upstream = new Map<string, Promise<string[]>>();
   const listUpstream = (provider: ProviderConfig): Promise<string[]> => {

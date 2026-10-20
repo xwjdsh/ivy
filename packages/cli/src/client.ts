@@ -13,6 +13,7 @@ import {
   type Display,
   type ErrorBody,
   type Health,
+  type PermissionAnswer,
   PROTOCOL_VERSION,
   type Prompt,
   type Report,
@@ -84,7 +85,7 @@ export class DaemonClient {
     this.request<void>("DELETE", `/sessions/${id}/prompts/${promptId}`);
   interrupt = (id: string, clearQueue = true) =>
     this.request<void>("POST", `/sessions/${id}/interrupt`, { clearQueue });
-  answer = (askId: string, choice: string) =>
+  answer = (askId: string, choice: PermissionAnswer) =>
     this.request<void>("POST", `/permissions/${askId}`, { choice });
   runCommand = (id: string, name: string, args: string) =>
     this.request<CommandResult>("POST", `/sessions/${id}/commands`, { name, args });

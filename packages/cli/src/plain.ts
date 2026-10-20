@@ -1,6 +1,12 @@
 import { createInterface } from "node:readline/promises";
-import type { PermissionChoice, RequestInfo } from "@ivy/kernel";
-import type { PermissionAsk, SessionEvent, ToolLabel, TurnEnd } from "@ivy/protocol";
+import type { RequestInfo } from "@ivy/kernel";
+import type {
+  PermissionAnswer,
+  PermissionAsk,
+  SessionEvent,
+  ToolLabel,
+  TurnEnd,
+} from "@ivy/protocol";
 import type { DaemonClient } from "./client.ts";
 import { formatCall } from "./verbose-format.ts";
 
@@ -16,7 +22,7 @@ const c = {
 const label = (l: ToolLabel) => (l.text ? `${c.bold(l.plugin)} · ${l.text}` : c.bold(l.plugin));
 
 /** Asks on the terminal when there is one; without a TTY (scripts, pipes) risky tools are denied. */
-async function confirmPlain(ask: PermissionAsk): Promise<PermissionChoice> {
+async function confirmPlain(ask: PermissionAsk): Promise<PermissionAnswer> {
   if (!process.stdin.isTTY) return "deny";
   const rl = createInterface({ input: process.stdin, output: process.stderr });
   try {

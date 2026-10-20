@@ -17,8 +17,8 @@ export interface PromptPart {
  * 4. plugin instructions (static)
  * 5. plugins' session sections (`sessionPrompt`, e.g. the memory files USER.md and MEMORY.md)
  *
- * Files and session sections are read when a session starts, so hand edits apply after
- * /new. Within a session the bytes never change: any change would invalidate the prompt
+ * Files and session sections are read when a session starts, so hand edits apply to the
+ * next session. Within a session the bytes never change: any change would invalidate the prompt
  * cache. Per-turn data (like the time) goes into the turn's context instead.
  */
 export class SystemPrompt {
@@ -28,30 +28,27 @@ export class SystemPrompt {
   constructor(
     private readonly paths: Paths,
     private readonly plugins: PluginHost,
-    /** For sessions started without instructions of their own. */
-    private readonly interfaceInstructions = "",
   ) {}
 
   /**
-   * Build the prompt for a session that starts now (startup, /new, /resume), even if built
-   * before. `interfaceInstructions` describe the interface it starts in, when it differs
-   * from the default (e.g. one-shot plain text).
+   * Build and freeze the prompt for a session that starts now, or comes back after being
+   * let go. `interfaceInstructions` say how its replies are shown (Markdown rendered, or
+   * plain text for scripts).
    */
-  start(
-    sessionId: string,
-    interfaceInstructions = this.interfaceInstructions,
-  ): Promise<PromptPart[]> {
+  start(sessionId: string, interfaceInstructions: string): Promise<PromptPart[]> {
     const parts = this.build(sessionId, interfaceInstructions);
     this.sessions.set(sessionId, parts);
     return parts;
   }
 
-  /** The prompt's sections for a session: the frozen ones, or built now if it hasn't started. */
+  /** The frozen prompt's sections of a session that started. */
   partsFor(sessionId: string): Promise<PromptPart[]> {
-    return this.sessions.get(sessionId) ?? this.start(sessionId);
+    const parts = this.sessions.get(sessionId);
+    if (!parts) throw new Error(`The system prompt of session ${sessionId} wasn't started`);
+    return parts;
   }
 
-  /** Drop a session's frozen prompt (it was closed); it is built afresh if it runs again. */
+  /** Drop a session's frozen prompt (it was let go); `start` builds it afresh. */
   end(sessionId: string): void {
     this.sessions.delete(sessionId);
   }

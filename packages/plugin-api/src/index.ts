@@ -50,6 +50,11 @@ export interface PluginContext {
   config: unknown;
   /** Private data directory: ~/.ivy/data/<pluginId>/ (created on demand). */
   dataDir: string;
+  /**
+   * SOUL.md, who Ivy is: the user's file (DESIGN.md §5.3). A plugin may read it; only an
+   * edit the user approves (the journal's proposal) may change it.
+   */
+  soulFile: string;
   log: Logger;
   /** Past conversations, read-only. */
   history: ConversationHistory;

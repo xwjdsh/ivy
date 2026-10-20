@@ -10,7 +10,6 @@ import {
 } from "@ivy/kernel";
 import type { IvyPlugin } from "@ivy/plugin-api";
 import { api } from "./api.ts";
-import { DISPLAY_INSTRUCTIONS } from "./display.ts";
 import { startScheduler } from "./scheduler.ts";
 import { type Daemon, startDaemon } from "./server.ts";
 import { Sessions } from "./sessions.ts";
@@ -37,6 +36,8 @@ export interface ServeOptions {
   /** One client for every provider, instead of real ones (tests). */
   model?: ModelClient;
   permissionTimeoutMs?: number;
+  /** The clock for sessions going idle (tests). */
+  now?: () => number;
   /** Started by `ivy` on demand (see Health.onDemand). */
   onDemand?: boolean;
 }
@@ -51,22 +52,14 @@ export interface Served {
 
 /** Load Ivy with its plugins and serve its sessions on the socket (no scheduler). */
 export async function serve(opts: ServeOptions): Promise<Served> {
-  // Permission prompts go to the clients following the session (see Sessions).
-  let sessions: Sessions | undefined;
-  const ivy = await createIvy({
-    plugins: opts.plugins,
-    paths: opts.paths,
-    model: opts.model,
-    confirm: (call) => (sessions ? sessions.confirm(call) : Promise.resolve("deny")),
-    interfaceInstructions: DISPLAY_INSTRUCTIONS.markdown,
-  });
+  const ivy = await createIvy({ plugins: opts.plugins, paths: opts.paths, model: opts.model });
   let daemon: Daemon | undefined;
   const live = new Sessions({
     ivy,
     publish: (event) => daemon?.publish({ type: "session", data: event }),
     permissionTimeoutMs: opts.permissionTimeoutMs,
+    now: opts.now,
   });
-  sessions = live;
   const started = await startDaemon(opts.paths, api(ivy, live), {
     code: codeVersion(),
     onDemand: opts.onDemand ?? false,

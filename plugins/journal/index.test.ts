@@ -19,6 +19,7 @@ async function start(settings: Record<string, unknown> = {}) {
   await plugin.setup?.({
     config: plugin.configSchema?.parse(settings),
     dataDir: dir,
+    soulFile: join(home, "SOUL.md"),
     log,
     history: { sessions: () => [], messages: () => [] },
   });
@@ -153,7 +154,7 @@ test("proposing a SOUL.md change is dangerous: asked every time, never allowed b
   expect(tool?.defaultAllow).toBeUndefined();
 });
 
-test("an approved proposal adds a passage to SOUL.md, next to the plugin's data folder", async () => {
+test("an approved proposal adds a passage to SOUL.md", async () => {
   soulAt();
   const r = await call("propose_soul_edit", {
     why: "We've kept things blunt for months (entries of 09-02, 09-20, 10-11)",

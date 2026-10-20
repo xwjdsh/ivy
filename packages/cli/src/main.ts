@@ -2,7 +2,7 @@
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { runDaemon } from "@ivy/daemon";
-import { errorMessage, resolvePaths, setLogLevel } from "@ivy/kernel";
+import { errorMessage, resolvePaths } from "@ivy/kernel";
 import core from "@ivy/plugin-core";
 import journal from "@ivy/plugin-journal";
 import memory from "@ivy/plugin-memory";
@@ -28,7 +28,7 @@ const HELP = `Usage: ivy [options] [prompt]
 Options:
   -c, --continue      Continue the most recent session
   -r, --resume [id]   Resume session <id>, or pick one
-  -v, --verbose       Show request/response details, hidden context and logs
+  -v, --verbose       Show request/response details and hidden context
   -h, --help          Show this help`;
 
 /** parseArgs has no optional option values; a bare -r/--resume becomes "" (= open the picker). */
@@ -73,8 +73,6 @@ async function main(): Promise<number> {
     console.error('Interactive mode needs a terminal. Pass a prompt instead: ivy "question"');
     return 1;
   }
-  // In the TUI, stderr logging would corrupt the screen; verbose details are shown inline instead.
-  if (verbose && !interactive) setLogLevel("debug");
 
   // Ivy runs in the daemon; this process only shows it (DESIGN.md §5.7).
   const paths = resolvePaths();

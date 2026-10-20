@@ -110,19 +110,26 @@ describe("Agent.runTurn", () => {
       if (!client) throw new Error(`no client for ${provider.name}`);
       return client;
     };
-    return new Agent({
+    const agent = new Agent({
       config,
       clientFor,
       plugins,
       systemPrompt: async () => systemPrompt,
-      confirm,
       capabilities,
       permissions,
     });
+    confirms.set(agent, confirm);
+    return agent;
   }
 
+  /** Who answers each agent's permission prompts (passed with every turn). */
+  const confirms = new WeakMap<Agent, (c: ToolCallRequest) => Promise<PermissionChoice>>();
   const run = (agent: Agent, input: string, signal = new AbortController().signal) =>
-    agent.runTurn(session, input, { signal, onEvent: (e) => events.push(e) });
+    agent.runTurn(session, input, {
+      signal,
+      onEvent: (e) => events.push(e),
+      confirm: confirms.get(agent) ?? (async () => "once"),
+    });
 
   test("plain answer ends the turn", async () => {
     const model = new FakeModel([reply("end_turn", [text("hi")])]);
@@ -242,7 +249,6 @@ describe("Agent.runTurn", () => {
     await run(agent, "go");
     expect(asked).toEqual([
       {
-        sessionId: session.id,
         name: "t__echo",
         input: { msg: "x" },
         risk: "read",

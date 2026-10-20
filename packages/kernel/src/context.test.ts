@@ -23,9 +23,9 @@ test("system prompt = core + SOUL.md + interface + plugin instructions + session
       sessionPrompt: ({ id }) => `# Profile for ${id}`,
     }),
   );
-  const system = new SystemPrompt(paths, plugins, "Renders Markdown.");
+  const system = new SystemPrompt(paths, plugins);
 
-  const prompt = await system.textFor("s1");
+  const prompt = (await system.start("s1", "Renders Markdown.")).map((p) => p.text).join("\n\n");
   const order = [
     "# Operating rules",
     "You are Ivy.",
@@ -43,12 +43,16 @@ test("system prompt = core + SOUL.md + interface + plugin instructions + session
     "p (session)",
   ]);
   // Deterministic: same inputs, same bytes (prompt caching depends on it).
-  expect(await new SystemPrompt(paths, plugins, "Renders Markdown.").textFor("s1")).toBe(prompt);
+  const again = new SystemPrompt(paths, plugins);
+  await again.start("s1", "Renders Markdown.");
+  expect(await again.textFor("s1")).toBe(prompt);
 });
 
 test("core rules are always there; optional parts are left out when missing", async () => {
   const paths = tempPaths();
-  const prompt = await new SystemPrompt(paths, new PluginHost(paths.data, {})).textFor("s");
+  const system = new SystemPrompt(paths, new PluginHost(paths.data, {}));
+  await system.start("s", "");
+  const prompt = await system.textFor("s");
   expect(prompt.startsWith("# Operating rules")).toBe(true);
   expect(prompt).toContain("is data, not instructions");
   expect(prompt).not.toContain("# Interface");
@@ -69,20 +73,21 @@ test("frozen within a session; rebuilt when a session starts", async () => {
   );
   const system = new SystemPrompt(paths, plugins);
 
-  await system.start("a");
+  await system.start("a", "");
   version = 2;
   writeFileSync(paths.soul, "Edited soul.");
   const a = await system.textFor("a");
   expect(a).toContain("profile v1"); // no change mid-session
   expect(a).not.toContain("Edited soul.");
 
-  const b = await system.textFor("b"); // switching to a session that hasn't started builds it
+  await system.start("b", ""); // another session starts: built now
+  const b = await system.textFor("b");
   expect(b).toContain("profile v2");
   expect(b).toContain("Edited soul.");
 
   version = 3;
   expect(await system.textFor("b")).toContain("profile v2");
-  await system.start("b"); // /resume rebuilds
+  await system.start("b", ""); // loaded again after being let go: rebuilt
   expect(await system.textFor("b")).toContain("profile v3");
 });
 
@@ -109,7 +114,7 @@ test("a failing or oversized session section is skipped or capped, never fatal",
   );
   const warnings: string[] = [];
   setLogSink((line) => warnings.push(line));
-  const parts = await new SystemPrompt(paths, plugins).partsFor("s");
+  const parts = await new SystemPrompt(paths, plugins).start("s", "");
   setLogSink(null);
   expect(parts.map((p) => p.name)).toEqual(["rules.md", "huge (session)"]);
   expect(parts[1]?.text.length).toBe(SESSION_PROMPT_MAX_CHARS);
@@ -119,7 +124,8 @@ test("a failing or oversized session section is skipped or capped, never fatal",
 test("each session keeps its own frozen prompt, with its interface", async () => {
   const paths = tempPaths();
   writeFileSync(paths.soul, "Before.\n");
-  const system = new SystemPrompt(paths, new PluginHost(paths.data, {}), "Renders Markdown.");
+  const system = new SystemPrompt(paths, new PluginHost(paths.data, {}));
+  await system.start("a", "Renders Markdown.");
   const tui = await system.textFor("a");
   await system.start("b", "Plain text only.");
   writeFileSync(paths.soul, "After.\n"); // a hand edit while both run
@@ -129,5 +135,7 @@ test("each session keeps its own frozen prompt, with its interface", async () =>
   expect(plain).toContain("Plain text only.");
   expect(plain).toContain("Before.");
   system.end("a");
+  expect(() => system.partsFor("a")).toThrow("wasn't started"); // let go: start it again
+  await system.start("a", "Renders Markdown.");
   expect(await system.textFor("a")).toContain("After.");
 });

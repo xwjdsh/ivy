@@ -1,16 +1,11 @@
-import {
-  EFFORT_LEVELS,
-  errorMessage,
-  type PermissionChoice,
-  type RequestInfo,
-  setLogLevel,
-  setLogSink,
-} from "@ivy/kernel";
+import { errorMessage, type RequestInfo } from "@ivy/kernel";
 import {
   addTokens,
   type CommandInfo,
   type DaemonState,
   formatTokens,
+  onlyOneModel,
+  type PermissionAnswer,
   type PermissionAsk,
   type Prompt,
   type SessionEvent,
@@ -125,7 +120,7 @@ export function App({
   const sessionRef = useRef(initialSession.id);
 
   // Verbose view: request/response details, the hidden per-turn context, full tool input
-  // and plugin command logs. A ref so a turn in flight sees toggles at once.
+  // and what plugin commands log. A ref so a turn in flight sees toggles at once.
   const [verboseOn, setVerboseOn] = useState(verbose);
   const verboseRef = useRef(verbose);
   const lastRequest = useRef<RequestInfo | undefined>(undefined);
@@ -151,16 +146,6 @@ export function App({
     [push],
   );
   const failed = (err: unknown) => info(errorMessage(err), "error");
-
-  // stderr would corrupt the screen: this process's own logs go nowhere unless verbose.
-  useEffect(() => {
-    verboseRef.current = verboseOn;
-    setLogLevel(verboseOn ? "debug" : "warn");
-    setLogSink((line) => {
-      if (verboseRef.current) info(line);
-    });
-  }, [verboseOn, info]);
-  useEffect(() => () => setLogSink(null), []);
 
   // <Static> prints each item once. To reprint (new width, expanded tools, switched
   // session) we clear the terminal and remount it with a new key, as Gemini CLI does.
@@ -395,7 +380,8 @@ export function App({
   // /model switches now, to a model on any provider, and saves the choice as [agent] model.
   const switchModel = (name: string) => {
     if (name === state.model) return;
-    client.setModel(name).then((result) => switched(`Model: ${name}`, result), failed);
+    // The daemon may have resolved a bare id to "<provider>/<id>": show what it chose.
+    client.setModel(name).then((result) => switched(`Model: ${result.model}`, result), failed);
   };
   const openPicker = () => {
     client.sessions().then((all) => {
@@ -421,36 +407,21 @@ export function App({
         info(helpText(commands));
         return;
       case "/model": {
-        const name = args[0];
+        // With a name, the daemon resolves it (the provider may be left out) or says why not.
+        if (args[0]) return switchModel(args[0]);
         // Providers without a `models` limit are asked what they offer.
         client.models().then(({ models, errors }) => {
           for (const e of errors) info(`Couldn't list the models of ${e}`, "warn");
-          // The provider can be left out when only one provider has a model by that id.
-          const byId = models.filter((m) => m.slice(m.indexOf("/") + 1) === name);
-          const pick =
-            name && models.includes(name) ? name : byId.length === 1 ? byId[0] : undefined;
-          if (models.length < 2) {
-            info(
-              `Only one model is available (${state.model}). List more under \`models\` in a [providers.*] section, or leave \`models\` out to offer all the endpoint has.`,
-              "warn",
-            );
-          } else if (!name) {
-            setDialog({ kind: "model", models });
-          } else if (pick) {
-            switchModel(pick);
-          } else {
-            info(`Unknown model ${name}. /model lists the available ones.`, "error");
-          }
+          if (models.length < 2) info(onlyOneModel(state.model), "warn");
+          else setDialog({ kind: "model", models });
         }, failed);
         return;
       }
-      case "/effort": {
-        const level = args[0];
-        if (!level) setDialog({ kind: "effort" });
-        else if ((EFFORT_LEVELS as readonly string[]).includes(level)) switchEffort(level);
-        else info(`Unknown effort ${level}. Levels: ${EFFORT_LEVELS.join(", ")}`, "error");
+      case "/effort":
+        if (args[0])
+          switchEffort(args[0]); // the daemon checks the level
+        else setDialog({ kind: "effort" });
         return;
-      }
       case "/status":
         client.status(id).then((r) => info(r.text), failed);
         return;
@@ -496,7 +467,7 @@ export function App({
     else client.send(sessionRef.current, text).catch(failed);
   };
 
-  const answerPermission = (choice: PermissionChoice) => {
+  const answerPermission = (choice: PermissionAnswer) => {
     if (!permission) return;
     client.answer(permission.id, choice).catch(failed);
     setPermission(null);
@@ -535,7 +506,7 @@ export function App({
     (permission ? permissionPromptHeight(permission) : 0) +
     (dialog?.kind === "sessions" ? pickerHeight(dialog.sessions.length) : 0) +
     (dialog?.kind === "model" ? pickerHeight(dialog.models.length, true) : 0) +
-    (dialog?.kind === "effort" ? EFFORT_LEVELS.length + 4 : 0) +
+    (dialog?.kind === "effort" ? state.efforts.length + 4 : 0) +
     completions.length;
   const maxLiveLines = Math.max(3, rows - reserved);
   // Ivy's text still streaming, laid out as it will be once finished (AssistantText).
@@ -613,8 +584,8 @@ export function App({
       {dialog?.kind === "effort" && (
         <Picker
           title="Switch effort (saved as default)"
-          items={[...EFFORT_LEVELS]}
-          initialIndex={Math.max(0, (EFFORT_LEVELS as readonly string[]).indexOf(state.effort))}
+          items={state.efforts}
+          initialIndex={Math.max(0, state.efforts.indexOf(state.effort))}
           itemKey={(level) => level}
           renderItem={(level) => (level === state.effort ? `${level}  (current)` : level)}
           onPick={(level) => {

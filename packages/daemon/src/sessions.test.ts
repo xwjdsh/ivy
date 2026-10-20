@@ -2,19 +2,12 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  createIvy,
-  type ModelClient,
-  type ModelMessage,
-  type ModelRequest,
-  resolvePaths,
-} from "@ivy/kernel";
+import { type ModelClient, type ModelMessage, type ModelRequest, resolvePaths } from "@ivy/kernel";
 import { definePlugin, defineTool } from "@ivy/plugin-api";
 import type { SessionEvent, SessionSummary, SessionView } from "@ivy/protocol";
 import { z } from "zod";
-import { api } from "./api.ts";
-import { type Daemon, startDaemon } from "./server.ts";
-import { IDLE_MS, Sessions } from "./sessions.ts";
+import { type Served, serve } from "./index.ts";
+import { IDLE_MS } from "./sessions.ts";
 
 type Block = ModelMessage["content"][number];
 const text = (t: string) => ({ type: "text", text: t, citations: null }) as unknown as Block;
@@ -81,12 +74,9 @@ const gate = () => {
   return { promise, open };
 };
 
-const running: Array<{ daemon: Daemon; sessions: Sessions }> = [];
+const running: Served[] = [];
 afterEach(async () => {
-  for (const r of running.splice(0)) {
-    await r.sessions.close();
-    await r.daemon.stop();
-  }
+  for (const r of running.splice(0)) await r.stop();
 });
 
 async function start(script: Step[], permissionTimeoutMs?: number) {
@@ -96,24 +86,17 @@ async function start(script: Step[], permissionTimeoutMs?: number) {
     '[agent]\nmodel = "anthropic/claude-opus-5-5"\n[providers.anthropic]\napi_key = "test"\nmodels = ["claude-opus-5-5"]\n',
   );
   const paths = resolvePaths(home);
-  let sessions: Sessions | undefined;
   const model = new FakeModel(script);
   const clock = { now: Date.now() };
-  const ivy = await createIvy({
+  const served = await serve({
+    paths,
     plugins: [tools],
     model,
-    paths,
-    confirm: (call) => (sessions as Sessions).confirm(call),
-  });
-  let daemon: Daemon | undefined;
-  sessions = new Sessions({
-    ivy,
-    publish: (event) => daemon?.publish({ type: "session", data: event }),
     permissionTimeoutMs,
     now: () => clock.now,
   });
-  daemon = await startDaemon(paths, api(ivy, sessions));
-  running.push({ daemon, sessions });
+  running.push(served);
+  const { sessions } = served;
 
   const call = async (method: string, path: string, body?: unknown) => {
     const res = await fetch(`http://ivy${path}`, {

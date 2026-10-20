@@ -16,6 +16,7 @@ async function start(settings: Record<string, unknown> = {}) {
   await plugin.setup?.({
     config,
     dataDir: dir,
+    soulFile: join(dir, "SOUL.md"),
     log,
     history: { sessions: () => [], messages: () => [] },
   });

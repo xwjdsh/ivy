@@ -332,6 +332,7 @@ export interface ToolDef<I = unknown> {
 export interface PluginContext {
   config: unknown;            // [plugins.<id>] parsed with configSchema
   dataDir: string;            // ~/.ivy/data/<pluginId>/
+  soulFile: string;           // SOUL.md: read freely; changed only by an approved proposal
   log: Logger;
   history: ConversationHistory;  // past conversations as text, read-only
   // Planned: secrets (macOS Keychain), llm (own model calls, via helper_model), kernel (notify, call other tools)

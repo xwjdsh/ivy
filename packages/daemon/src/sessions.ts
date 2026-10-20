@@ -18,15 +18,16 @@ import {
   type ToolCallRequest,
   type Tracer,
 } from "@ivy/kernel";
-import type {
-  Display,
-  Entry,
-  PermissionAsk,
-  Prompt,
-  SessionEvent,
-  SessionSummary,
-  SessionView,
-  TurnEnd,
+import {
+  type Display,
+  type Entry,
+  PERMISSION_ANSWERS,
+  type PermissionAsk,
+  type Prompt,
+  type SessionEvent,
+  type SessionSummary,
+  type SessionView,
+  type TurnEnd,
 } from "@ivy/protocol";
 import { DISPLAY_INSTRUCTIONS } from "./display.ts";
 
@@ -178,18 +179,19 @@ export class Sessions {
     }
   }
 
-  /** The kernel's confirm(): ask every client, and wait for the first answer. */
-  confirm = (call: ToolCallRequest): Promise<PermissionChoice> =>
-    new Promise((resolve) => {
+  /** A turn's permission prompt: ask every client, and wait for the first answer. */
+  private confirm(sessionId: string, call: ToolCallRequest): Promise<PermissionChoice> {
+    return new Promise((resolve) => {
       const ask: PermissionAsk = {
         id: crypto.randomUUID(),
-        sessionId: call.sessionId,
+        sessionId,
         name: call.name,
         label: this.ivy.plugins.toolLabel(call.name, call.input),
         input: call.input,
         risk: call.risk,
         reason: call.reason,
-        choices: call.canRemember ? ["once", "session", "always", "deny"] : ["once", "deny"],
+        // Only once or no where remembering would have no effect (dangerous tools, ask rules).
+        choices: call.canRemember ? [...PERMISSION_ANSWERS] : ["once", "deny"],
       };
       const timer = setTimeout(() => this.answer(ask.id, "unanswered"), this.permissionTimeoutMs);
       this.asks.set(ask.id, {
@@ -201,6 +203,7 @@ export class Sessions {
       });
       this.publish({ sessionId: ask.sessionId, type: "permission", ask });
     });
+  }
 
   /** Answer a permission prompt; false if it was already answered (or never asked). */
   answer(askId: string, choice: PermissionChoice): boolean {
@@ -272,8 +275,8 @@ export class Sessions {
       }
       live = this.hold(session);
       this.live.set(id, live);
-      const display = this.displays.get(id);
-      if (display) void this.ivy.systemPrompt.start(id, DISPLAY_INSTRUCTIONS[display]);
+      const display = this.displays.get(id) ?? "markdown";
+      void this.ivy.systemPrompt.start(id, DISPLAY_INSTRUCTIONS[display]);
     }
     return live;
   }
@@ -314,6 +317,7 @@ export class Sessions {
       end = await this.ivy.agent.runTurn(live.session, prompt.text, {
         signal: running.controller.signal,
         tracer: live.tracer,
+        confirm: (call) => this.confirm(id, call),
         onEvent: (event) => this.onAgentEvent(id, running, event),
       });
     } catch (err) {

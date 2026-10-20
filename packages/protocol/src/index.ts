@@ -140,6 +140,10 @@ export interface SessionView {
   permission?: PermissionAsk;
 }
 
+/** What a client may answer to a permission prompt. */
+export const PERMISSION_ANSWERS = ["once", "session", "always", "deny"] as const;
+export type PermissionAnswer = (typeof PERMISSION_ANSWERS)[number];
+
 /** A tool call waiting for the user's yes or no. */
 export interface PermissionAsk {
   id: string;
@@ -151,7 +155,7 @@ export interface PermissionAsk {
   /** Why the user is asked, e.g. "write tool". */
   reason: string;
   /** Which answers to offer: "for this session" and "always" only where they take effect. */
-  choices: Array<Exclude<PermissionChoice, "unanswered">>;
+  choices: PermissionAnswer[];
 }
 
 /** How a turn ended. */
@@ -225,6 +229,8 @@ export interface DaemonState {
   effortUsed?: string;
   /** Whether /model has anything to switch to. */
   canSwitchModel: boolean;
+  /** The effort levels /effort offers. */
+  efforts: string[];
   /** Plugins loaded, and the tools they offer. */
   plugins: number;
   tools: number;
@@ -261,9 +267,16 @@ export const SendPrompt = z.object({ text: z.string().trim().min(1) });
 /** POST /sessions/:id/interrupt: stops the running turn; `clearQueue` also drops the waiting ones. */
 export const Interrupt = z.object({ clearQueue: z.boolean().default(false) });
 /** POST /permissions/:id */
-export const AnswerPermission = z.object({ choice: z.enum(["once", "session", "always", "deny"]) });
-/** PUT /model: switches now and saves it as the default. */
+export const AnswerPermission = z.object({ choice: z.enum(PERMISSION_ANSWERS) });
+/**
+ * PUT /model: switches now and saves it as the default. The provider may be left out when
+ * only one provider has a model by that id.
+ */
 export const SetModel = z.object({ model: z.string().min(1) });
+
+/** Why /model has nothing to offer: one model, and how to get more. */
+export const onlyOneModel = (current: string) =>
+  `Only one model is available (${current}). List more under \`models\` in a [providers.*] section, or leave \`models\` out to offer all the endpoint has.`;
 /** PUT /effort: likewise. */
 export const SetEffort = z.object({ effort: z.string().min(1) });
 /** POST /sessions/:id/commands: run a plugin command in a session. */

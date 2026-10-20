@@ -20,6 +20,7 @@ import {
   CreateSession,
   type DaemonState,
   Interrupt,
+  onlyOneModel,
   type Report,
   RunCommand,
   SendPrompt,
@@ -64,6 +65,7 @@ export function api(ivy: Ivy, sessions: Sessions): Routes {
     effort: ivy.capabilities.effort,
     effortUsed: ivy.capabilities.for(ivy.agent.modelRef).effort,
     canSwitchModel: canSwitchModel(ivy.config),
+    efforts: [...EFFORT_LEVELS],
     plugins: ivy.plugins.list().length,
     tools: ivy.plugins.apiTools().length,
   });
@@ -122,7 +124,13 @@ export function api(ivy: Ivy, sessions: Sessions): Routes {
       case "GET /models":
         return Response.json(await ivy.modelChoices());
       case "PUT /model": {
-        const { model } = await body(req, SetModel);
+        const { model: name } = await body(req, SetModel);
+        const { models } = await ivy.modelChoices();
+        if (models.length < 2) return fail(400, onlyOneModel(ivy.agent.model));
+        // The provider can be left out when only one provider has a model by that id.
+        const byId = models.filter((m) => m.slice(m.indexOf("/") + 1) === name);
+        const model = models.includes(name) ? name : byId.length === 1 ? byId[0] : undefined;
+        if (!model) return fail(400, `Unknown model ${name}. /model lists the available ones.`);
         try {
           ivy.agent.setModel(model);
         } catch (err) {
