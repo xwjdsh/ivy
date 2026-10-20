@@ -1,6 +1,7 @@
-// Ivy's menu-bar app: a thin shell around `ivy daemon` (DESIGN.md §5.7). It keeps the
-// daemon running, shows its reminders as notifications of Ivy's own, starts at login, and
-// installs the `ivy` command. All of Ivy's logic stays in the daemon.
+// Ivy's app: a thin shell around `ivy daemon` (DESIGN.md §5.7), in the menu bar and, while
+// the chat window is open, in the Dock. It keeps the daemon running, shows its reminders
+// as notifications of Ivy's own, shows the chat window (the daemon's web page), starts at
+// login, and installs the `ivy` command. All of Ivy's logic stays in the daemon.
 package main
 
 import (
@@ -34,6 +35,11 @@ func main() {
 		log.SetOutput(f)
 	}
 
+	// Before any window: the chat window's requests go to the daemon.
+	if err := mygo.Protocol.Handle(daemonScheme, daemonProxy(socketPath())); err != nil {
+		log.Fatal(err)
+	}
+
 	var sup *supervisor
 	mygo.App.WhenReady(func() {
 		mygo.App.SetActivationPolicy(mygo.ActivationPolicyAccessory) // menu bar only, no Dock icon
@@ -46,6 +52,16 @@ func main() {
 		}); err != nil {
 			log.Printf("tray: %v", err)
 		}
+
+		// Ivy stays in the menu bar when the chat window closes; Quit Ivy quits.
+		mygo.App.OnWindowAllClosed(func() {})
+		// A click on the Dock icon, or on a reminder, opens the chat.
+		mygo.App.OnActivate(func(hasVisibleWindows bool) {
+			if !hasVisibleWindows {
+				openChat()
+			}
+		})
+		mygo.App.OnNotificationClick(func(string) { openChat() })
 
 		status := newStatus(menu)
 		if problem := socketProblem(); problem != "" {
@@ -97,6 +113,8 @@ func ivyBinary() (string, error) {
 
 func newMenu() *mygo.Menu {
 	return mygo.NewMenu([]*mygo.MenuItem{
+		{Label: "Open Ivy", Click: func(*mygo.MenuItem, *mygo.Window) { openChat() }},
+		mygo.Separator(),
 		{ID: "status", Label: "Starting…", Disabled: true},
 		mygo.Separator(),
 		{
@@ -150,6 +168,11 @@ func (s *status) show() {
 // follow keeps a subscription to the daemon's events, reconnecting while it restarts.
 func follow(s *status) {
 	for {
+		if problem := protocolProblem(socketPath()); problem != "" {
+			s.setProblem(problem)
+			time.Sleep(5 * time.Second)
+			continue
+		}
 		err := followEvents(context.Background(), socketPath(), func(e event) {
 			switch e.Type {
 			case "connected":

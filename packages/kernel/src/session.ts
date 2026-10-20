@@ -4,6 +4,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  renameSync,
   statSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
@@ -140,6 +141,22 @@ export class Session {
     this.needsNewline = false;
     appendFileSync(this.file, prefix + records.map((r) => `${JSON.stringify(r)}\n`).join(""));
   }
+}
+
+/** The folder, inside the sessions folder, that deleted sessions are moved to. */
+const TRASH = "trash";
+
+/**
+ * Move a session's file to the trash folder inside the sessions folder, out of every list
+ * and out of plugins' history, but not gone: moving it back restores it. False if it has
+ * no file (never written, or unknown).
+ */
+export function trashSession(dir: string, id: string): boolean {
+  const file = join(dir, `${id}.jsonl`);
+  if (!isSessionId(id) || !existsSync(file)) return false;
+  mkdirSync(join(dir, TRASH), { recursive: true });
+  renameSync(file, join(dir, TRASH, `${id}.jsonl`));
+  return true;
 }
 
 /** A session id names a file in the sessions folder, so it may not reach outside it. */

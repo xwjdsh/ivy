@@ -14,6 +14,7 @@ import {
 } from "@ivy/kernel";
 import type { Logger } from "@ivy/plugin-api";
 import {
+  type AboutSection,
   AnswerPermission,
   type CommandInfo,
   type CommandResult,
@@ -146,6 +147,10 @@ export function api(ivy: Ivy, sessions: Sessions): Routes {
         ivy.capabilities.setEffort(effort as Effort);
         return Response.json(switched(() => saveEffort(ivy.paths, effort as Effort)));
       }
+      case "GET /about": {
+        const sections: AboutSection[] = await ivy.plugins.about(new Date());
+        return Response.json(sections);
+      }
       case "GET /commands": {
         const commands: CommandInfo[] = ivy.plugins.commands().map(({ def }) => ({
           name: def.name,
@@ -178,6 +183,9 @@ export function api(ivy: Ivy, sessions: Sessions): Routes {
       }
       case "GET /sessions/:":
         return Response.json(sessions.view(id));
+      case "DELETE /sessions/:":
+        if (!sessions.delete(id)) fail(409, "Ivy is replying in this session; stop it first");
+        return new Response(null, { status: 204 });
       case "POST /sessions/:/prompts": {
         const { text } = await body(req, SendPrompt);
         return Response.json(sessions.send(id, text), { status: 202 });

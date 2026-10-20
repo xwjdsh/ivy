@@ -1,0 +1,1777 @@
+/* The chat window. Quiet surfaces, one accent (ivy green), type doing most of the work. */
+
+:root {
+  color-scheme: light dark;
+
+  --bg: #ffffff;
+  --side: #f4f4f2;
+  --side-hover: rgb(0 0 0 / 0.045);
+  --text: #1d1f21;
+  --muted: #6d7176;
+  --faint: #9a9da2;
+  --line: rgb(0 0 0 / 0.08);
+  --line-strong: rgb(0 0 0 / 0.13);
+  --surface: #f6f6f4;
+  --bubble: #f1f1ee;
+  --accent: #2f7d4f;
+  --accent-soft: rgb(47 125 79 / 0.1);
+  --accent-text: #ffffff;
+  --warn: #9a6200;
+  --warn-soft: rgb(196 133 0 / 0.1);
+  --error: #c4312b;
+  --error-soft: rgb(196 49 43 / 0.08);
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.04), 0 6px 24px rgb(0 0 0 / 0.06);
+  --code-bg: #f7f7f5;
+  --menu: #ffffff;
+  --menu-lit: rgb(0 0 0 / 0.05);
+  --menu-shadow:
+    0 0 0 1px rgb(0 0 0 / 0.07), 0 2px 4px rgb(0 0 0 / 0.04), 0 12px 32px -6px rgb(0 0 0 / 0.16);
+
+  --sans: -apple-system, BlinkMacSystemFont, "PingFang SC", system-ui, sans-serif;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+  /* The window's title bar: the controls sit at the top bar's left. */
+  --bar: max(52px, var(--mygo-titlebar-height, 0px));
+  --column: 740px;
+
+  font: 14px / 1.5 var(--sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1c1c1e;
+    --side: #232325;
+    --side-hover: rgb(255 255 255 / 0.05);
+    --text: #ececec;
+    --muted: #a0a0a5;
+    --faint: #75757a;
+    --line: rgb(255 255 255 / 0.08);
+    --line-strong: rgb(255 255 255 / 0.14);
+    --surface: #262628;
+    --bubble: #2c2c2f;
+    --accent: #5dbb83;
+    --accent-soft: rgb(93 187 131 / 0.14);
+    --accent-text: #0d1f14;
+    --warn: #e0ae4a;
+    --warn-soft: rgb(224 174 74 / 0.12);
+    --error: #ff7b72;
+    --error-soft: rgb(255 123 114 / 0.1);
+    --shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 8px 28px rgb(0 0 0 / 0.35);
+    --code-bg: #232326;
+    --menu: #2a2a2d;
+    --menu-lit: rgb(255 255 255 / 0.07);
+    --menu-shadow:
+      0 0 0 1px rgb(255 255 255 / 0.08), 0 2px 6px rgb(0 0 0 / 0.3),
+      0 16px 40px -8px rgb(0 0 0 / 0.6);
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  overflow: hidden;
+}
+
+button,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: default;
+}
+
+::selection {
+  background: var(--accent-soft);
+}
+
+.spin {
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* What arrives while the chat is open rises into place. */
+.fresh {
+  animation: rise 0.28s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+/* biome-ignore-start lint/complexity/noImportantStyles: motion off wins over every animation */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+/* biome-ignore-end lint/complexity/noImportantStyles: see above */
+
+/* --- Buttons ------------------------------------------------------------------------- */
+
+button.icon {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 7px;
+  background: none;
+  color: var(--muted);
+}
+
+button.icon:hover {
+  background: var(--side-hover);
+  color: var(--text);
+}
+
+button.primary,
+button.secondary,
+button.ghost {
+  height: 30px;
+  padding: 0 14px;
+  border-radius: 8px;
+  font-weight: 500;
+  border: 1px solid transparent;
+  transition:
+    background 0.12s,
+    border-color 0.12s;
+}
+
+button.primary {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+button.primary:hover {
+  filter: brightness(1.06);
+}
+
+button.secondary {
+  background: var(--bg);
+  border-color: var(--line-strong);
+}
+
+button.secondary:hover,
+button.ghost:hover {
+  background: var(--side-hover);
+}
+
+button.ghost {
+  background: none;
+  color: var(--muted);
+}
+
+.grow {
+  flex: 1;
+}
+
+/* --- Layout ------------------------------------------------------------------------- */
+
+.app {
+  display: flex;
+  height: 100%;
+}
+
+main {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+
+@keyframes breathe {
+  50% {
+    opacity: 0.35;
+    transform: scale(0.8);
+  }
+}
+
+/* --- Top bar ------------------------------------------------------------------------ */
+
+.topbar {
+  --app-region: drag;
+  height: var(--bar);
+  flex: none;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 12px;
+  padding: 0 max(14px, var(--mygo-titlebar-inset-right, 0px)) 0
+    max(20px, calc(var(--mygo-titlebar-inset-left, 0px) + 8px));
+  user-select: none;
+}
+
+.topbar .side {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.topbar .side.end {
+  justify-content: flex-end;
+}
+
+/* A new conversation is rarely asked for: one starts by itself after a while away. */
+.topbar .new {
+  opacity: 0.55;
+}
+
+.topbar .new:hover {
+  opacity: 1;
+}
+
+.topbar .status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--warn);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* --- Ivy ---------------------------------------------------------------------------- */
+
+/* Her face, cut round from the app's icon (which leaves a margin around its square). */
+.portrait {
+  position: relative;
+  flex: none;
+  display: inline-block;
+}
+
+.portrait .crop {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  border-radius: 50%;
+}
+
+.portrait img {
+  width: 100%;
+  height: 100%;
+  transform: scale(1.3);
+  transform-origin: 48% 34%;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+/* With what she's doing: a ring, still when she's here, breathing when she's busy. */
+.portrait.here::after,
+.portrait.busy::after,
+.portrait.waiting::after,
+.portrait.away::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  border: 1.5px solid var(--ring);
+  pointer-events: none;
+}
+
+.portrait.here {
+  --ring: color-mix(in srgb, var(--accent) 50%, transparent);
+}
+
+.portrait.busy {
+  --ring: var(--accent);
+}
+
+.portrait.busy::after {
+  animation: breathe 1.8s ease-in-out infinite;
+}
+
+.portrait.waiting {
+  --ring: var(--warn);
+}
+
+.portrait.away {
+  --ring: var(--line-strong);
+}
+
+.portrait.away img {
+  filter: grayscale(1);
+  opacity: 0.6;
+}
+
+@keyframes breathe {
+  50% {
+    transform: scale(1.1);
+    opacity: 0.3;
+  }
+}
+
+/* Her, at the top of the conversation, as a contact sits at the top of a chat. */
+.presence {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 4px 12px 4px 5px;
+  border: none;
+  border-radius: 999px;
+  background: none;
+  text-align: left;
+}
+
+.topbar .presence {
+  animation: rise 0.3s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.presence:hover,
+.presence[aria-expanded="true"] {
+  background: var(--side-hover);
+}
+
+.who {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+
+.who .name {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.doing {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.doing.busy {
+  color: var(--accent);
+}
+
+.doing.waiting {
+  color: var(--warn);
+}
+
+.facts {
+  margin: 0 8px;
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+}
+
+.facts div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 5px 8px;
+  font-size: 12.5px;
+}
+
+.facts dt {
+  white-space: nowrap;
+  color: var(--muted);
+}
+
+.facts dd {
+  margin: 0;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* What runs her, folded at the card's foot. */
+.hood {
+  margin: 0 8px;
+  padding: 4px 0;
+  border-top: 1px solid var(--line);
+}
+
+.hood-toggle {
+  width: 100%;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 8px;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  color: var(--faint);
+  font-size: 12px;
+}
+
+.hood-toggle:hover {
+  color: var(--muted);
+}
+
+.hood-toggle .turn {
+  transition: transform 0.2s;
+}
+
+.hood.open .hood-toggle .turn {
+  transform: rotate(90deg);
+}
+
+.hood-body {
+  padding-bottom: 4px;
+  animation: rise 0.2s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.hood-body .facts {
+  margin: 0;
+  padding: 2px 0 0;
+  border: none;
+}
+
+.settings {
+  padding: 0 0 2px;
+}
+
+.settings .row {
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-left: 8px;
+}
+
+.settings .key {
+  flex: none;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+/* --- Transcript --------------------------------------------------------------------- */
+
+.transcript {
+  flex: 1;
+  overflow-y: auto;
+  overflow-anchor: none; /* the timeline keeps its own place; see Timeline */
+  container-type: size;
+  padding: 8px 24px 24px;
+}
+
+.column {
+  max-width: var(--column);
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+}
+
+/* The conversation going on fills the view, at the bottom of it, as in a messaging app; the
+   past is just above, out of sight until scrolled to. */
+.now {
+  min-height: 100cqh;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 14px;
+}
+
+/* Another conversation taken up: it comes in as a whole. */
+.now.arrived {
+  animation: rise 0.25s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.hello {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  margin: auto 0 8vh;
+  animation: rise 0.4s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.hello .face {
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: none;
+}
+
+.hello h1 {
+  margin: 6px 0 0;
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.hello p {
+  margin: -8px 0 0;
+  color: var(--muted);
+  font-size: 15px;
+}
+
+.user {
+  align-self: flex-end;
+  max-width: 78%;
+  margin-top: 10px;
+  padding: 9px 15px;
+  border-radius: 18px;
+  background: var(--bubble);
+  font-size: 15px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.now > .user:first-child {
+  margin-top: 0;
+}
+
+.assistant {
+  font-size: 15px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+.assistant > :first-child {
+  margin-top: 0;
+}
+
+.assistant > :last-child {
+  margin-bottom: 0;
+}
+
+.assistant p,
+.assistant ul,
+.assistant ol,
+.assistant blockquote,
+.assistant table {
+  margin: 0 0 12px;
+}
+
+.assistant h1,
+.assistant h2,
+.assistant h3,
+.assistant h4 {
+  margin: 22px 0 8px;
+  line-height: 1.35;
+  font-weight: 600;
+}
+
+.assistant h1 {
+  font-size: 20px;
+}
+
+.assistant h2 {
+  font-size: 18px;
+}
+
+.assistant h3,
+.assistant h4 {
+  font-size: 15.5px;
+}
+
+.assistant ul,
+.assistant ol {
+  padding-left: 1.4em;
+}
+
+.assistant li + li {
+  margin-top: 3px;
+}
+
+.assistant li::marker {
+  color: var(--faint);
+}
+
+.assistant a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--accent) 35%, transparent);
+  text-underline-offset: 2px;
+}
+
+.assistant a:hover {
+  text-decoration-color: var(--accent);
+}
+
+.assistant blockquote {
+  padding: 0 0 0 14px;
+  border-left: 3px solid var(--line-strong);
+  color: var(--muted);
+}
+
+.assistant hr {
+  border: none;
+  border-top: 1px solid var(--line);
+  margin: 20px 0;
+}
+
+.assistant :not(pre) > code {
+  padding: 1.5px 5px;
+  border-radius: 5px;
+  background: var(--surface);
+  font-family: var(--mono);
+  font-size: 0.86em;
+}
+
+.assistant table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.assistant th,
+.assistant td {
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+}
+
+.assistant th {
+  font-weight: 600;
+  border-bottom-color: var(--line-strong);
+}
+
+/* A reply still being written ends in a blinking caret. */
+.assistant.streaming > :last-child::after {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 1em;
+  margin-left: 3px;
+  vertical-align: -0.15em;
+  border-radius: 2px;
+  background: var(--accent);
+  animation: blink 1s steps(1) infinite;
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+/* Code blocks */
+
+.code {
+  margin: 0 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--code-bg);
+  overflow: hidden;
+}
+
+.code-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 32px;
+  padding: 0 6px 0 14px;
+  border-bottom: 1px solid var(--line);
+  color: var(--faint);
+  font-size: 12px;
+  font-family: var(--mono);
+}
+
+.code .copy {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--faint);
+}
+
+.code .copy:hover {
+  background: var(--side-hover);
+  color: var(--text);
+}
+
+.code .copy.done {
+  color: var(--accent);
+}
+
+.code pre {
+  margin: 0;
+  padding: 12px 14px;
+  overflow-x: auto;
+  /* biome-ignore lint/complexity/noImportantStyles: over shiki's inline background */
+  background: none !important;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.code pre code {
+  font-family: inherit;
+}
+
+@media (prefers-color-scheme: dark) {
+  .code .shiki span {
+    /* biome-ignore lint/complexity/noImportantStyles: over shiki's inline light colors */
+    color: var(--shiki-dark) !important;
+  }
+}
+
+/* Tools */
+
+/* What Ivy did, as a quiet line under her words; the details open below it. */
+.tool {
+  align-self: flex-start;
+  max-width: 100%;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  margin-left: -8px;
+  font-size: 13px;
+  transition: border-color 0.15s;
+}
+
+/* A turn's tools in a row read as one list. */
+.tool + .tool {
+  margin-top: -8px;
+}
+
+.tool[open] {
+  align-self: stretch;
+  border-color: var(--line);
+}
+
+.tool summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 8px;
+  list-style: none;
+  color: var(--muted);
+  user-select: none;
+}
+
+.tool summary::-webkit-details-marker {
+  display: none;
+}
+
+.tool summary:hover {
+  background: var(--side-hover);
+  border-radius: 9px;
+}
+
+.tool .status {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+}
+
+.tool.done .status {
+  color: var(--accent);
+}
+
+.tool.failed .status {
+  color: var(--error);
+}
+
+.tool.running .status {
+  color: var(--muted);
+}
+
+.tool .plugin {
+  flex: none;
+  font-weight: 500;
+}
+
+.tool .what {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--faint);
+}
+
+.tool .chevron {
+  flex: none;
+  color: var(--faint);
+  transition: transform 0.15s;
+}
+
+.tool[open] .chevron {
+  transform: rotate(90deg);
+}
+
+.tool .io {
+  padding: 4px 12px 12px;
+  border-top: 1px solid var(--line);
+}
+
+.tool .label {
+  margin: 8px 0 4px;
+  color: var(--faint);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.tool pre,
+.permission pre {
+  margin: 0;
+  max-height: 280px;
+  overflow: auto;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--code-bg);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Notes and thinking */
+
+.note {
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: 12.5px;
+}
+
+.note.warn {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
+.note.error {
+  background: var(--error-soft);
+  color: var(--error);
+}
+
+.thinking {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 14px;
+  background: linear-gradient(
+    90deg,
+    var(--muted) 0%,
+    var(--muted) 40%,
+    var(--text) 50%,
+    var(--muted) 60%,
+    var(--muted) 100%
+  );
+  background-size: 300% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation:
+    rise 0.28s cubic-bezier(0.2, 0.8, 0.2, 1) both,
+    shimmer 2.2s linear infinite;
+}
+
+@keyframes shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: 0 0;
+  }
+}
+
+.thinking .dots {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.thinking .dots i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: bounce 1.2s ease-in-out infinite;
+}
+
+.thinking .dots i:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.thinking .dots i:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@keyframes bounce {
+  0%,
+  60%,
+  100% {
+    opacity: 0.35;
+    transform: translateY(0);
+  }
+  30% {
+    opacity: 1;
+    transform: translateY(-3px);
+  }
+}
+
+/* --- Below the chat ----------------------------------------------------------------- */
+
+.dock {
+  position: relative;
+  width: 100%;
+  max-width: calc(var(--column) + 48px);
+  margin: 0 auto;
+  padding: 0 24px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* The transcript fades out under the dock rather than ending at a line. */
+.transcript + .dock::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100%;
+  height: 24px;
+  background: linear-gradient(to bottom, transparent, var(--bg));
+  pointer-events: none;
+}
+
+.composer {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  padding: 8px 8px 8px 18px;
+  border: 1px solid var(--line-strong);
+  border-radius: 20px;
+  background: var(--bg);
+  box-shadow: var(--shadow);
+  cursor: text;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
+}
+
+.composer:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line-strong));
+}
+
+.composer textarea {
+  flex: 1;
+  min-width: 0;
+  min-height: 24px;
+  margin: 4px 0;
+  max-height: 240px;
+  padding: 0;
+  border: none;
+  background: none;
+  outline: none;
+  resize: none;
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+.composer textarea::placeholder {
+  color: var(--faint);
+}
+
+.pick-box {
+  position: relative;
+  min-width: 0;
+  display: flex;
+}
+
+/* The effort is short; the model's name gives way when the composer is narrow. */
+.pick-box.effort {
+  flex: none;
+}
+
+.pick {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 7px 0 9px;
+  border: none;
+  border-radius: 9px;
+  background: none;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  transition:
+    background 0.12s,
+    color 0.12s;
+}
+
+.pick .text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pick .caret {
+  flex: none;
+  opacity: 0.6;
+  transition: transform 0.18s ease;
+}
+
+.pick.open .caret {
+  transform: rotate(180deg);
+}
+
+.pick:hover:not(:disabled),
+.pick.open {
+  background: var(--side-hover);
+  color: var(--text);
+}
+
+.pick:disabled {
+  cursor: default;
+}
+
+/* An effort this model isn't sent. */
+.effort.unused .pick {
+  opacity: 0.55;
+}
+
+.bars {
+  flex: none;
+}
+
+.bars rect {
+  fill: currentColor;
+  opacity: 0.22;
+}
+
+.bars rect.on {
+  opacity: 1;
+}
+
+/* Opens upward: the composer sits at the bottom of the window. */
+.menu {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: -4px;
+  z-index: 10;
+  width: 232px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 14px;
+  background: var(--menu);
+  box-shadow: var(--menu-shadow);
+  transform-origin: 16px 100%;
+  animation: menu-in 0.16s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.menu.below {
+  top: calc(100% + 6px);
+  bottom: auto;
+  transform-origin: 16px 0;
+  animation-name: menu-down;
+}
+
+@keyframes menu-down {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.97);
+  }
+}
+
+.menu.wide {
+  width: 300px;
+}
+
+@keyframes menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.97);
+  }
+}
+
+.menu .find {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--line);
+  color: var(--faint);
+}
+
+.menu .find input {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  outline: none;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.menu .find input::placeholder {
+  color: var(--faint);
+}
+
+.menu .options {
+  max-height: min(340px, 55vh);
+  overflow-y: auto;
+  padding: 5px;
+  outline: none;
+  scroll-padding: 28px 0 5px;
+}
+
+.menu .group {
+  position: sticky;
+  top: -5px;
+  z-index: 1;
+  margin: 0 -5px;
+  padding: 9px 15px 4px;
+  background: var(--menu);
+  color: var(--faint);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.menu .group:not(:first-child) {
+  margin-top: 4px;
+}
+
+.menu [role="option"] {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: 30px;
+  padding: 0 8px 0 10px;
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.menu [role="option"][data-lit] {
+  background: var(--menu-lit);
+}
+
+.menu [role="option"][aria-selected="true"] {
+  font-weight: 500;
+}
+
+.menu [role="option"] .bars {
+  color: var(--muted);
+}
+
+.menu [role="option"][aria-selected="true"] .bars {
+  color: var(--accent);
+}
+
+.menu .label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.menu .detail {
+  color: var(--faint);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.menu .mark {
+  flex: none;
+  width: 14px;
+  display: grid;
+  place-items: center;
+  color: var(--accent);
+}
+
+.menu .none {
+  padding: 18px 10px;
+  color: var(--faint);
+  font-size: 12.5px;
+  text-align: center;
+}
+
+.send {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-text);
+  transition:
+    opacity 0.15s,
+    transform 0.1s;
+}
+
+.send:active:not(:disabled) {
+  transform: scale(0.94);
+}
+
+.send:disabled {
+  opacity: 0.3;
+}
+
+.send.stop {
+  background: var(--text);
+  color: var(--bg);
+}
+
+/* Permission */
+
+.permission {
+  padding: 14px 14px 12px 16px;
+  border: 1px solid color-mix(in srgb, var(--warn) 35%, var(--line));
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--warn) 5%, var(--bg));
+  box-shadow: var(--shadow);
+}
+
+.permission .ask {
+  display: flex;
+  gap: 12px;
+}
+
+.permission .ask > .portrait {
+  margin-top: -3px;
+}
+
+.permission .question {
+  font-size: 14.5px;
+}
+
+.permission .meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.permission .mono {
+  font-family: var(--mono);
+  font-size: 11.5px;
+}
+
+.permission .risk {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-weight: 500;
+}
+
+.permission .risk.dangerous {
+  background: var(--error-soft);
+  color: var(--error);
+}
+
+.permission details {
+  margin: 8px 0 0 30px;
+}
+
+.permission details summary {
+  width: fit-content;
+  color: var(--muted);
+  font-size: 12px;
+  user-select: none;
+}
+
+.permission details pre {
+  margin-top: 6px;
+}
+
+.permission .choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+/* Queue */
+
+.queue {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.waiting {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 6px 0 12px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 12px;
+  color: var(--muted);
+}
+
+.waiting .text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text);
+}
+
+.waiting .tag {
+  font-size: 11.5px;
+  color: var(--faint);
+}
+
+/* Writing to a past conversation opened above: sending carries it on. */
+.replying {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 6px 0 12px;
+  border-radius: 12px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 13px;
+}
+
+.replying .text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.replying .preview {
+  margin-left: 8px;
+  color: var(--muted);
+}
+
+/* Errors */
+
+.error-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 6px 6px 12px;
+  border-radius: 12px;
+  background: var(--error-soft);
+  color: var(--error);
+  font-size: 13px;
+}
+
+.error-banner span {
+  flex: 1;
+}
+
+.error-banner button.icon {
+  color: inherit;
+}
+
+/* Her card's menus open under their row, as wide as the card: a menu hung from the button
+   would run off the window's left edge. */
+.settings .row {
+  position: relative;
+}
+
+.settings .pick-box {
+  position: static;
+  justify-content: flex-end;
+}
+
+.settings .menu {
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  width: auto;
+  transform-origin: 50% 0;
+}
+
+/* --- History ------------------------------------------------------------------------ */
+
+.history {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 12px 0 36px;
+  user-select: none;
+}
+
+.earlier {
+  align-self: center;
+  padding: 5px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: none;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.earlier:hover {
+  background: var(--side-hover);
+  color: var(--text);
+}
+
+.day {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* The day, centered between hairlines, the way a messaging app marks one. */
+.day h2 {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 6px;
+  color: var(--faint);
+  font-size: 11.5px;
+  font-weight: 500;
+}
+
+.day h2::before,
+.day h2::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
+
+.past {
+  border-radius: 12px;
+  transition: background 0.15s;
+}
+
+.past-head {
+  display: flex;
+  align-items: center;
+  height: 36px;
+  border-radius: 10px;
+}
+
+.past-head:hover {
+  background: var(--side-hover);
+}
+
+.past-row {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 10px;
+  border: none;
+  background: none;
+  text-align: left;
+  color: var(--muted);
+}
+
+.past-row .time {
+  flex: none;
+  width: 38px;
+  color: var(--faint);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.past-row .preview {
+  flex: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.past-row .fold {
+  flex: none;
+  color: var(--faint);
+  opacity: 0;
+  transition:
+    transform 0.2s,
+    opacity 0.15s;
+}
+
+.past-head:hover .fold,
+.past.open .fold {
+  opacity: 1;
+}
+
+.past.open .fold {
+  transform: rotate(180deg);
+}
+
+.past.open {
+  background: var(--side);
+}
+
+.past.open .past-row {
+  color: var(--text);
+}
+
+.past .busy {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: breathe 1.6s ease-in-out infinite;
+}
+
+/* The delete button shows on the line under the pointer, or once asked to confirm. */
+.past .delete {
+  display: none;
+  flex: none;
+  place-items: center;
+  height: 24px;
+  min-width: 24px;
+  margin-right: 6px;
+  padding: 0 6px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--faint);
+}
+
+.past-head:hover .delete,
+.past .delete:focus-visible,
+.past.confirming .delete {
+  display: grid;
+}
+
+.past .delete:hover {
+  background: var(--side-hover);
+  color: var(--error);
+}
+
+.past .delete.confirm {
+  background: var(--error);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.past .delete.confirm:hover {
+  filter: brightness(1.08);
+}
+
+/* Opened: the conversation as it was, read-only, and a way back into it. */
+.past-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 10px 16px 14px;
+  user-select: text;
+  animation: rise 0.25s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.past-body .loading {
+  align-self: center;
+  color: var(--faint);
+}
+
+.past-body .continue {
+  align-self: center;
+  margin-top: 4px;
+  padding: 6px 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+  user-select: none;
+}
+
+.past-body .continue:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* --- Her pane ---------------------------------------------------------------------- */
+
+/* Her pane, beside the conversation: who she is and what she keeps track of. */
+.pane {
+  width: 300px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  background: var(--side);
+  box-shadow: inset 1px 0 0 var(--line);
+  animation: pane-in 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@keyframes pane-in {
+  from {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+}
+
+/* A narrow window has no room beside the conversation: the pane goes over it. */
+@media (max-width: 760px) {
+  .pane {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 30;
+    box-shadow: var(--menu-shadow);
+  }
+}
+
+.pane-top {
+  --app-region: drag;
+  height: var(--bar);
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0 max(12px, var(--mygo-titlebar-inset-right, 0px));
+}
+
+.pane-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 12px 20px;
+}
+
+.profile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 8px 18px;
+  text-align: center;
+}
+
+.profile .name {
+  margin-top: 10px;
+  font-size: 19px;
+  font-weight: 600;
+}
+
+.profile .doing {
+  font-size: 12.5px;
+}
+
+/* What a plugin shows of her: the todos she keeps track of, her journal. */
+.about {
+  margin: 0 8px;
+  padding: 10px 0 8px;
+  border-top: 1px solid var(--line);
+}
+
+.about h3 {
+  margin: 0 0 4px;
+  padding: 0 8px;
+  color: var(--faint);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.about ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.about ul > li {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 5px 8px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.about li .text {
+  overflow-wrap: anywhere;
+}
+
+.about li .detail {
+  color: var(--muted);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.about.hidden {
+  padding: 4px 0;
+}
+
+.about .reveal {
+  width: 100%;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 8px;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  color: var(--faint);
+}
+
+.about .reveal h3 {
+  margin: 0;
+  padding: 0;
+  color: inherit;
+}
+
+.about .reveal:hover {
+  color: var(--muted);
+}
+
+.about .reveal .chev {
+  transition: transform 0.2s;
+}
+
+.about.open .reveal .chev {
+  transform: rotate(90deg);
+}
+
+.about.hidden ul {
+  animation: rise 0.2s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+/* Her journal is in her words: it reads as such. */
+.about.hidden li .text {
+  color: var(--muted);
+  font-style: italic;
+}

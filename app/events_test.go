@@ -3,6 +3,8 @@ package main
 import (
 	"bufio"
 	"context"
+	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -33,8 +35,11 @@ func TestReadEvents(t *testing.T) {
 	}
 }
 
-// A daemon stand-in on a Unix socket: /health, and an event stream of two events.
-func fakeDaemon(t *testing.T) string {
+// A daemon stand-in on a Unix socket, speaking this protocol version: /health, and an
+// event stream of two events.
+func fakeDaemon(t *testing.T) string { return fakeDaemonOf(t, protocolVersion) }
+
+func fakeDaemonOf(t *testing.T, protocol int) string {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "ivy") // short: socket paths are limited to ~100 bytes
 	if err != nil {
@@ -47,10 +52,15 @@ func fakeDaemon(t *testing.T) string {
 		t.Fatal(err)
 	}
 	mux := http.NewServeMux()
-	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte(`{"ok":true}`)) })
+	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprintf(w, `{"ok":true,"pid":42,"protocol":%d}`, protocol)
+	})
 	mux.HandleFunc("/events", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("content-type", "text/event-stream")
 		w.Write([]byte("event: connected\ndata: {}\n\nevent: reminder\ndata: {\"id\":\"m:1\",\"title\":\"Rent\"}\n\n"))
+	})
+	mux.HandleFunc("PUT /echo", func(w http.ResponseWriter, r *http.Request) {
+		io.Copy(w, r.Body)
 	})
 	srv := &http.Server{Handler: mux}
 	go srv.Serve(ln)
@@ -74,6 +84,15 @@ func TestHealthyAndFollowEvents(t *testing.T) {
 	}
 	if strings.Join(types, ",") != "connected,reminder" {
 		t.Fatalf("events = %v", types)
+	}
+}
+
+func TestProtocolProblem(t *testing.T) {
+	if p := protocolProblem(fakeDaemon(t)); p != "" {
+		t.Fatalf("same protocol: %q", p)
+	}
+	if p := protocolProblem(fakeDaemonOf(t, protocolVersion+1)); !strings.Contains(p, "protocol 2") {
+		t.Fatalf("another protocol: %q", p)
 	}
 }
 

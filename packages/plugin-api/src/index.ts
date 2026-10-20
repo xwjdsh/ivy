@@ -104,6 +104,19 @@ export interface Reminder {
   at?: Date;
 }
 
+/**
+ * A part of Ivy's card in the chat window, read from a plugin's own data, such as the todos
+ * she is keeping track of.
+ */
+export interface AboutSection {
+  /** "Keeping track of" */
+  title: string;
+  /** At most a handful: the card is a glance, not the file. */
+  items: Array<{ text: string; detail?: string }>;
+  /** Shown only when asked for (her journal): out of sight of whoever passes the screen. */
+  private?: boolean;
+}
+
 /** What a plugin knows about the session it adds a system prompt section to. */
 export interface SessionInfo {
   id: string;
@@ -160,6 +173,11 @@ export interface IvyPlugin {
    * the Mac slept comes on waking. No model is involved: this reads the plugin's data.
    */
   reminders?(window: ReminderWindow): Promise<Reminder[]> | Reminder[];
+  /**
+   * Sections for Ivy's card in the chat window. Like `reminders`, no model is involved:
+   * this reads the plugin's data. Capped in time by the host; errors are skipped.
+   */
+  about?(now: Date): Promise<AboutSection[]> | AboutSection[];
   commands?: CommandDef[];
 }
 

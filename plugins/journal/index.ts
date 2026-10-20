@@ -48,6 +48,8 @@ import INSTRUCTIONS from "./instructions.md" with { type: "text" };
 const NAME = "IVY.md";
 const HEADER =
   "# Ivy\nIvy's own journal: what Ivy has lived with you, in its own words. Written by Ivy; you can read, edit or delete it. One entry per line.\n\n";
+/** Entries on Ivy's card in the chat window. */
+const RECENT = 5;
 /** A proposal for SOUL.md is one passage, not a new file. */
 const MAX_PASSAGE = 1500;
 
@@ -111,6 +113,17 @@ export function createJournalPlugin(): IvyPlugin {
       };
     },
     instructions: INSTRUCTIONS.trim(),
+
+    // The latest entries, behind a click on Ivy's card: the journal is hers, not for show.
+    about() {
+      const entries = read().flatMap((l) => (l.entry ? [l.entry] : []));
+      if (entries.length === 0) return [];
+      const items = entries
+        .slice(-RECENT)
+        .reverse()
+        .map((e) => (e.date ? { text: e.text, detail: shortDate(e.date) } : { text: e.text }));
+      return [{ title: "Journal", items, private: true }];
+    },
 
     tools: [
       defineTool({
@@ -292,3 +305,9 @@ export function proposeSoulEdit(
 }
 
 export default createJournalPlugin();
+
+/** "2026-10-01" → "Oct 1" */
+function shortDate(date: string): string {
+  const [y = 0, m = 1, d = 1] = date.split("-").map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}

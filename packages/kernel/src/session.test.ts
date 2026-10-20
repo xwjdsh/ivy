@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
-import { appendFileSync, mkdtempSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Session, sessionHistory } from "./session.ts";
+import { Session, sessionHistory, trashSession } from "./session.ts";
 
 test("sessions persist, reload and list newest first", async () => {
   const dir = mkdtempSync(join(tmpdir(), "ivy-sessions-"));
@@ -121,4 +121,15 @@ test("history for plugins: only what was said, newest session first", async () =
 test("a session id can't reach outside the sessions folder", () => {
   const dir = mkdtempSync(join(tmpdir(), "ivy-sid-"));
   expect(() => Session.load(dir, "../config")).toThrow("Session not found: ../config");
+});
+
+test("a trashed session leaves the list but its file is kept", () => {
+  const dir = mkdtempSync(join(tmpdir(), "ivy-session-"));
+  const s = Session.create(dir, "m");
+  s.appendPrompt("forget me", "");
+  expect(trashSession(dir, s.id)).toBe(true);
+  expect(Session.list(dir)).toEqual([]);
+  expect(existsSync(join(dir, "trash", `${s.id}.jsonl`))).toBe(true);
+  expect(trashSession(dir, s.id)).toBe(false);
+  expect(trashSession(dir, "../config")).toBe(false);
 });

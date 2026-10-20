@@ -18,6 +18,7 @@ import {
   type ToolCallRequest,
   type Tracer,
   tokenCounts,
+  trashSession,
 } from "@ivy/kernel";
 import {
   type Display,
@@ -219,6 +220,23 @@ export class Sessions {
       id: askId,
       choice,
     });
+    return true;
+  }
+
+  /**
+   * Delete a session: let it go and move its file to the trash. False while a turn runs or
+   * waits in it, which would go on writing to it; stop it first.
+   */
+  delete(id: string): boolean {
+    const live = this.live.get(id);
+    if (live?.pumping) return false;
+    const trashed = trashSession(this.ivy.paths.sessions, id);
+    if (!live && !trashed) throw new SessionNotFoundError(`Session not found: ${id}`);
+    if (live) {
+      this.live.delete(id);
+      this.displays.delete(id);
+      this.ivy.releaseSession(id);
+    }
     return true;
   }
 

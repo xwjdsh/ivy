@@ -1,0 +1,22 @@
+{
+  "name": "@ivy/web",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --port 5179 index.html",
+    "build": "rm -rf dist && bun build index.html --outdir dist --production --splitting"
+  },
+  "dependencies": {
+    "@ivy/protocol": "workspace:*",
+    "lucide-react": "^1.60.0",
+    "marked": "^18.1.1",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "shiki": "^4.5.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0"
+  }
+}

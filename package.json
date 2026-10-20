@@ -13,7 +13,7 @@
     "build": "bun scripts/build.ts",
     "build:app": "bun scripts/build-app.ts",
     "test": "bun test",
-    "typecheck": "tsc --noEmit -p .",
+    "typecheck": "tsc --noEmit -p . && tsc --noEmit -p packages/web",
     "lint": "biome check .",
     "format": "biome format --write .",
     "eval": "bun evals/run.ts"

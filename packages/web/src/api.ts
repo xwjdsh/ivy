@@ -1,0 +1,88 @@
+// The chat window's side of the daemon's protocol (DESIGN.md §5.7). The page is the app's
+// own; its requests go to ivy://, a scheme the app forwards to the daemon's socket.
+
+import {
+  type AboutSection,
+  type DaemonState,
+  type ErrorBody,
+  type PermissionAnswer,
+  type Prompt,
+  readEvents,
+  type SessionEvent,
+  type SessionSummary,
+  type SessionView,
+  type Switched,
+} from "@ivy/protocol";
+
+/** The daemon, through the app (app/window.go). */
+const DAEMON = "ivy://localhost";
+
+async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const res = await fetch(DAEMON + path, {
+    method,
+    ...(body !== undefined && {
+      body: JSON.stringify(body),
+      headers: { "content-type": "application/json" },
+    }),
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    let message = `${res.status} ${res.statusText}`;
+    try {
+      message = (JSON.parse(text) as ErrorBody).error ?? message;
+    } catch {
+      // not JSON
+    }
+    throw new Error(message);
+  }
+  return (text ? JSON.parse(text) : undefined) as T;
+}
+
+export const api = {
+  state: () => request<DaemonState>("GET", "/state"),
+  models: () => request<{ models: string[]; errors: string[] }>("GET", "/models"),
+  setModel: (model: string) => request<Switched>("PUT", "/model", { model }),
+  setEffort: (effort: string) => request<Switched>("PUT", "/effort", { effort }),
+  sessions: () => request<SessionSummary[]>("GET", "/sessions"),
+  createSession: async () => (await request<{ id: string }>("POST", "/sessions", {})).id,
+  session: (id: string) => request<SessionView>("GET", `/sessions/${id}`),
+  /** The session's file goes to the trash folder (DESIGN.md §5.7). */
+  deleteSession: (id: string) => request<void>("DELETE", `/sessions/${id}`),
+  about: () => request<AboutSection[]>("GET", "/about"),
+  send: (id: string, text: string) => request<Prompt>("POST", `/sessions/${id}/prompts`, { text }),
+  withdraw: (id: string, promptId: string) =>
+    request<void>("DELETE", `/sessions/${id}/prompts/${promptId}`),
+  interrupt: (id: string) =>
+    request<void>("POST", `/sessions/${id}/interrupt`, { clearQueue: true }),
+  answer: (askId: string, choice: PermissionAnswer) =>
+    request<void>("POST", `/permissions/${askId}`, { choice }),
+};
+
+const RETRY_MS = 1000;
+
+/**
+ * Follow the daemon's session events until `signal` aborts, reconnecting when the stream
+ * drops (the daemon restarted). `onConnect(true)` runs each time it is (re)opened, before
+ * any event, so what is shown can be read afresh; `onConnect(false)` when it drops.
+ */
+export async function follow(
+  onEvent: (event: SessionEvent) => void,
+  onConnect: (connected: boolean) => void,
+  signal: AbortSignal,
+): Promise<void> {
+  while (!signal.aborted) {
+    try {
+      const res = await fetch(`${DAEMON}/events`, { signal });
+      if (!res.ok || !res.body) throw new Error(`events: ${res.status}`);
+      await readEvents(res.body, (type, data) => {
+        if (type === "connected") onConnect(true);
+        else if (type === "session") onEvent(JSON.parse(data) as SessionEvent);
+      });
+    } catch {
+      // the daemon went away, or the page stopped following
+    }
+    if (signal.aborted) break;
+    onConnect(false);
+    await new Promise((resolve) => setTimeout(resolve, RETRY_MS));
+  }
+}

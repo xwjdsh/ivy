@@ -221,3 +221,20 @@ test("/journal shows the entries, usage and where the file is", async () => {
   expect(out.split("bad").length).toBe(2); // listed once, under "left out" only
   expect(out).toContain(`File: ${join(dir, "IVY.md")}`);
 });
+
+test("Ivy's card: the latest entries, newest first, kept behind a click", async () => {
+  await start();
+  expect(await plugin.about?.(new Date())).toEqual([]);
+  for (const content of ["one", "two", "three", "four", "five", "six"]) {
+    await call("write", { content: `I felt ${content}` });
+  }
+  const [section] = (await plugin.about?.(new Date())) ?? [];
+  expect(section?.private).toBe(true);
+  expect(section?.items.map((i) => i.text)).toEqual([
+    "I felt six",
+    "I felt five",
+    "I felt four",
+    "I felt three",
+    "I felt two",
+  ]);
+});

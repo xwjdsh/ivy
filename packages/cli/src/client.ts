@@ -16,6 +16,7 @@ import {
   PROTOCOL_VERSION,
   type Prompt,
   type Report,
+  readEvents,
   type SessionEvent,
   type SessionSummary,
   type SessionView,
@@ -103,23 +104,11 @@ export class DaemonClient {
     while (!signal.aborted) {
       try {
         const res = await fetch("http://ivy/events", { unix: this.socket, signal });
-        const reader = res.body?.getReader();
-        if (!reader) throw new Error("no event stream");
-        const decoder = new TextDecoder();
-        let buffer = "";
-        for (;;) {
-          const { value, done } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          for (let end = buffer.indexOf("\n\n"); end >= 0; end = buffer.indexOf("\n\n")) {
-            const chunk = buffer.slice(0, end);
-            buffer = buffer.slice(end + 2);
-            const type = /^event: (.*)$/m.exec(chunk)?.[1];
-            const data = /^data: (.*)$/m.exec(chunk)?.[1];
-            if (type === "connected") onConnect();
-            else if (type === "session" && data) onEvent(JSON.parse(data) as SessionEvent);
-          }
-        }
+        if (!res.body) throw new Error("no event stream");
+        await readEvents(res.body, (type, data) => {
+          if (type === "connected") onConnect();
+          else if (type === "session") onEvent(JSON.parse(data) as SessionEvent);
+        });
       } catch {
         // the daemon went away or the client stopped; retry below unless stopping
       }

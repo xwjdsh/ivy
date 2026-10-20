@@ -43,6 +43,8 @@ const TAGS_HELP = 'Comma-separated, in both languages, e.g. "dentist, 牙医, �
 const LONG_OVERDUE_DAYS = 30;
 /** At most this many due todos in a turn's context. */
 const MAX_DUE = 3;
+/** Todos on Ivy's card in the chat window. */
+const MAX_CARD = 6;
 
 const configSchema = z.strictObject({
   /** USER.md: about the user and their preferences. */
@@ -308,6 +310,11 @@ export function createMemoryPlugin(): IvyPlugin {
       return dueReminders(screen(store().read()).files, since, now, ready().remindAt);
     },
 
+    about(now) {
+      const todos = openTodos(screen(store().read()).files, now);
+      return todos.length ? [{ title: "Keeping track of", items: todos }] : [];
+    },
+
     commands: [
       {
         name: "/memory",
@@ -381,6 +388,42 @@ function localTime(day: string, hhmm: string): Date {
   const [y = 0, m = 1, d = 1] = day.split("-").map(Number);
   const [h = 0, min = 0] = hhmm.split(":").map(Number);
   return new Date(y, m - 1, d, h, min);
+}
+
+/** Open todos for Ivy's card: the ones with a time soonest first, then the rest. */
+function openTodos(files: Files, now: Date): Array<{ text: string; detail?: string }> {
+  const todos = files.memory.flatMap((l) =>
+    l.entry?.type === "todo" && !l.entry.fields.done ? [l.entry] : [],
+  );
+  const due = (e: Entry) => e.fields.due ?? "~"; // after any date
+  return todos
+    .sort((a, b) => (due(a) < due(b) ? -1 : due(a) > due(b) ? 1 : 0))
+    .slice(0, MAX_CARD)
+    .map((e) => {
+      const d = e.fields.due;
+      return d ? { text: e.text, detail: whenDue(d, now) } : { text: e.text };
+    });
+}
+
+/** "Overdue", "Due today 15:00", "Due tomorrow", "Due Fri, Oct 30", "Due Mon, Jan 4, 2027". */
+function whenDue(due: string, now: Date): string {
+  const day = due.slice(0, 10);
+  const time = due.slice(11);
+  const days = daysBetween(localDate(now), day);
+  const at = localTime(day, time || "00:00");
+  if (days < 0 || (days === 0 && time && at < now)) return "Overdue";
+  const name =
+    days === 0
+      ? "today"
+      : days === 1
+        ? "tomorrow"
+        : at.toLocaleDateString("en-US", {
+            weekday: "short",
+            month: "short",
+            day: "numeric",
+            ...(at.getFullYear() !== now.getFullYear() && { year: "numeric" }),
+          });
+  return `Due ${name}${time ? ` ${time}` : ""}`;
 }
 
 function dueTodos(files: Files, today: string): string[] {

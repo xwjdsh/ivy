@@ -12,9 +12,9 @@ import {
   type SessionSummary,
   type SessionView,
   type Switched,
+  stopNote,
   type Tokens,
   type ToolLabel,
-  type TurnEnd,
   tokensFromUsage,
 } from "@ivy/protocol";
 import { Box, Static, Text, useApp, useInput, useWindowSize } from "ink";
@@ -78,13 +78,6 @@ function liveOf(view: SessionView): { tools: PendingTool[]; text: string } {
 const EXIT_CONFIRM_MS = 2000;
 const RESIZE_DEBOUNCE_MS = 100;
 const NO_TOKENS: Tokens = { in: 0, cached: 0, out: 0 };
-
-const STOP_NOTES: Partial<Record<TurnEnd["stopReason"], string>> = {
-  interrupted: "Interrupted",
-  refusal: "The model declined this request",
-  max_steps: "Stopped: too many steps in one turn",
-  max_tokens: "Response hit max_tokens",
-};
 
 const helpText = (commands: CommandInfo[]) =>
   [
@@ -278,10 +271,7 @@ export function App({
         setPendingTools([]);
         setPhase(null);
         const { end } = e;
-        const note =
-          end.stopReason === "error"
-            ? `Error: ${end.error ?? "unknown"}`
-            : STOP_NOTES[end.stopReason];
+        const note = stopNote(end);
         const seconds = ((Date.now() - turnStarted.current) / 1000).toFixed(1);
         push({
           id: itemId(),

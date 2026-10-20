@@ -324,3 +324,31 @@ test("a Markdown session let go and loaded again keeps its instructions", async 
   expect(JSON.stringify(model.requests[1]?.system)).toContain("renders Markdown");
   await client.close();
 });
+
+test("a session can be deleted, but not while Ivy replies in it", async () => {
+  const slow = gate();
+  const { call, socket } = await start([
+    { content: [text("done")] },
+    { content: [text("…")], gate: slow.promise },
+  ]);
+  const client = await follow(socket);
+  const { body: kept } = await call("POST", "/sessions", {});
+  await call("POST", `/sessions/${kept.id}/prompts`, { text: "keep" });
+  await client.until((e) => e.type === "turn_end");
+  const { body: busy } = await call("POST", "/sessions", {});
+  await call("POST", `/sessions/${busy.id}/prompts`, { text: "busy" });
+  await client.until((e) => e.type === "text" && e.sessionId === busy.id);
+
+  expect((await call("DELETE", `/sessions/${busy.id}`)).status).toBe(409);
+  expect((await call("DELETE", `/sessions/${kept.id}`)).status).toBe(204);
+  expect((await call("GET", `/sessions/${kept.id}`)).status).toBe(404);
+  expect((await call("DELETE", `/sessions/${kept.id}`)).status).toBe(404);
+  const list = (await call("GET", "/sessions")).body as SessionSummary[];
+  expect(list.map((s) => s.id)).toEqual([busy.id]);
+  // One started but never written is let go too.
+  const { body: empty } = await call("POST", "/sessions", {});
+  expect((await call("DELETE", `/sessions/${empty.id}`)).status).toBe(204);
+  expect((await call("GET", `/sessions/${empty.id}`)).status).toBe(404);
+  slow.open();
+  await client.close();
+});

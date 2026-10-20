@@ -164,6 +164,20 @@ export interface TurnEnd {
   error?: string;
 }
 
+const STOP_NOTES: Partial<Record<StopReason, string>> = {
+  interrupted: "Interrupted",
+  refusal: "The model declined this request",
+  max_steps: "Stopped: too many steps in one turn",
+  max_tokens: "Response hit max_tokens",
+};
+
+/** What a client says of a turn that didn't end as usual (the error, an interrupt), if anything. */
+export function stopNote(end: TurnEnd): string | undefined {
+  return end.stopReason === "error"
+    ? `Error: ${end.error ?? "unknown"}`
+    : STOP_NOTES[end.stopReason];
+}
+
 // --- Events ----------------------------------------------------------------------------
 
 /**
@@ -209,6 +223,31 @@ export type SessionChange =
   | { type: "permission_answered"; id: string; choice: PermissionChoice }
   | { type: "turn_end"; promptId: string; end: TurnEnd };
 
+/**
+ * Read the event stream (Server-Sent Events as the daemon writes them: an `event:` line
+ * and one `data:` line each) until it ends, calling `onEvent` with each event's type and
+ * data; heartbeats (comment lines) are skipped.
+ */
+export async function readEvents(
+  stream: ReadableStream<Uint8Array>,
+  onEvent: (type: string, data: string) => void,
+): Promise<void> {
+  const decoder = new TextDecoder();
+  const reader = stream.getReader(); // not `for await`: WebKit's streams may lack it
+  let buffer = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) return;
+    buffer += decoder.decode(value, { stream: true });
+    for (let end = buffer.indexOf("\n\n"); end >= 0; end = buffer.indexOf("\n\n")) {
+      const event = buffer.slice(0, end);
+      buffer = buffer.slice(end + 2);
+      const type = /^event: (.*)$/m.exec(event)?.[1];
+      if (type) onEvent(type, /^data: (.*)$/m.exec(event)?.[1] ?? "");
+    }
+  }
+}
+
 /** A reminder that came due, sent as `event: reminder` (see Reminder in plugin-api). */
 // Mirrored by `reminder` in app/events.go, which reads id, title, body and plugin.
 export interface ReminderEvent {
@@ -233,6 +272,15 @@ export interface DaemonState {
   /** Plugins loaded, and the tools they offer. */
   plugins: number;
   tools: number;
+}
+
+/** GET /about (a list): what Ivy's card shows from a plugin (AboutSection in the plugin API). */
+export interface AboutSection {
+  plugin: string;
+  title: string;
+  items: Array<{ text: string; detail?: string }>;
+  /** Shown only when asked for. */
+  private?: boolean;
 }
 
 /** GET /commands: what plugins add to the command list (e.g. /journal). */
