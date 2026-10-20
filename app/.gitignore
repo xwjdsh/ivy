@@ -1,0 +1,5 @@
+/build/
+/.mygo/
+mygo_windows_*.syso
+# The ivy binary, built by scripts/build-app.ts and shipped inside the app.
+/resources/darwin-arm64/

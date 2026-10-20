@@ -11,6 +11,7 @@
   "scripts": {
     "ivy": "IVY_HOME=.ivy bun packages/cli/src/main.ts",
     "build": "bun scripts/build.ts",
+    "build:app": "bun scripts/build-app.ts",
     "test": "bun test",
     "typecheck": "tsc --noEmit -p .",
     "lint": "biome check .",

@@ -34,3 +34,28 @@ jobs:
 
       - name: Build binary
         run: bun run build && ./dist/ivy --help
+
+  # The menu-bar app (Go, MyGo). Pure Go, so its code builds and tests here; packaging and
+  # signing the .app need macOS (bun run build:app).
+  app:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: app/go.mod
+          cache-dependency-path: app/go.sum
+
+      - name: Format
+        run: test -z "$(gofmt -l .)"
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./...

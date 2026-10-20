@@ -1,0 +1,7 @@
+{
+  "name": "Ivy",
+  "identifier": "io.github.xwjdsh.ivy",
+  "version": "0.1.0",
+  "out": "build",
+  "macos": { "infoPlist": { "LSUIElement": true } }
+}

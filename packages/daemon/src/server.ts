@@ -49,9 +49,18 @@ const log = createLogger("daemon");
 
 export class DaemonRunningError extends Error {}
 
+/** macOS takes Unix socket paths of at most 103 bytes (104 with the final NUL). */
+export const MAX_SOCKET_PATH = 103;
+
 /** Start serving on the socket; throws DaemonRunningError if a daemon already answers there. */
 export async function startDaemon(paths: Paths): Promise<Daemon> {
   const socket = paths.daemonSocket;
+  const length = Buffer.byteLength(socket);
+  if (length > MAX_SOCKET_PATH) {
+    throw new Error(
+      `The daemon's socket path is too long (${length} bytes; macOS allows ${MAX_SOCKET_PATH}): ${socket}. Use a shorter IVY_HOME.`,
+    );
+  }
   if (existsSync(socket)) {
     if (await isAlive(socket)) {
       throw new DaemonRunningError(`Ivy's daemon is already running (${socket}).`);

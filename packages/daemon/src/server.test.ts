@@ -113,3 +113,9 @@ test("a client that stops reading is dropped, not buffered without end", async (
   expect(text).toContain("event: connected");
   expect(text).not.toContain('"i":4999');
 });
+
+test("a socket path too long for macOS is refused with a clear reason", async () => {
+  const p = paths();
+  p.daemonSocket = `/tmp/${"x".repeat(120)}.sock`;
+  await expect(startDaemon(p)).rejects.toThrow("Use a shorter IVY_HOME");
+});
