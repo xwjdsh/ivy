@@ -70,7 +70,12 @@ export function api(ivy: Ivy, sessions: Sessions): Routes {
 
   const handle = async (req: Request): Promise<Response | undefined> => {
     const { pathname } = new URL(req.url);
-    const parts = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+    let parts: string[];
+    try {
+      parts = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+    } catch {
+      return fail(400, "The path isn't valid");
+    }
     const route = `${req.method} /${parts.map((p, i) => (i % 2 === 1 ? ":" : p)).join("/")}`;
     const [, id, , sub] = parts as [string, string, string, string];
 

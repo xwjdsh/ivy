@@ -16,7 +16,7 @@ export {
   type Routes,
   startDaemon,
 } from "./server.ts";
-export { PERMISSION_TIMEOUT_MS, Sessions } from "./sessions.ts";
+export { IDLE_MS, PERMISSION_TIMEOUT_MS, Sessions } from "./sessions.ts";
 export { api };
 
 /**
@@ -53,6 +53,7 @@ export async function runDaemon(paths: Paths, plugins: IvyPlugin[]): Promise<voi
     process.once("SIGTERM", () => stop("SIGTERM"));
   });
   scheduler.stop();
+  await sessions.close(); // running turns stop and write what they have
   await daemon.stop();
   await ivy.plugins.teardown();
 }

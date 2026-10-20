@@ -2,7 +2,11 @@
 // a turn runs waits for it, then runs as the next turn, whichever client sent it. What
 // happens goes out as events to every client, so several can follow one session; any of
 // them may answer a permission prompt, and the first answer counts.
+//
+// A session is loaded when a client first asks for it and let go once it has been idle a
+// while, so a daemon that runs for weeks doesn't keep every session it ever opened.
 
+import { existsSync } from "node:fs";
 import {
   type AgentEvent,
   errorMessage,
@@ -29,17 +33,33 @@ import { DISPLAY_INSTRUCTIONS } from "./display.ts";
 
 /** A permission prompt no client answers is refused after this long. */
 export const PERMISSION_TIMEOUT_MS = 10 * 60 * 1000;
+/**
+ * A session no one has touched for this long, with nothing running or waiting, is let go;
+ * it is loaded again when asked for, with its system prompt built afresh (the prompt
+ * cache has expired by then anyway).
+ */
+export const IDLE_MS = 30 * 60 * 1000;
+/** How often idle sessions are looked for. */
+const SWEEP_MS = 60 * 1000;
+/** On shutdown, how long running turns get to stop and write what they have. */
+const CLOSE_WAIT_MS = 5000;
 
 export interface SessionsOptions {
   ivy: Ivy;
   publish(event: SessionEvent): void;
   permissionTimeoutMs?: number;
+  /** The clock (tests). */
+  now?: () => number;
 }
 
 /** A session the daemon holds: loaded, or started here. */
 interface Live {
   session: Session;
   tracer?: Tracer;
+  /** When a client last asked for it, by the clock. */
+  touched: number;
+  /** Running the waiting messages; set while there are any, cleared once none are left. */
+  pumping?: Promise<void>;
   queue: Prompt[];
   running?: {
     prompt: Prompt;
@@ -63,14 +83,25 @@ export class SessionNotFoundError extends Error {}
 export class Sessions {
   private readonly live = new Map<string, Live>();
   private readonly asks = new Map<string, PendingAsk>();
+  /**
+   * How sessions started here show replies, where it isn't the default (markdown), so one
+   * let go and loaded again keeps its instructions. Until the daemon stops.
+   */
+  private readonly displays = new Map<string, Display>();
   private readonly ivy: Ivy;
   private readonly publish: (event: SessionEvent) => void;
   private readonly permissionTimeoutMs: number;
+  private readonly now: () => number;
+  private readonly sweeper: Timer;
+  private closed = false;
 
   constructor(opts: SessionsOptions) {
     this.ivy = opts.ivy;
     this.publish = opts.publish;
     this.permissionTimeoutMs = opts.permissionTimeoutMs ?? PERMISSION_TIMEOUT_MS;
+    this.now = opts.now ?? Date.now;
+    this.sweeper = setInterval(() => this.sweep(), SWEEP_MS);
+    this.sweeper.unref(); // the server keeps the daemon running, not this
   }
 
   /** Sessions on disk, most recently active first, with whether a turn runs in each. */
@@ -85,6 +116,7 @@ export class Sessions {
   create(display: Display): string {
     const session = Session.create(this.ivy.paths.sessions, this.ivy.agent.model);
     this.live.set(session.id, this.hold(session));
+    if (display !== "markdown") this.displays.set(session.id, display);
     void this.ivy.systemPrompt.start(session.id, DISPLAY_INSTRUCTIONS[display]);
     return session.id;
   }
@@ -108,11 +140,13 @@ export class Sessions {
 
   /** Take a message for a session: it runs now, or after the turns before it. */
   send(id: string, text: string): Prompt {
+    if (this.closed) throw new Error("The daemon is stopping");
     const live = this.get(id);
     const prompt = { id: crypto.randomUUID(), text };
     live.queue.push(prompt);
     this.publish({ sessionId: id, type: "prompt", prompt });
-    void this.pump(id, live);
+    // Started a step later, so `pumping` is set before the drain can clear it.
+    live.pumping ??= Promise.resolve().then(() => this.drain(id, live));
     return prompt;
   }
 
@@ -183,10 +217,42 @@ export class Sessions {
     return [...this.live.values()].some((l) => l.running || l.queue.length > 0);
   }
 
+  /** How many sessions are held in memory. */
+  get loaded(): number {
+    return this.live.size;
+  }
+
+  /**
+   * Let go of sessions idle for IDLE_MS, with nothing running or waiting. One never written
+   * (started, no message yet) is kept: it isn't on disk to load again, and it is small.
+   */
+  sweep(): void {
+    for (const [id, live] of this.live) {
+      if (live.pumping || this.now() - live.touched < IDLE_MS) continue;
+      if (!existsSync(live.session.file)) continue;
+      this.live.delete(id);
+      this.ivy.systemPrompt.end(id);
+    }
+  }
+
+  /**
+   * Stop for shutdown: no new messages, waiting ones dropped, running turns interrupted
+   * and given a moment to write what they have.
+   */
+  async close(): Promise<void> {
+    this.closed = true;
+    clearInterval(this.sweeper);
+    for (const id of this.live.keys()) this.interrupt(id, true);
+    const pumping = [...this.live.values()].flatMap((l) => (l.pumping ? [l.pumping] : []));
+    await Promise.race([Promise.all(pumping), Bun.sleep(CLOSE_WAIT_MS)]);
+  }
+
   /** A session held here, loaded from disk when first asked for. */
   private get(id: string): Live {
     let live = this.live.get(id);
-    if (!live) {
+    if (live) {
+      live.touched = this.now();
+    } else {
       if (!/^[\w-]+$/.test(id)) throw new SessionNotFoundError(`Session not found: ${id}`);
       let session: Session;
       try {
@@ -196,19 +262,33 @@ export class Sessions {
       }
       live = this.hold(session);
       this.live.set(id, live);
+      const display = this.displays.get(id);
+      if (display) void this.ivy.systemPrompt.start(id, DISPLAY_INSTRUCTIONS[display]);
     }
     return live;
   }
 
   private hold(session: Session): Live {
-    return { session, tracer: this.ivy.tracer(session.id), queue: [] };
+    return { session, tracer: this.ivy.tracer(session.id), touched: this.now(), queue: [] };
   }
 
-  /** Run the waiting messages one turn at a time. */
-  private async pump(id: string, live: Live): Promise<void> {
-    if (live.running) return;
-    const prompt = live.queue.shift();
-    if (!prompt) return;
+  /**
+   * Run the waiting messages one turn at a time. `pumping` is cleared in the same step that
+   * finds the queue empty, so a message sent right then starts a new drain instead of
+   * waiting for one that is ending.
+   */
+  private async drain(id: string, live: Live): Promise<void> {
+    for (;;) {
+      const prompt = live.queue.shift();
+      if (!prompt) {
+        live.pumping = undefined;
+        return;
+      }
+      await this.runTurn(id, live, prompt);
+    }
+  }
+
+  private async runTurn(id: string, live: Live, prompt: Prompt): Promise<void> {
     const running = {
       prompt,
       controller: new AbortController(),
@@ -230,8 +310,8 @@ export class Sessions {
       end = { stopReason: "error", steps: 0, costUsd: 0, error: errorMessage(err) };
     }
     live.running = undefined;
+    live.touched = this.now(); // idle from when the turn ends, not when it was asked for
     this.publish({ sessionId: id, type: "turn_end", promptId: prompt.id, end });
-    await this.pump(id, live);
   }
 
   /** Pass an agent event on to clients, and keep the turn so far for clients that open it. */

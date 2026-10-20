@@ -14,7 +14,7 @@ import type { SessionEvent, SessionSummary, SessionView } from "@ivy/protocol";
 import { z } from "zod";
 import { api } from "./api.ts";
 import { type Daemon, startDaemon } from "./server.ts";
-import { Sessions } from "./sessions.ts";
+import { IDLE_MS, Sessions } from "./sessions.ts";
 
 type Block = ModelMessage["content"][number];
 const text = (t: string) => ({ type: "text", text: t, citations: null }) as unknown as Block;
@@ -81,9 +81,12 @@ const gate = () => {
   return { promise, open };
 };
 
-const running: Daemon[] = [];
+const running: Array<{ daemon: Daemon; sessions: Sessions }> = [];
 afterEach(async () => {
-  for (const d of running.splice(0)) await d.stop();
+  for (const r of running.splice(0)) {
+    await r.sessions.close();
+    await r.daemon.stop();
+  }
 });
 
 async function start(script: Step[], permissionTimeoutMs?: number) {
@@ -94,9 +97,11 @@ async function start(script: Step[], permissionTimeoutMs?: number) {
   );
   const paths = resolvePaths(home);
   let sessions: Sessions | undefined;
+  const model = new FakeModel(script);
+  const clock = { now: Date.now() };
   const ivy = await createIvy({
     plugins: [tools],
-    model: new FakeModel(script),
+    model,
     paths,
     confirm: (call) => (sessions as Sessions).confirm(call),
   });
@@ -105,9 +110,10 @@ async function start(script: Step[], permissionTimeoutMs?: number) {
     ivy,
     publish: (event) => daemon?.publish({ type: "session", data: event }),
     permissionTimeoutMs,
+    now: () => clock.now,
   });
   daemon = await startDaemon(paths, api(ivy, sessions));
-  running.push(daemon);
+  running.push({ daemon, sessions });
 
   const call = async (method: string, path: string, body?: unknown) => {
     const res = await fetch(`http://ivy${path}`, {
@@ -118,7 +124,7 @@ async function start(script: Step[], permissionTimeoutMs?: number) {
     const text = await res.text();
     return { status: res.status, body: text ? JSON.parse(text) : undefined };
   };
-  return { call, socket: paths.daemonSocket };
+  return { call, socket: paths.daemonSocket, sessions, model, clock };
 }
 
 /** A client of /events: collects session events, and waits for one that matches. */
@@ -311,5 +317,50 @@ test("bad requests are refused with a reason", async () => {
     body: { error: "Session not found: nope" },
   });
   expect(await call("PUT", "/effort", { effort: "huge" })).toMatchObject({ status: 400 });
+  expect(await call("GET", "/sessions/%E0%A4%A")).toMatchObject({ status: 400 });
   expect((await call("GET", "/state")).body).toMatchObject({ model: "anthropic/claude-opus-5-5" });
+});
+
+test("an idle session is let go, and loaded again as it was when asked for", async () => {
+  const { call, socket, sessions, model, clock } = await start([
+    { content: [text("one")] },
+    { content: [text("two")] },
+  ]);
+  const client = await follow(socket);
+  const plain = (await call("POST", "/sessions", { display: "plain" })).body.id;
+  const unused = (await call("POST", "/sessions", {})).body.id;
+  await call("POST", `/sessions/${plain}/prompts`, { text: "first" });
+  await client.until((e) => e.type === "turn_end");
+  const before = (await call("GET", `/sessions/${plain}`)).body as SessionView;
+
+  clock.now += IDLE_MS - 1000;
+  sessions.sweep();
+  expect(sessions.loaded).toBe(2);
+  clock.now += 2000;
+  sessions.sweep();
+  expect(sessions.loaded).toBe(1); // the unused one isn't on disk to load again: kept
+  expect((await call("GET", `/sessions/${unused}`)).status).toBe(200);
+
+  expect((await call("GET", `/sessions/${plain}`)).body).toEqual(before);
+  const second = (await call("POST", `/sessions/${plain}/prompts`, { text: "second" })).body;
+  await client.until((e) => e.type === "turn_end" && e.promptId === second.id);
+  // Still a plain-text session after being loaded again.
+  expect(JSON.stringify(model.requests[1]?.system)).toContain("plain text");
+  await client.close();
+});
+
+test("closing interrupts running turns and refuses new messages", async () => {
+  const never = gate();
+  const { call, socket, sessions } = await start([{ content: [text("…")], gate: never.promise }]);
+  const client = await follow(socket);
+  const { body } = await call("POST", "/sessions", {});
+  await call("POST", `/sessions/${body.id}/prompts`, { text: "go" });
+  await call("POST", `/sessions/${body.id}/prompts`, { text: "waiting" });
+  await client.until((e) => e.type === "text");
+  await sessions.close();
+  const end = await client.until((e) => e.type === "turn_end");
+  expect(end.type === "turn_end" && end.end.stopReason).toBe("interrupted");
+  expect(client.events.some((e) => e.type === "prompt_withdrawn")).toBe(true);
+  expect(() => sessions.send(body.id, "late")).toThrow("stopping");
+  await client.close();
 });
