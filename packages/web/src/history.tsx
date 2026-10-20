@@ -4,10 +4,10 @@
 
 import type { SessionSummary } from "@ivy/protocol";
 import { ChevronDown, LoaderCircle, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import type { Chat } from "./chat.ts";
 import { byDay, timeLabel } from "./sessions.ts";
-import { ItemView } from "./transcript.tsx";
+import { ItemView, type Place } from "./transcript.tsx";
 
 /** How many past conversations show at first, and how many more each "Earlier" brings. */
 const PAGE = 20;
@@ -15,16 +15,21 @@ const PAGE = 20;
 export function History(props: {
   /** Newest first, as the daemon lists them; without the conversation going on now. */
   sessions: SessionSummary[];
-  /** Called before more appear above, so the view stays where it is. */
-  keepBottom(): void;
+  /** Where it is in the timeline. */
+  place: Place;
   /** The one opened, if any, and what it holds once read. */
   reading: { id: string; chat?: Chat } | undefined;
+  /** Set (a new object each time) to go to the one opened, wherever it is. */
+  jump: object | undefined;
   onRead(id: string | undefined): void;
   onContinue(id: string): void;
   onDelete(id: string): void;
 }) {
   const { reading } = props;
-  const [shown, setShown] = useState(PAGE);
+  const [paged, setShown] = useState(PAGE);
+  // One gone to from further back than the pages loaded shows too, with all after it.
+  const needed = reading ? props.sessions.findIndex((s) => s.id === reading.id) + 1 : 0;
+  const shown = Math.max(paged, needed);
   // Deleting takes two clicks: the trash button, then the Delete it turns into.
   const [confirming, setConfirming] = useState<string | undefined>();
   const sessions = props.sessions.slice(0, shown);
@@ -36,8 +41,8 @@ export function History(props: {
           type="button"
           className="earlier"
           onClick={() => {
-            props.keepBottom();
-            setShown((n) => n + PAGE);
+            props.place.keepBottom();
+            setShown(shown + PAGE);
           }}
         >
           Earlier conversations
@@ -52,6 +57,8 @@ export function History(props: {
               session={s}
               open={reading?.id === s.id}
               chat={reading?.id === s.id ? reading.chat : undefined}
+              jump={reading?.id === s.id ? props.jump : undefined}
+              place={props.place}
               confirming={s.id === confirming}
               onConfirm={(yes) => setConfirming(yes ? s.id : undefined)}
               onRead={props.onRead}
@@ -73,18 +80,25 @@ function Past(props: {
   session: SessionSummary;
   open: boolean;
   chat: Chat | undefined;
+  jump: object | undefined;
+  place: Place;
   confirming: boolean;
   onConfirm(yes: boolean): void;
   onRead(id: string | undefined): void;
   onContinue(id: string): void;
   onDelete(id: string): void;
 }) {
-  const { session: s, open, chat, confirming } = props;
+  const { session: s, open, chat, confirming, jump, place } = props;
   const toggle = () => props.onRead(open ? undefined : s.id);
+  const line = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (jump && line.current) place.reveal(line.current);
+  }, [jump, place]);
   return (
     // Leaving the line drops a pending confirm; the buttons inside take the keys.
     // biome-ignore lint/a11y/noStaticElementInteractions: see above
     <div
+      ref={line}
       className={`past${open ? " open" : ""}${confirming ? " confirming" : ""}`}
       onMouseLeave={() => confirming && props.onConfirm(false)}
     >

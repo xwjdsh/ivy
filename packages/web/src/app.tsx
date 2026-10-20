@@ -18,6 +18,9 @@ import { Timeline } from "./transcript.tsx";
 
 const sessionInHash = () => decodeURIComponent(location.hash.slice(1)) || undefined;
 
+/** A window this narrow has her pane over the conversation (styles.css). */
+const NARROW = "(max-width: 760px)";
+
 /** Session events that change the list: a session started, ran, or finished a turn. */
 const LISTED = new Set<SessionEvent["type"]>(["prompt", "turn_start", "turn_end"]);
 
@@ -32,6 +35,10 @@ export function App() {
   /** The past conversation opened above, if any; its chat once read. */
   const [reading, setReading] = useState<{ id: string; chat?: Chat } | undefined>();
   const readingId = useRef<string | undefined>(undefined);
+  /** Set, a new object each time, to bring the one open into view. */
+  const [jump, setJump] = useState<object | undefined>();
+  /** Set, a new number each time, to go back to the end of the conversation going on. */
+  const [toEnd, setToEnd] = useState<number | undefined>();
 
   const failed = useCallback((err: unknown) => {
     setError(err instanceof Error ? err.message : String(err));
@@ -125,6 +132,12 @@ export function App() {
     [read, show],
   );
 
+  /** Close the past conversation open above and go back down to the one going on. */
+  const back = useCallback(() => {
+    read(undefined);
+    setToEnd((n) => (n ?? 0) + 1);
+  }, [read]);
+
   /** Carry on the past conversation open above: what was read of it shows at once. */
   const carryOn = (id: string) => {
     const known = reading?.id === id ? reading.chat : undefined;
@@ -143,7 +156,7 @@ export function App() {
       if (e.key === "Escape" && !e.defaultPrevented) {
         // The pane closes first, then the past conversation open above.
         if (pane) setPane(false);
-        else if (readingId.current) read(undefined);
+        else if (readingId.current) back();
       }
       // ⌘N: a new conversation, as the button at the top right.
       else if (e.metaKey && !e.shiftKey && !e.altKey && e.key === "n") {
@@ -153,7 +166,14 @@ export function App() {
     };
     addEventListener("keydown", onKey);
     return () => removeEventListener("keydown", onKey);
-  }, [pane, read, open]);
+  }, [pane, back, open]);
+
+  /** Go to a past conversation from her pane, open to carry on; a narrow window's pane closes. */
+  const pick = (id: string) => {
+    if (readingId.current !== id) read(id);
+    setJump({});
+    if (matchMedia(NARROW).matches) setPane(false);
+  };
 
   const send = async (text: string) => {
     setError(undefined);
@@ -241,11 +261,13 @@ export function App() {
         <Timeline
           key={chat?.id ?? ""}
           chat={chat}
-          history={(keepBottom) => (
+          toEnd={toEnd}
+          history={(place) => (
             <History
               sessions={sessions.filter((s) => s.id !== chat?.id)}
-              keepBottom={keepBottom}
+              place={place}
               reading={reading}
+              jump={jump}
               onRead={read}
               onContinue={carryOn}
               onDelete={remove}
@@ -287,7 +309,7 @@ export function App() {
                 type="button"
                 className="icon"
                 title={chat ? "Back to this conversation (Esc)" : "Cancel (Esc)"}
-                onClick={() => read(undefined)}
+                onClick={back}
               >
                 <X size={14} />
               </button>
@@ -306,12 +328,14 @@ export function App() {
         <Profile
           presence={now}
           facts={{
-            conversations: sessions.length,
+            sessions,
+            current: chat?.id,
             tokens: chat && chat.tokens.in + chat.tokens.out > 0 ? chat.tokens : undefined,
           }}
           state={state}
           refresh={sessions}
           onState={setState}
+          onPick={pick}
           onError={failed}
           onClose={() => setPane(false)}
         />

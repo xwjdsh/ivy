@@ -1,20 +1,23 @@
 // Ivy herself, at the top of the conversation: her face, her name and what she is doing.
 // Clicking her opens her pane beside it, which tells more about her and, folded at its foot,
-// holds what runs her (the model and the effort), out of the way of the conversation.
+// holds what runs her (the model and the effort), out of the way of the conversation. From it,
+// a page of all the conversations had with her, to find one and go to it.
 
 import {
   type AboutSection,
   compact,
   type DaemonState,
   formatTokens,
+  type SessionSummary,
   type Tokens,
 } from "@ivy/protocol";
-import { ChevronRight, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Search, X } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 import { api } from "./api.ts";
 import ivy from "./ivy.png"; // the app's icon (app/resources/icon.png), smaller
 import { Bars, Pick } from "./menu.tsx";
 import type { Presence } from "./presence.ts";
+import { byDay, timeLabel } from "./sessions.ts";
 
 /** Her face, cut round from the app's icon. */
 export function Portrait({ size, presence }: { size: number; presence?: Presence }) {
@@ -32,7 +35,10 @@ export function Portrait({ size, presence }: { size: number; presence?: Presence
 
 /** What her pane tells about her, besides what the plugins have. */
 export interface Facts {
-  conversations: number;
+  /** Every conversation had with her, newest first, as the daemon lists them. */
+  sessions: SessionSummary[];
+  /** The conversation going on, if one is. */
+  current: string | undefined;
   /** What the conversation going on has used, if it has. */
   tokens: Tokens | undefined;
 }
@@ -68,15 +74,32 @@ export function Profile(props: {
   /** Changes when what the plugins know may have: read it again. */
   refresh: unknown;
   onState(state: DaemonState): void;
+  /** Go to a past conversation, open to carry on. */
+  onPick(id: string): void;
   onError(err: unknown): void;
   onClose(): void;
 }) {
   const { presence, facts, state, onError, refresh } = props;
   const [sections, setSections] = useState<AboutSection[]>([]);
+  // Her card, or the page of conversations opened from it.
+  const [page, setPage] = useState<"card" | "conversations">("card");
   // biome-ignore lint/correctness/useExhaustiveDependencies: `refresh` is the reason to read
   useEffect(() => {
     api.about().then(setSections, onError);
   }, [refresh, onError]);
+  // Esc goes back to her card before it closes the pane.
+  useEffect(() => {
+    if (page === "card") return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !e.defaultPrevented) {
+        e.preventDefault();
+        setPage("card");
+      }
+    };
+    // Before the window's own Esc, which closes the pane.
+    addEventListener("keydown", onKey, { capture: true });
+    return () => removeEventListener("keydown", onKey, { capture: true });
+  }, [page]);
   return (
     <aside className="pane" aria-label="Ivy">
       <div className="pane-top">
@@ -84,54 +107,122 @@ export function Profile(props: {
           <X size={16} />
         </button>
       </div>
-      <div className="pane-body">
-        <div className="profile">
-          <Portrait size={88} presence={presence} />
-          <span className="name">Ivy</span>
-          <span className={`doing ${presence.tone}`}>{presence.text}</span>
-        </div>
-        {sections
-          .filter((s) => !s.private)
-          .map((s) => (
-            <section key={`${s.plugin}/${s.title}`} className="about">
-              <h3>{s.title}</h3>
-              <Items items={s.items} />
-            </section>
-          ))}
-        {sections
-          .filter((s) => s.private)
-          .map((s) => (
-            <Hidden key={`${s.plugin}/${s.title}`} section={s} />
-          ))}
-        <dl className="facts">
-          <div>
-            <dt>Conversations</dt>
-            <dd>{facts.conversations}</dd>
+      {page === "conversations" ? (
+        <Conversations
+          sessions={facts.sessions.filter((s) => s.id !== facts.current)}
+          onBack={() => setPage("card")}
+          onPick={props.onPick}
+        />
+      ) : (
+        <div className="pane-body">
+          <div className="profile">
+            <Portrait size={88} presence={presence} />
+            <span className="name">Ivy</span>
+            <span className={`doing ${presence.tone}`}>{presence.text}</span>
           </div>
-        </dl>
-        <Hood>
-          {state && <Settings state={state} onState={props.onState} onError={onError} />}
-          <dl className="facts">
-            {state && (
-              <div>
-                <dt>Tools</dt>
-                <dd>
-                  {state.tools} from {state.plugins} plugins
-                </dd>
-              </div>
-            )}
-            {facts.tokens && (
-              <div>
-                <dt>This chat</dt>
-                <dd title={formatTokens(facts.tokens)}>
-                  {compact(facts.tokens.in)} in · {compact(facts.tokens.out)} out
-                </dd>
-              </div>
-            )}
-          </dl>
-        </Hood>
-      </div>
+          {sections
+            .filter((s) => !s.private)
+            .map((s) => (
+              <section key={`${s.plugin}/${s.title}`} className="about">
+                <h3>{s.title}</h3>
+                <Items items={s.items} />
+              </section>
+            ))}
+          {sections
+            .filter((s) => s.private)
+            .map((s) => (
+              <Hidden key={`${s.plugin}/${s.title}`} section={s} />
+            ))}
+          <button type="button" className="go" onClick={() => setPage("conversations")}>
+            <span className="key">Conversations</span>
+            <span className="value">{facts.sessions.length}</span>
+            <ChevronRight size={14} className="next" />
+          </button>
+          <Hood>
+            {state && <Settings state={state} onState={props.onState} onError={onError} />}
+            <dl className="facts">
+              {state && (
+                <div>
+                  <dt>Tools</dt>
+                  <dd>
+                    {state.tools} from {state.plugins} plugins
+                  </dd>
+                </div>
+              )}
+              {facts.tokens && (
+                <div>
+                  <dt>This chat</dt>
+                  <dd title={formatTokens(facts.tokens)}>
+                    {compact(facts.tokens.in)} in · {compact(facts.tokens.out)} out
+                  </dd>
+                </div>
+              )}
+            </dl>
+          </Hood>
+        </div>
+      )}
     </aside>
+  );
+}
+
+/** All the past conversations, newest first, to find one by how it began or its day. */
+function Conversations(props: {
+  sessions: SessionSummary[];
+  onBack(): void;
+  onPick(id: string): void;
+}) {
+  const [query, setQuery] = useState("");
+  const q = query.trim().toLowerCase();
+  const days = byDay(props.sessions)
+    .reverse()
+    .map((d) => ({
+      label: d.label,
+      sessions: [...d.sessions]
+        .reverse()
+        .filter(
+          (s) =>
+            !q ||
+            d.label.toLowerCase().includes(q) ||
+            (s.preview || "Untitled").toLowerCase().includes(q),
+        ),
+    }))
+    .filter((d) => d.sessions.length > 0);
+  return (
+    <div className="pane-page">
+      <div className="page-head">
+        <button type="button" className="back" onClick={props.onBack}>
+          <ChevronLeft size={16} />
+          Ivy
+        </button>
+      </div>
+      <label className="find">
+        <Search size={14} />
+        <input
+          // biome-ignore lint/a11y/noAutofocus: the page is opened to search it
+          autoFocus
+          value={query}
+          placeholder="Search conversations"
+          onChange={(e) => setQuery(e.target.value)}
+        />
+      </label>
+      <div className="pane-body">
+        {days.length === 0 && (
+          <p className="none">{q ? "No conversation matches" : "No other conversations yet"}</p>
+        )}
+        {days.map((d) => (
+          <section key={d.label} className="convs">
+            <h3 className="when">{d.label}</h3>
+            {d.sessions.map((s) => (
+              <button key={s.id} type="button" className="conv" onClick={() => props.onPick(s.id)}>
+                <span className="time">{timeLabel(new Date(s.updatedAt))}</span>
+                <span className="preview">{s.preview || "Untitled"}</span>
+                {s.busy && <span className="busy" title="Replying" />}
+              </button>
+            ))}
+          </section>
+        ))}
+      </div>
+    </div>
   );
 }
 

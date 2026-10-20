@@ -1,11 +1,20 @@
 // The conversation: what the user sent, the replies, the tools they used and notes on how
 // turns ended, under the conversations that came before.
 
-import { Check, ChevronRight, CircleAlert, LoaderCircle, TriangleAlert, X } from "lucide-react";
+import {
+  ArrowDown,
+  Check,
+  ChevronRight,
+  CircleAlert,
+  LoaderCircle,
+  TriangleAlert,
+  X,
+} from "lucide-react";
 import {
   type MouseEvent,
   type ReactNode,
   useCallback,
+  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -15,15 +24,25 @@ import type { Chat, Item } from "./chat.ts";
 import { useHighlight } from "./highlight.ts";
 import { renderMarkdown } from "./markdown.ts";
 
+/** What the past above can ask of the timeline it is in. */
+export interface Place {
+  /** Called before more appear above, so the view stays where it is. */
+  keepBottom(): void;
+  /** Bring this to the top of the view, and stay there as it opens. */
+  reveal(el: HTMLElement): void;
+}
+
 /**
  * The window's one scroller: what came before (`history`), then the conversation going on now,
  * or `empty` before one starts. The current conversation fills at least the whole view, so the
- * past is out of sight until the user scrolls up to it.
+ * past is out of sight until the user scrolls up to it; far up, a button goes back down.
  */
 export function Timeline(props: {
-  history(keepBottom: () => void): ReactNode;
+  history(place: Place): ReactNode;
   chat: Chat | undefined;
   empty: ReactNode;
+  /** Changes when the view should go back to the end of the conversation going on. */
+  toEnd: unknown;
 }) {
   const { chat } = props;
   const id = chat?.id;
@@ -55,14 +74,39 @@ export function Timeline(props: {
     watch.observe(el);
     return () => watch.disconnect();
   }, [follow]);
+  // Scrolled up more than half a view from the end: offer the way back.
+  const [away, setAway] = useState(false);
   const onScroll = () => {
     const el = box.current;
-    if (el) pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+    if (!el) return;
+    const below = el.scrollHeight - el.scrollTop - el.clientHeight;
+    pinned.current = below < 40;
+    setAway(below > el.clientHeight / 2);
   };
-  const keepBottom = useCallback(() => {
+  const end = useCallback(() => {
     const el = box.current;
-    if (el) fromBottom.current = el.scrollHeight - el.scrollTop;
+    if (!el) return;
+    pinned.current = true;
+    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
   }, []);
+  useEffect(() => {
+    if (props.toEnd !== undefined) end();
+  }, [props.toEnd, end]);
+  const place = useMemo<Place>(
+    () => ({
+      keepBottom: () => {
+        const el = box.current;
+        if (el) fromBottom.current = el.scrollHeight - el.scrollTop;
+      },
+      reveal: (target) => {
+        // Unpinned first: what opens below it must not pull the view back to the end.
+        pinned.current = false;
+        fromBottom.current = undefined;
+        target.scrollIntoView({ block: "start" });
+      },
+    }),
+    [],
+  );
   // What the conversation had when shown appears at once; what comes after fades in. Shown in
   // place of another that had something, it arrives as a whole.
   const [shown, setShown] = useState({ id, opened: chat?.items.length ?? 0, arrived: false });
@@ -78,7 +122,7 @@ export function Timeline(props: {
   return (
     <div className="transcript" ref={box} onScroll={onScroll}>
       <div className="column" ref={column}>
-        {props.history(keepBottom)}
+        {props.history(place)}
         <div key={id ?? ""} className={`now${shown.arrived ? " arrived" : ""}`}>
           {chat
             ? chat.items.map((item, i) => (
@@ -93,6 +137,13 @@ export function Timeline(props: {
           )}
           {thinking && <Thinking />}
         </div>
+        {away && (
+          <div className="to-end">
+            <button type="button" title="Back to the end" onClick={end}>
+              <ArrowDown size={16} />
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
