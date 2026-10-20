@@ -4,11 +4,45 @@
 
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { type Line, normalizeTags, splitTags } from "./format.ts";
+import type { ToolResult } from "@ivy/plugin-api";
+import { type Line, normalizeTags, splitTags, usage } from "./format.ts";
 import { scan } from "./safety.ts";
 
 /** Thrown for anything the model should fix and retry; the message says how. */
 export class MemoryError extends Error {}
+
+/** Run a tool's change; a MemoryError goes back to the model as a tool error to act on. */
+export async function asToolResult(run: () => string | Promise<string>): Promise<ToolResult> {
+  try {
+    return await run();
+  } catch (err) {
+    if (err instanceof MemoryError) return { content: err.message, isError: true };
+    throw err;
+  }
+}
+
+/** From this share of a limit on, results remind Ivy to make room. */
+export const NEARLY_FULL = 0.8;
+
+/** How full a capped file is, for results and prompts: "(1,234 / 3,000 chars)". */
+export function usageText(used: number, limit: number): string {
+  return `(${used.toLocaleString("en-US")} / ${limit.toLocaleString("en-US")} chars)`;
+}
+
+/** A line telling Ivy a file is nearly full and what to do (`advice`), or "" while there is room. */
+export function fullNote(name: string, used: number, limit: number, advice: string): string {
+  if (used < limit * NEARLY_FULL) return "";
+  return `\n${name} is ${Math.round((used / limit) * 100)}% full: ${advice}`;
+}
+
+/**
+ * Whether a change takes a file past its limit. One that doesn't grow a file already over
+ * (a hand edit, a lowered limit) still goes through, so Ivy can always make room.
+ */
+export function overLimit(next: Line[], before: Line[], limit: number): boolean {
+  const used = usage(next);
+  return used > limit && used > usage(before);
+}
 
 /** The entry text and its tags: those passed in plus any `#tags` typed at the end of the text. */
 export function contentAndTags(content: string, tags: string[]): { text: string; tags: string[] } {

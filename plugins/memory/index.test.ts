@@ -3,7 +3,8 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CONTEXT_MAX_CHARS, type IvyPlugin, type ToolResult } from "@ivy/plugin-api";
-import { createMemoryPlugin, localDate, tagList } from "./index.ts";
+import { createMemoryPlugin } from "./index.ts";
+import { localDate, tagList } from "./lines.ts";
 
 let dir: string;
 let plugin: IvyPlugin;

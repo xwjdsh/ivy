@@ -1,16 +1,7 @@
 import { expect, test } from "bun:test";
 import { parseFile, serializeFile } from "./format.ts";
-import {
-  type Context,
-  type Files,
-  find,
-  MemoryError,
-  move,
-  remove,
-  save,
-  tidy,
-  update,
-} from "./store.ts";
+import { type Context, type Files, find, move, remove, save, tidy, update } from "./store.ts";
+import { MemoryError } from "./write.ts";
 
 const HEADER = "# Memory\nMaintained by Ivy; you can edit it.\n\n";
 

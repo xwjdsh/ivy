@@ -6,12 +6,11 @@ import {
   type IvyPlugin,
   type Logger,
   type Reminder,
-  type ToolResult,
 } from "@ivy/plugin-api";
 import { z } from "zod";
 import { changeNotice, lineSet } from "./changes.ts";
-import { body, MemoryFiles } from "./files.ts";
-import { ENTRY_TYPES, type Entry, type Line, localDate, serializeFile, tagList } from "./format.ts";
+import { MemoryFiles } from "./files.ts";
+import { ENTRY_TYPES, type Entry, type Line, localDate, tagList } from "./format.ts";
 import INSTRUCTIONS from "./instructions.md" with { type: "text" };
 import { type Noted, screen } from "./safety.ts";
 import { searchSessions } from "./sessions.ts";
@@ -24,7 +23,6 @@ import {
   find,
   type HotFile,
   type Limits,
-  MemoryError,
   move,
   remove,
   save,
@@ -33,6 +31,7 @@ import {
   update,
   usageOf,
 } from "./store.ts";
+import { asToolResult, fullNote, usageText } from "./write.ts";
 
 /**
  * Tags are one plain string, not an array: some models (or proxies) emit string arrays as
@@ -41,7 +40,6 @@ import {
 const TAGS_HELP = 'Comma-separated, in both languages, e.g. "dentist, 牙医, 看牙"';
 
 /** From this share of a limit on, results remind the model to consolidate. */
-const NEARLY_FULL = 0.8;
 /** Todos overdue for longer than this are flagged in /memory. */
 const LONG_OVERDUE_DAYS = 30;
 /** At most this many due todos in a turn's context. */
@@ -83,20 +81,14 @@ export function createMemoryPlugin(): IvyPlugin {
     today: localDate(new Date()),
   });
   /** Run a change; MemoryError messages go back to the model as tool errors. */
-  const tool = async (
-    fn: (ctx: Context) => string | { text: string; files: Files },
-  ): Promise<ToolResult> => {
-    try {
+  const tool = (fn: (ctx: Context) => string | { text: string; files: Files }) =>
+    asToolResult(async () => {
       const result = await store().change((current) => {
         const out = fn(context(current));
         return typeof out === "string" ? { text: out } : out;
       });
       return result.text;
-    } catch (err) {
-      if (err instanceof MemoryError) return { content: err.message, isError: true };
-      throw err;
-    }
-  };
+    });
 
   const fileEnum = z.enum(["user", "memory"]);
   const dateString = z.string().describe("YYYY-MM-DD");
@@ -150,7 +142,7 @@ export function createMemoryPlugin(): IvyPlugin {
               : "";
             return {
               files: r.files,
-              text: `Saved to ${FILE_NAMES[input.file]} ${usageText(r.usage)}:\n${r.line}${similar}${fullness(input.file, r.usage)}`,
+              text: `Saved to ${FILE_NAMES[input.file]} ${usageOfText(r.usage)}:\n${r.line}${similar}${fullness(input.file, r.usage)}`,
             };
           }),
       }),
@@ -185,7 +177,7 @@ export function createMemoryPlugin(): IvyPlugin {
                 ? `Confirmed in ${where}:\n${r.line}`
                 : r.status === "done"
                   ? `Done; moved to ARCHIVE.md:\n${r.line}`
-                  : `Updated in ${where}${r.usage ? ` ${usageText(r.usage)}` : ""}:\n${r.line}` +
+                  : `Updated in ${where}${r.usage ? ` ${usageOfText(r.usage)}` : ""}:\n${r.line}` +
                     (r.archived ? `\nOld version kept in ARCHIVE.md:\n${r.archived}` : "") +
                     (r.usage && r.file !== "archive" ? fullness(r.file, r.usage) : "");
             return { files: r.files, text };
@@ -202,7 +194,7 @@ export function createMemoryPlugin(): IvyPlugin {
         run: ({ match, to }) =>
           tool((ctx) => {
             const r = move(ctx, match, to);
-            const usage = r.usage ? ` ${usageText(r.usage)}` : "";
+            const usage = r.usage ? ` ${usageOfText(r.usage)}` : "";
             const full = r.usage && r.to !== "archive" ? fullness(r.to, r.usage) : "";
             return {
               files: r.files,
@@ -275,8 +267,8 @@ export function createMemoryPlugin(): IvyPlugin {
       // What the prompt holds, to tell the model later in this session what changed since.
       snapshots.set(id, { user: lineSet(shown.user), memory: lineSet(shown.memory) });
       const section = (file: HotFile) => {
-        const text = body(file, serializeFile(shown[file]));
-        return `## ${FILE_NAMES[file]} ${usageText(usageOf(ctx, file))}\n${text || "(empty)"}`;
+        const text = store().files[file].body(shown[file]);
+        return `## ${FILE_NAMES[file]} ${usageOfText(usageOf(ctx, file))}\n${text || "(empty)"}`;
       };
       return [
         "# Memory",
@@ -336,17 +328,14 @@ export function createMemoryPlugin(): IvyPlugin {
 
 export default createMemoryPlugin();
 
-export { localDate, tagList } from "./format.ts";
-
 // ---------- text for the model and the user ----------
 
-function usageText({ used, limit }: Usage): string {
-  return `(${used.toLocaleString("en-US")} / ${limit.toLocaleString("en-US")} chars)`;
-}
+const usageOfText = ({ used, limit }: Usage) => usageText(used, limit);
 
 function fullness(file: HotFile, { used, limit }: Usage): string {
-  if (used < limit * NEARLY_FULL) return "";
-  return `\n${FILE_NAMES[file]} is ${Math.round((used / limit) * 100)}% full: consolidate soon (merge, shorten, or move entries not in current use to the archive).`;
+  const advice =
+    "consolidate soon (merge, shorten, or move entries not in current use to the archive).";
+  return fullNote(FILE_NAMES[file], used, limit, advice);
 }
 
 function searchText(found: Found[]): string {
@@ -422,7 +411,7 @@ function overview(ctx: Context, store: MemoryFiles): string {
     return `  ${due ? `${due.replace("T", " ")}  ` : ""}${e.text}${late}`;
   };
   return [
-    `USER.md ${usageText(usageOf(ctx, "user"))} · MEMORY.md ${usageText(usageOf(ctx, "memory"))} · ARCHIVE.md ${archived} entries`,
+    `USER.md ${usageOfText(usageOf(ctx, "user"))} · MEMORY.md ${usageOfText(usageOf(ctx, "memory"))} · ARCHIVE.md ${archived} entries`,
     todos.length ? `Open todos:\n${todos.map(todoLine).join("\n")}` : "No open todos.",
     ...notedText(screen(ctx.files)),
     `Files: ${store.dir}`,

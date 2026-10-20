@@ -19,7 +19,14 @@ import {
   usage,
 } from "./format.ts";
 import { compare, search, terms } from "./search.ts";
-import { checkSafe, contentAndTags, findOne, MemoryError } from "./write.ts";
+import {
+  checkSafe,
+  contentAndTags,
+  findOne,
+  MemoryError,
+  NEARLY_FULL,
+  overLimit,
+} from "./write.ts";
 
 export const FILES = ["user", "memory", "archive"] as const;
 export type FileName = (typeof FILES)[number];
@@ -40,8 +47,6 @@ export interface Context {
   /** YYYY-MM-DD in the machine's timezone. */
   today: string;
 }
-
-export { MemoryError };
 
 export interface Usage {
   used: number;
@@ -341,11 +346,11 @@ function dateFields(input: { since?: string; ends?: string; due?: string }) {
 /** Writing past a limit fails, unless the change doesn't grow a file that is already over. */
 function checkLimit(ctx: Context, file: HotFile, next: Line[], before: Line[]): void {
   const limit = ctx.limits[file];
+  if (!overLimit(next, before, limit)) return;
   const used = usage(next);
-  if (used <= limit || used <= usage(before)) return;
   const entries = next.filter((l) => l.entry).length;
   // Aim well below the limit: freeing just enough makes the next save fail again.
-  const target = Math.floor(limit * 0.8);
+  const target = Math.floor(limit * NEARLY_FULL);
   throw new MemoryError(
     `${FILE_NAMES[file]} is full: ${used} / ${limit} characters with this change, ${entries} entries. ` +
       `Free room first, ideally down to about ${target} characters (at least ${used - limit}): move ` +

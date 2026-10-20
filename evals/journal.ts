@@ -4,7 +4,7 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { localDate } from "@ivy/plugin-memory";
+import { localDate } from "@ivy/plugin-memory/lines";
 import { defineEvals } from "./eval.ts";
 
 const SOUL = readFileSync(join(import.meta.dir, "..", "examples", "SOUL.md"), "utf8");

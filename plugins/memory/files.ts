@@ -1,13 +1,10 @@
-// Reading and writing the three memory files. They are read fresh on every call (they are
-// small), so hand edits apply at once, and written atomically (temp file + rename). One
-// lock serializes changes within the process: a model may call several memory tools in
-// one step, and they run in parallel.
+// The three memory files, each a LineFile (linefile.ts). They share one Serial, so a change
+// that moves an entry from one file to another reads and writes them as one step.
 
-import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { parseFile, serializeFile } from "./format.ts";
+import { LineFile } from "./linefile.ts";
 import { FILE_NAMES, FILES, type FileName, type Files } from "./store.ts";
-import { Serial, writeAtomic } from "./write.ts";
+import { Serial } from "./write.ts";
 
 const HEADERS: Record<FileName, string> = {
   user: "# User\nAbout the user and how they like things done. Maintained by Ivy; you can edit it. One entry per line.\n\n",
@@ -19,44 +16,31 @@ const HEADERS: Record<FileName, string> = {
 
 export class MemoryFiles {
   private readonly serial = new Serial();
+  readonly files: Record<FileName, LineFile>;
 
-  constructor(readonly dir: string) {}
-
-  private path(file: FileName): string {
-    return join(this.dir, FILE_NAMES[file]);
+  constructor(readonly dir: string) {
+    const file = (name: FileName) =>
+      new LineFile(join(dir, FILE_NAMES[name]), HEADERS[name], this.serial);
+    this.files = { user: file("user"), memory: file("memory"), archive: file("archive") };
   }
 
   /** The files as they are now; a missing file reads as its header. */
   read(): Files {
-    const files = {} as Files;
-    for (const file of FILES) {
-      const path = this.path(file);
-      files[file] = parseFile(existsSync(path) ? readFileSync(path, "utf8") : HEADERS[file]);
-    }
-    return files;
+    return {
+      user: this.files.user.read(),
+      memory: this.files.memory.read(),
+      archive: this.files.archive.read(),
+    };
   }
 
-  /** Write the files that changed (by content), atomically. */
-  write(before: Files, after: Files): void {
-    for (const file of FILES) {
-      const text = serializeFile(after[file]);
-      if (text === serializeFile(before[file]) && existsSync(this.path(file))) continue;
-      writeAtomic(this.path(file), text);
-    }
-  }
-
-  /** Read, change and write as one step, one at a time. */
+  /** Read, change and write the files that changed, as one step, one at a time. */
   change<T>(fn: (files: Files) => T & { files?: Files }): Promise<T> {
     return this.serial.run(() => {
       const before = this.read();
       const result = fn(before);
-      if (result.files) this.write(before, result.files);
+      const after = result.files;
+      if (after) for (const name of FILES) this.files[name].write(before[name], after[name]);
       return result;
     });
   }
-}
-
-/** The file's text without Ivy's header, for the prompt. Hand-written lines stay. */
-export function body(file: FileName, text: string): string {
-  return (text.startsWith(HEADERS[file]) ? text.slice(HEADERS[file].length) : text).trim();
 }

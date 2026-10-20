@@ -10,6 +10,7 @@
 // targets something that has no place in a fact about the user: hidden characters, text
 // addressed to the model, chat-format markup, and secrets.
 
+import type { Line } from "./format.ts";
 import type { FileName, Files } from "./store.ts";
 
 export interface Finding {
@@ -73,28 +74,43 @@ const SECRETS: Array<[RegExp, string]> = [
   [/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/, "a JSON web token"],
 ];
 
+/**
+ * Lines as the model may see them. Lines with hidden characters are left out of the
+ * prompt, search results and due reminders; other findings stay in and are only noted.
+ * Writes still work on the full files, so nothing is ever deleted by this.
+ */
+export function visible(lines: Line[]): {
+  lines: Line[];
+  skipped: Array<{ line: string; finding: Finding }>;
+  flagged: Array<{ line: string; finding: Finding }>;
+} {
+  const skipped: Array<{ line: string; finding: Finding }> = [];
+  const flagged: Array<{ line: string; finding: Finding }> = [];
+  const shown = lines.filter((line) => {
+    const finding = scan(line.raw);
+    if (!finding) return true;
+    (finding.kind === "hidden" ? skipped : flagged).push({ line: line.raw, finding });
+    return finding.kind !== "hidden";
+  });
+  return { lines: shown, skipped, flagged };
+}
+
 export interface Noted {
   file: FileName;
   line: string;
   finding: Finding;
 }
 
-/**
- * The files as the model may see them. Lines with hidden characters are left out of the
- * prompt, search results and due reminders; other findings stay in and are only noted.
- * Writes still work on the full files, so nothing is ever deleted by this.
- */
+/** Memory's files as the model may see them (see `visible`), noting what was found where. */
 export function screen(files: Files): { files: Files; skipped: Noted[]; flagged: Noted[] } {
   const skipped: Noted[] = [];
   const flagged: Noted[] = [];
   const shown = { ...files };
   for (const file of Object.keys(files) as FileName[]) {
-    shown[file] = files[file].filter((line) => {
-      const finding = scan(line.raw);
-      if (!finding) return true;
-      (finding.kind === "hidden" ? skipped : flagged).push({ file, line: line.raw, finding });
-      return finding.kind !== "hidden";
-    });
+    const v = visible(files[file]);
+    shown[file] = v.lines;
+    skipped.push(...v.skipped.map((n) => ({ file, ...n })));
+    flagged.push(...v.flagged.map((n) => ({ file, ...n })));
   }
   return { files: shown, skipped, flagged };
 }
