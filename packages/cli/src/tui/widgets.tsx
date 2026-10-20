@@ -1,4 +1,5 @@
-import type { PermissionChoice, ToolCallRequest } from "@ivy/kernel";
+import type { PermissionChoice } from "@ivy/kernel";
+import type { PermissionAsk, ToolLabel } from "@ivy/protocol";
 import { Box, Text, useAnimation, useInput } from "ink";
 import { useState } from "react";
 import { renderMarkdown } from "../markdown.ts";
@@ -50,9 +51,9 @@ const CHOICES: Array<{ value: PermissionChoice; label: string; key: string; reme
 /** Input lines shown in a permission prompt (all of them for dangerous tools). */
 const PROMPT_INPUT_LINES = 12;
 
-function promptLayout(call: ToolCallRequest) {
-  // Only once or no when remembering would have no effect (dangerous tools, ask rules).
-  const choices = CHOICES.filter((c) => call.canRemember || !c.remember);
+function promptLayout(call: PermissionAsk) {
+  // The daemon offers "for this session" and "always" only where they take effect.
+  const choices = CHOICES.filter((c) => (call.choices as string[]).includes(c.value));
   // Dangerous tools show their full input; others enough to judge, e.g. a memory being saved.
   const all = inputLines(call.input);
   const max = call.risk === "dangerous" ? all.length : PROMPT_INPUT_LINES;
@@ -76,7 +77,7 @@ export function inputLines(input: unknown): string[] {
 }
 
 /** Rows the permission prompt takes, so the live area can leave room for it. */
-export function permissionPromptHeight(call: ToolCallRequest): number {
+export function permissionPromptHeight(call: PermissionAsk): number {
   const { choices, inputLines, hidden } = promptLayout(call);
   return 2 + 1 + inputLines.length + (hidden > 0 ? 1 : 0) + choices.length; // border, title
 }
@@ -85,7 +86,7 @@ export function PermissionPrompt({
   call,
   onChoose,
 }: {
-  call: ToolCallRequest;
+  call: PermissionAsk;
   onChoose(choice: PermissionChoice): void;
 }) {
   const { choices, inputLines, hidden } = promptLayout(call);
@@ -141,12 +142,6 @@ function formatResult(result: string): string[] {
  * A tool call. Normally one line (status, name, short input) plus the first line of an
  * error; the result itself is shown with Ctrl+O (`expanded`) or in the verbose view.
  */
-/** How a tool call reads in the transcript: its plugin, then what it does. */
-export interface ToolLabel {
-  plugin: string;
-  text: string;
-}
-
 export function ToolLine({
   name,
   input,
@@ -159,7 +154,7 @@ export function ToolLine({
 }: {
   name: string;
   input: unknown;
-  /** From the plugin host (the tool's own summary); without it, the name and raw input. */
+  /** From the daemon (the tool's own summary); without it, the name and raw input. */
   label?: ToolLabel;
   /** Undefined while the tool is still running. */
   result?: string;
@@ -263,7 +258,6 @@ export function ItemView({
   latestTurn,
   verbose = false,
   lead = true,
-  labelOf,
   tight = false,
 }: {
   item: Item;
@@ -273,8 +267,6 @@ export function ItemView({
   verbose?: boolean;
   /** For Ivy's text: whether it starts a reply (the item before it isn't Ivy's text too). */
   lead?: boolean;
-  /** How tool calls read (the plugin host's labels). */
-  labelOf?(name: string, input: unknown): ToolLabel;
   /** Right under another tool line: no blank line between them. */
   tight?: boolean;
 }) {
@@ -289,7 +281,6 @@ export function ItemView({
         <Box marginTop={tight ? 0 : 1}>
           <ToolLine
             {...item}
-            label={labelOf?.(item.name, item.input)}
             expanded={latest && expandedTurn === item.turn}
             expandable={latest}
             verbose={verbose}

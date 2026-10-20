@@ -121,3 +121,27 @@ test("a socket path too long for macOS is refused with a clear reason", async ()
   p.daemonSocket = `/tmp/${"x".repeat(120)}.sock`;
   await expect(startDaemon(p)).rejects.toThrow("Use a shorter IVY_HOME");
 });
+
+test("health tells which code runs, and a draining daemon refuses new clients", async () => {
+  const p = paths();
+  const d = await startDaemon(p, undefined, { code: "abc", onDemand: true });
+  running.push(d);
+  const health = await (await get(p.daemonSocket, "/health")).json();
+  expect(health).toMatchObject({ code: "abc", onDemand: true, draining: false });
+  d.drain();
+  expect(await (await get(p.daemonSocket, "/health")).json()).toMatchObject({ draining: true });
+  expect((await get(p.daemonSocket, "/events")).status).toBe(503);
+});
+
+test("clients that show reminders are counted apart", async () => {
+  const { d, p } = await start();
+  const plain = await get(p.daemonSocket, "/events");
+  const app = await get(p.daemonSocket, "/events?notify=1");
+  await plain.body?.getReader().read();
+  const reader = app.body?.getReader();
+  await reader?.read();
+  expect([d.clients, d.notifiers]).toEqual([2, 1]);
+  await reader?.cancel();
+  await Bun.sleep(50);
+  expect(d.notifiers).toBe(0);
+});

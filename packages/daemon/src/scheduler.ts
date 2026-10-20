@@ -1,9 +1,9 @@
 // The daemon's scheduler: at the start of every minute it asks the plugins which
 // reminders came due since it last asked, and announces each as a `reminder` event (the
 // menu-bar app shows it as a notification). Asking about "since the last check" announces
-// each reminder once, catches up after the Mac slept or the daemon was off, and on the very
-// first run starts from now, so old overdue todos don't all pop up at once. No model is
-// involved.
+// each reminder once, catches up after the Mac slept or the daemon or the app was off, and
+// on the very first run starts from now, so old overdue todos don't all pop up at once. No
+// model is involved.
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
@@ -27,6 +27,12 @@ export interface SchedulerOptions {
   stateFile: string;
   reminders(window: ReminderWindow): Promise<Array<Reminder & { plugin: string }>>;
   publish(event: DaemonEvent): void;
+  /**
+   * Whether anyone would show a reminder now (the app is connected). When not, a check is
+   * skipped and the window stays open, so what comes due meanwhile is announced, late,
+   * once the app connects, instead of being sent to no one and marked as announced.
+   */
+  canDeliver?(): boolean;
   now?: () => Date;
   /** A fixed interval instead of minute starts (tests). */
   intervalMs?: number;
@@ -45,6 +51,7 @@ export function startScheduler(opts: SchedulerOptions): Scheduler {
   let running: Promise<void> | undefined;
 
   const checkOnce = async () => {
+    if (opts.canDeliver && !opts.canDeliver()) return;
     const until = now();
     const since = lastCheck(opts.stateFile) ?? until;
     // A clock set back gives an empty window; the next check starts from the new time.

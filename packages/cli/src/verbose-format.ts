@@ -1,7 +1,7 @@
-import type { AgentEvent, Ivy, PromptPart, RequestInfo } from "@ivy/kernel";
-import { compact } from "./usage-report.ts";
+import type { RequestInfo } from "@ivy/kernel";
+import { compact, type SessionEvent } from "@ivy/protocol";
 
-type StepEvent = Extract<AgentEvent, { type: "step" }>;
+type StepEvent = Extract<SessionEvent, { type: "step" }>;
 
 /**
  * One line per model call, printed when it returns. Only what changes per call; static
@@ -11,14 +11,14 @@ type StepEvent = Extract<AgentEvent, { type: "step" }>;
  */
 export function formatCall(e: StepEvent, request?: RequestInfo): string {
   const u = e.usage;
-  const read = u.cache_read_input_tokens ?? 0;
-  const write = u.cache_creation_input_tokens ?? 0;
+  const read = u.cacheRead;
+  const write = u.cacheWrite;
   const parts = [`step ${e.step}`];
   if (request) {
     parts.push(`${request.messages} msgs`);
     if (request.hasContext) parts.push(`context ${request.contextMode}`);
   }
-  parts.push(e.stopReason ?? "?", `in ${compact(u.input_tokens)} out ${compact(u.output_tokens)}`);
+  parts.push(e.stopReason ?? "?", `in ${compact(u.input)} out ${compact(u.output)}`);
   if (read > 0 || write > 0) parts.push(`cache read ${compact(read)} write ${compact(write)}`);
   parts.push(`${(e.latencyMs / 1000).toFixed(1)}s`);
   if (request && !sameModel(request.model, e.model)) parts.push(`served by ${e.model}`);
@@ -33,56 +33,4 @@ function sameModel(requested: string, served: string): boolean {
   return (
     requested === served || requested.endsWith(`/${served}`) || served.endsWith(`/${requested}`)
   );
-}
-
-/** `/status`: where things are and why the current model behaves as it does. */
-export function statusReport(
-  ivy: Ivy,
-  model: string,
-  sessionId: string,
-  sessionFile: string,
-  prompt: PromptPart[],
-): string {
-  const ref = ivy.agent.modelRef;
-  const total = prompt.reduce((n, part) => n + part.text.length, 0);
-  const plugins = ivy.plugins.list().map((plugin) => {
-    const tools = plugin.tools?.length ?? 0;
-    const commands = plugin.commands?.map((c) => c.name).join(" ") ?? "";
-    const extras = [
-      tools ? `${tools} tool${tools === 1 ? "" : "s"}` : "",
-      plugin.contextFor ? "context" : "",
-      commands,
-    ].filter(Boolean);
-    return `${plugin.id}${extras.length ? ` (${extras.join(", ")})` : ""}`;
-  });
-  const lines = [
-    "Status",
-    `  model: ${model}`,
-    `  provider: ${ref.provider.name} · ${ref.provider.base_url}`,
-    ...ivy.capabilities.explain(ref).map((l) => `    ${l}`),
-    `  system prompt: ${prompt.map((part) => `${part.name} ${part.text.length}`).join(" · ")} · total ${total} chars`,
-    `  tools: ${
-      ivy.plugins
-        .toolList()
-        .map((t) => `${t.name} (${t.risk}${t.defaultAllow ? ", allowed by plugin" : ""})`)
-        .join(", ") || "none"
-    }`,
-    `  permissions: ${permissionSummary(ivy)}`,
-    `  plugins: ${plugins.join(", ") || "none"}${ivy.plugins.disabled.length ? ` · disabled: ${ivy.plugins.disabled.join(", ")}` : ""}`,
-    `  session: ${sessionId} · ${sessionFile}`,
-    `  traces: ${ivy.config.trace.enabled ? `${ivy.paths.traces}/${sessionId}` : "off"}`,
-    `  config: ${ivy.paths.config}`,
-    `  capability cache: ${ivy.paths.modelsCache}`,
-  ];
-  return lines.join("\n");
-}
-
-function permissionSummary(ivy: Ivy): string {
-  const p = ivy.permissions.summary();
-  const parts = [
-    p.deny.length ? `deny ${p.deny.join(" ")}` : "",
-    p.ask.length ? `ask ${p.ask.join(" ")}` : "",
-    p.allow.length ? `allow ${p.allow.join(" ")}` : "",
-  ].filter(Boolean);
-  return parts.join(" · ") || "defaults only";
 }

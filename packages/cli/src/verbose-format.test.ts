@@ -18,12 +18,7 @@ const step = (over: Record<string, unknown> = {}) =>
     step: 1,
     model: "claude-opus-5-5",
     stopReason: "end_turn",
-    usage: {
-      input_tokens: 50,
-      output_tokens: 20,
-      cache_read_input_tokens: 0,
-      cache_creation_input_tokens: 0,
-    },
+    usage: { input: 50, output: 20, cacheRead: 0, cacheWrite: 0 },
     costUsd: 0.0012,
     latencyMs: 1500,
     ...over,
@@ -35,12 +30,7 @@ test("one line per call: step, msgs, stop reason, tokens, time; no money", () =>
 
 test("cache numbers appear only when there are any", () => {
   const cached = step({
-    usage: {
-      input_tokens: 12,
-      output_tokens: 20,
-      cache_read_input_tokens: 3200,
-      cache_creation_input_tokens: 120,
-    },
+    usage: { input: 12, output: 20, cacheRead: 3200, cacheWrite: 120 },
   });
   expect(formatCall(cached, request)).toContain("· cache read 3.2k write 120 ·");
 });

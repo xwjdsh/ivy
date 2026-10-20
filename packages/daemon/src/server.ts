@@ -7,7 +7,7 @@
 
 import { chmodSync, existsSync, unlinkSync } from "node:fs";
 import { createLogger, type Paths } from "@ivy/kernel";
-import { type Health, PROTOCOL_VERSION } from "@ivy/protocol";
+import { type Health, NOTIFY_PARAM, PROTOCOL_VERSION } from "@ivy/protocol";
 
 /** Something the daemon tells its clients, e.g. a reminder that is due. */
 export interface DaemonEvent {
@@ -27,6 +27,15 @@ export type Routes = (req: Request) => Promise<Response | undefined> | Response 
 export interface Daemon {
   /** Send an event to every connected client. */
   publish(event: DaemonEvent): void;
+  /** How many clients follow the event stream. */
+  readonly clients: number;
+  /** How many of them show reminders (the app). */
+  readonly notifiers: number;
+  /**
+   * About to exit: /health says so and the event stream refuses new clients, so a client
+   * arriving now waits for this daemon to go and starts a new one instead of attaching.
+   */
+  drain(): void;
   /** Stop serving and remove the socket. */
   stop(): Promise<void>;
 }
@@ -62,8 +71,19 @@ export class DaemonRunningError extends Error {}
 /** macOS takes Unix socket paths of at most 103 bytes (104 with the final NUL). */
 export const MAX_SOCKET_PATH = 103;
 
+export interface DaemonInfo {
+  /** Which code this daemon runs (see codeVersion). */
+  code: string;
+  /** Started by `ivy` on demand, to exit when idle. */
+  onDemand: boolean;
+}
+
 /** Start serving on the socket; throws DaemonRunningError if a daemon already answers there. */
-export async function startDaemon(paths: Paths, routes?: Routes): Promise<Daemon> {
+export async function startDaemon(
+  paths: Paths,
+  routes?: Routes,
+  info: DaemonInfo = { code: "", onDemand: false },
+): Promise<Daemon> {
   const socket = paths.daemonSocket;
   const length = Buffer.byteLength(socket);
   if (length > MAX_SOCKET_PATH) {
@@ -80,6 +100,8 @@ export async function startDaemon(paths: Paths, routes?: Routes): Promise<Daemon
 
   const startedAt = new Date().toISOString();
   const clients = new Set<ReadableStreamDefaultController<Uint8Array>>();
+  const notifiers = new Set<ReadableStreamDefaultController<Uint8Array>>();
+  let draining = false;
   const encoder = new TextEncoder();
   const send = (chunk: string) => {
     const bytes = encoder.encode(chunk);
@@ -87,6 +109,7 @@ export async function startDaemon(paths: Paths, routes?: Routes): Promise<Daemon
       try {
         if ((client.desiredSize ?? 0) < -CLIENT_QUEUE_MAX) {
           clients.delete(client);
+          notifiers.delete(client);
           client.close();
           log.warn("dropped an event client that stopped reading");
           continue;
@@ -94,6 +117,7 @@ export async function startDaemon(paths: Paths, routes?: Routes): Promise<Daemon
         client.enqueue(bytes);
       } catch {
         clients.delete(client); // the client went away
+        notifiers.delete(client);
       }
     }
   };
@@ -103,29 +127,38 @@ export async function startDaemon(paths: Paths, routes?: Routes): Promise<Daemon
   const server = Bun.serve({
     unix: socket,
     async fetch(req) {
-      const { pathname } = new URL(req.url);
+      const { pathname, searchParams } = new URL(req.url);
       if (req.method === "GET" && pathname === "/health") {
         const health: Health = {
           ok: true,
           pid: process.pid,
           startedAt,
           protocol: PROTOCOL_VERSION,
+          code: info.code,
+          onDemand: info.onDemand,
+          draining,
         };
         return Response.json(health);
       }
+      if (draining) return Response.json({ error: "Ivy's daemon is exiting" }, { status: 503 });
       if (req.method === "GET" && pathname === "/events") {
+        const notify = searchParams.get(NOTIFY_PARAM) === "1";
         let self: ReadableStreamDefaultController<Uint8Array> | undefined;
         const stream = new ReadableStream<Uint8Array>({
           start(controller) {
             self = controller;
             clients.add(controller);
+            if (notify) notifiers.add(controller);
             controller.enqueue(encoder.encode(CONNECTED));
             const fresh = held.filter((h) => Date.now() - h.at < HELD_MS);
             held = [];
             for (const h of fresh) controller.enqueue(encoder.encode(h.chunk));
           },
           cancel() {
-            if (self) clients.delete(self);
+            if (self) {
+              clients.delete(self);
+              notifiers.delete(self);
+            }
           },
         });
         return new Response(stream, {
@@ -142,6 +175,15 @@ export async function startDaemon(paths: Paths, routes?: Routes): Promise<Daemon
   log.info(`listening on ${socket}`);
 
   return {
+    get clients() {
+      return clients.size;
+    },
+    get notifiers() {
+      return notifiers.size;
+    },
+    drain() {
+      draining = true;
+    },
     publish(event) {
       const chunk = `event: ${event.type}\ndata: ${JSON.stringify(event.data)}\n\n`;
       if (clients.size > 0) send(chunk);

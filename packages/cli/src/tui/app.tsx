@@ -1,38 +1,34 @@
 import {
-  type AgentEvent,
-  canSwitchModel,
-  createLogger,
   EFFORT_LEVELS,
-  type Effort,
   errorMessage,
-  type Ivy,
   type PermissionChoice,
   type RequestInfo,
-  Session,
-  type SessionSummary,
-  saveEffort,
-  saveModel,
   setLogLevel,
   setLogSink,
-  summarizeUsage,
-  type ToolCallRequest,
-  type TurnResult,
 } from "@ivy/kernel";
-import { Box, Static, Text, useApp, useInput, useWindowSize } from "ink";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { availableCommands, type CommandInfo, matchCommands } from "../commands.ts";
-import type { InputHistory } from "../history.ts";
-import { renderMarkdown, splitFinished } from "../markdown.ts";
 import {
   addTokens,
+  type CommandInfo,
+  type DaemonState,
   formatTokens,
-  NO_TOKENS,
-  type TokenCount,
-  tokensFromTotals,
+  type PermissionAsk,
+  type Prompt,
+  type SessionEvent,
+  type SessionSummary,
+  type SessionView,
+  type Switched,
+  type Tokens,
+  type ToolLabel,
+  type TurnEnd,
   tokensFromUsage,
-  usageReport,
-} from "../usage-report.ts";
-import { formatCall, statusReport } from "../verbose-format.ts";
+} from "@ivy/protocol";
+import { Box, Static, Text, useApp, useInput, useWindowSize } from "ink";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { DaemonClient } from "../client.ts";
+import { availableCommands, matchCommands } from "../commands.ts";
+import type { InputHistory } from "../history.ts";
+import { renderMarkdown, splitFinished } from "../markdown.ts";
+import { formatCall } from "../verbose-format.ts";
 import { Input } from "./input.tsx";
 import { historyItems, type Item, itemId } from "./items.ts";
 import { Picker, pickerHeight } from "./picker.tsx";
@@ -46,21 +42,21 @@ import {
   ToolLine,
 } from "./widgets.tsx";
 
-/** Lets the kernel's confirm() callback (created before React mounts) reach the UI. */
-export interface ConfirmBridge {
-  confirm(call: ToolCallRequest): Promise<PermissionChoice>;
-}
-
 /** Clears both Ink's frame and the terminal (incl. scrollback); wired to the Ink instance in main. */
 export interface Screen {
   clear(): void;
 }
 
 export interface AppProps {
-  ivy: Ivy;
-  session: Session;
+  /** The daemon, which runs the sessions; this UI only shows them. */
+  client: DaemonClient;
+  /** The session to show first, as the daemon sent it. */
+  session: SessionView;
+  /** The model and effort, as the daemon reported them at start. */
+  state: DaemonState;
+  /** What plugins add to the command list. */
+  pluginCommands: CommandInfo[];
   history: InputHistory;
-  bridge: ConfirmBridge;
   screen: Screen;
   verbose: boolean;
   /** Open the session picker on start (`ivy -r` without an id). */
@@ -70,13 +66,15 @@ export interface AppProps {
 interface PendingTool {
   id: string;
   name: string;
+  label: ToolLabel;
   input: unknown;
 }
 
 const EXIT_CONFIRM_MS = 2000;
 const RESIZE_DEBOUNCE_MS = 100;
+const NO_TOKENS: Tokens = { in: 0, cached: 0, out: 0 };
 
-const STOP_NOTES: Partial<Record<TurnResult["stopReason"], string>> = {
+const STOP_NOTES: Partial<Record<TurnEnd["stopReason"], string>> = {
   interrupted: "Interrupted",
   refusal: "The model declined this request",
   max_steps: "Stopped: too many steps in one turn",
@@ -88,18 +86,21 @@ const helpText = (commands: CommandInfo[]) =>
     "Commands:",
     ...commands.map((c) => `  ${`${c.name} ${c.args ?? ""}`.padEnd(18)}${c.description}`),
     "Keys:",
-    "  Enter             send · Shift/Option+Enter, Ctrl+J or \\ then Enter: new line",
+    "  Enter             send; while Ivy replies, it waits and is sent next",
+    "  Shift/Option+Enter, Ctrl+J or \\ then Enter: new line",
     "  ↑ / ↓, Ctrl+P/N   history; in the / list: move the selection (Enter/Tab picks)",
     "  Ctrl+O            expand / collapse the last turn's tool output",
     "  Ctrl+L            redraw the screen",
-    "  Esc / Ctrl-C      interrupt · Ctrl-C clears the input · Ctrl-C twice or Ctrl-D: quit",
+    "  Esc / Ctrl-C      interrupt, dropping waiting messages · Ctrl-C clears the input",
+    "  Ctrl-C twice or Ctrl-D: quit",
   ].join("\n");
 
 export function App({
-  ivy,
+  client,
   session: initialSession,
+  state: initialState,
+  pluginCommands,
   history,
-  bridge,
   screen,
   verbose,
   pickSession = false,
@@ -108,38 +109,39 @@ export function App({
   const { columns, rows } = useWindowSize();
   const width = Math.max(20, columns - 1);
 
-  const sessionRef = useRef(initialSession);
+  // The session shown. A ref too, so events arriving between renders are matched against
+  // the current one.
+  const [sessionId, setSessionId] = useState(initialSession.id);
+  const sessionRef = useRef(initialSession.id);
 
-  // Verbose view: request/response details, the hidden per-turn context, full tool input,
-  // capability decisions and plugin logs. A ref so a turn in flight sees toggles at once.
+  // Verbose view: request/response details, the hidden per-turn context, full tool input
+  // and plugin command logs. A ref so a turn in flight sees toggles at once.
   const [verboseOn, setVerboseOn] = useState(verbose);
   const verboseRef = useRef(verbose);
   const lastRequest = useRef<RequestInfo | undefined>(undefined);
-  const tracerRef = useRef(ivy.tracer(initialSession.id));
-  const [sessionId, setSessionId] = useState(initialSession.id);
 
-  // Token counts: input includes cache reads/writes, i.e. the full prompt sent each call.
-  const sessionTokens = (id: string): TokenCount =>
-    tokensFromTotals(summarizeUsage(ivy.paths.sessions, { sessionId: id }));
-  const [tokens, setTokens] = useState(() => sessionTokens(initialSession.id));
+  const [state, setState] = useState(initialState);
+  const [tokens, setTokens] = useState(initialSession.tokens);
   const turnTokens = useRef(NO_TOKENS);
+  const turnStarted = useRef(0);
 
   const header = (): Item => ({
     id: itemId(),
     kind: "info",
-    text: `Ivy · ${ivy.plugins.list().length} plugins, ${ivy.plugins.apiTools().length} tools · /help for commands`,
+    text: `Ivy · ${state.plugins} plugins, ${state.tools} tools · /help for commands`,
   });
   const [items, setItems] = useState<Item[]>(() => [
     header(),
-    ...historyItems(initialSession.messages),
+    ...historyItems(initialSession.entries),
   ]);
   const push = useCallback((...next: Item[]) => setItems((prev) => [...prev, ...next]), []);
   const info = useCallback(
     (text: string, tone?: "warn" | "error") => push({ id: itemId(), kind: "info", text, tone }),
     [push],
   );
+  const failed = (err: unknown) => info(errorMessage(err), "error");
 
-  // stderr would corrupt the screen: logs go into the transcript when verbose, else nowhere.
+  // stderr would corrupt the screen: this process's own logs go nowhere unless verbose.
   useEffect(() => {
     verboseRef.current = verboseOn;
     setLogLevel(verboseOn ? "debug" : "warn");
@@ -180,14 +182,15 @@ export function App({
   const bufRef = useRef("");
   const [streaming, setStreaming] = useState("");
   const [pendingTools, setPendingTools] = useState<PendingTool[]>([]);
-  const [phase, setPhase] = useState<{ label: string; startedAt: number } | null>(null);
+  const [phase, setPhase] = useState<{ label: string; startedAt: number } | null>(() =>
+    initialSession.running ? { label: "Thinking", startedAt: Date.now() } : null,
+  );
   const busy = phase !== null;
-
-  const abortRef = useRef<AbortController | null>(null);
-  const [permission, setPermission] = useState<{
-    call: ToolCallRequest;
-    resolve(choice: PermissionChoice): void;
-  } | null>(null);
+  /** Messages waiting for the running turn, oldest first. */
+  const [queue, setQueue] = useState<Prompt[]>(initialSession.queue);
+  const [permission, setPermission] = useState<PermissionAsk | null>(
+    initialSession.permission ?? null,
+  );
 
   const [inputValue, setInputValue] = useState("");
   // Ctrl-C on an empty prompt arms exit for a moment; the hint disappears when it lapses.
@@ -198,16 +201,6 @@ export function App({
     return () => clearTimeout(timer);
   }, [exitArmed]);
 
-  useEffect(() => {
-    // Only reached when the permission rules say "ask"; remembering choices is the kernel's job.
-    bridge.confirm = (call) => new Promise((resolve) => setPermission({ call, resolve }));
-  }, [bridge]);
-
-  const labelOf = (name: string, input: unknown) => ivy.plugins.toolLabel(name, input);
-
-  // Tool inputs arrive with tool_call; keep them by id so the finished item can show them.
-  const toolInputs = useRef(new Map<string, unknown>());
-
   const flushText = (all: boolean) => {
     const [done, rest] = all ? [bufRef.current, ""] : splitFinished(bufRef.current);
     if (done.trim()) push({ id: itemId(), kind: "assistant", markdown: done.trim() });
@@ -215,30 +208,48 @@ export function App({
     setStreaming(rest);
   };
 
-  const onEvent = (e: AgentEvent) => {
+  const onEvent = (e: SessionEvent) => {
+    if (e.sessionId !== sessionRef.current) return;
     switch (e.type) {
+      case "prompt":
+        setQueue((q) => [...q, e.prompt]);
+        break;
+      case "prompt_withdrawn":
+        setQueue((q) => q.filter((p) => p.id !== e.promptId));
+        break;
+      case "turn_start":
+        setQueue((q) => q.filter((p) => p.id !== e.prompt.id));
+        turnTokens.current = NO_TOKENS;
+        turnRef.current += 1;
+        turnStarted.current = Date.now();
+        setExpandedTurn(null);
+        push({ id: itemId(), kind: "user", text: e.prompt.text });
+        setPhase({ label: "Thinking", startedAt: Date.now() });
+        break;
       case "text":
         bufRef.current += e.delta;
         flushText(false);
         break;
       case "tool_call":
         flushText(true);
-        toolInputs.current.set(e.id, e.input);
-        setPendingTools((t) => [...t, { id: e.id, name: e.name, input: e.input }]);
+        setPendingTools((t) => [...t, { id: e.id, name: e.name, label: e.label, input: e.input }]);
         setPhase((p) => p && { ...p, label: `Running ${e.name}` });
         break;
       case "tool_result":
-        setPendingTools((t) => t.filter((p) => p.id !== e.id));
-        push({
-          id: itemId(),
-          kind: "tool",
-          turn: turnRef.current,
-          name: e.name,
-          input: toolInputs.current.get(e.id),
-          result: e.content,
-          isError: e.isError,
+        setPendingTools((t) => {
+          const pending = t.find((p) => p.id === e.id);
+          push({
+            id: itemId(),
+            kind: "tool",
+            turn: turnRef.current,
+            name: e.name,
+            label: pending?.label ?? { plugin: e.name, text: "" },
+            input: pending?.input,
+            result: e.content,
+            isError: e.isError,
+          });
+          return t.filter((p) => p.id !== e.id);
         });
-        toolInputs.current.delete(e.id);
         setPhase((p) => p && { ...p, label: "Thinking" });
         break;
       case "notice":
@@ -250,9 +261,7 @@ export function App({
         const step = tokensFromUsage(e.usage);
         turnTokens.current = addTokens(turnTokens.current, step);
         setTokens((t) => addTokens(t, step));
-        if (verboseRef.current) {
-          info(formatCall(e, lastRequest.current));
-        }
+        if (verboseRef.current) info(formatCall(e, lastRequest.current));
         break;
       }
       case "context":
@@ -261,65 +270,81 @@ export function App({
       case "request":
         lastRequest.current = e.info; // shown with the call's result, in one line
         break;
+      case "permission":
+        setPermission(e.ask);
+        break;
+      case "permission_answered":
+        setPermission((p) => (p?.id === e.id ? null : p));
+        break;
+      case "turn_end": {
+        flushText(true);
+        setPendingTools([]);
+        setPhase(null);
+        const { end } = e;
+        const note =
+          end.stopReason === "error"
+            ? `Error: ${end.error ?? "unknown"}`
+            : STOP_NOTES[end.stopReason];
+        const seconds = ((Date.now() - turnStarted.current) / 1000).toFixed(1);
+        push({
+          id: itemId(),
+          kind: "turn_end",
+          summary: `${end.steps} step(s) · ${seconds}s · ${formatTokens(turnTokens.current)} tokens`,
+          note,
+          noteTone: end.stopReason === "error" ? "error" : "warn",
+        });
+        break;
+      }
     }
   };
+  // The subscription outlives renders; it calls whatever handler the latest render made.
+  const onEventRef = useRef(onEvent);
+  onEventRef.current = onEvent;
 
-  const runTurn = async (text: string) => {
-    turnTokens.current = NO_TOKENS;
-    turnRef.current += 1;
-    setExpandedTurn(null);
-    push({ id: itemId(), kind: "user", text });
-    const startedAt = Date.now();
-    const controller = new AbortController();
-    abortRef.current = controller;
-    setPhase({ label: "Thinking", startedAt });
-    let result: TurnResult;
-    try {
-      result = await ivy.agent.runTurn(sessionRef.current, text, {
-        signal: controller.signal,
-        onEvent,
-        tracer: tracerRef.current,
-      });
-    } catch (err) {
-      result = { stopReason: "error", steps: 0, costUsd: 0, error: errorMessage(err) };
-    }
-    flushText(true);
+  /** Show a session (another, or the same one afresh): its transcript, and where it stands. */
+  const show = (view: SessionView, note?: string) => {
+    sessionRef.current = view.id;
+    setSessionId(view.id);
+    bufRef.current = "";
+    setStreaming("");
     setPendingTools([]);
-    abortRef.current = null;
-    setPhase(null);
-    const note =
-      result.stopReason === "error"
-        ? `Error: ${result.error ?? "unknown"}`
-        : STOP_NOTES[result.stopReason];
-    push({
-      id: itemId(),
-      kind: "turn_end",
-      summary: `${result.steps} step(s) · ${((Date.now() - startedAt) / 1000).toFixed(1)}s · ${formatTokens(turnTokens.current)} tokens`,
-      note,
-      noteTone: result.stopReason === "error" ? "error" : "warn",
-    });
+    setPhase(view.running ? { label: "Thinking", startedAt: Date.now() } : null);
+    setQueue(view.queue);
+    setPermission(view.permission ?? null);
+    setTokens(view.tokens);
+    refresh([
+      header(),
+      ...(note ? [{ id: itemId(), kind: "info" as const, text: note }] : []),
+      ...historyItems(view.entries),
+    ]);
   };
+  const showRef = useRef(show);
+  showRef.current = show;
 
-  const switchSession = (next: Session) => {
-    sessionRef.current = next;
-    tracerRef.current = ivy.tracer(next.id);
-    void ivy.systemPrompt.start(next.id); // re-read SOUL.md and plugins' session sections
-    setSessionId(next.id);
-    setTokens(sessionTokens(next.id));
-  };
+  // Follow the daemon's events. After a reconnect (the daemon restarted) the session is
+  // read again, as events may have been missed meanwhile.
+  useEffect(() => {
+    const stop = new AbortController();
+    let first = true;
+    void client.follow(
+      (e) => onEventRef.current(e),
+      stop.signal,
+      () => {
+        if (first) {
+          first = false;
+          return;
+        }
+        client.session(sessionRef.current).then(
+          (view) => showRef.current(view),
+          (err) => info(errorMessage(err), "error"),
+        );
+      },
+    );
+    return () => stop.abort();
+  }, [client, info]);
 
   const resumeSession = (id: string) => {
-    try {
-      const next = Session.load(ivy.paths.sessions, id);
-      switchSession(next);
-      refresh([
-        header(),
-        { id: itemId(), kind: "info", text: `Resumed ${id}` },
-        ...historyItems(next.messages),
-      ]);
-    } catch (err) {
-      info(errorMessage(err), "error");
-    }
+    client.session(id).then((view) => show(view, `Resumed ${id}`), failed);
   };
 
   // At most one dialog at a time: the session, model or effort picker.
@@ -331,56 +356,39 @@ export function App({
   >(null);
   const closeDialog = () => setDialog(null);
 
-  const commands = availableCommands(
-    canSwitchModel(ivy.config),
-    ivy.plugins
-      .commands()
-      .map(({ def }) => ({ name: def.name, args: def.args, description: def.description })),
-  );
+  const commands = availableCommands(state.canSwitchModel, pluginCommands);
 
-  // /model switches now, to a model on any provider, and saves the choice as [agent] model.
-  const [model, setModel] = useState(ivy.agent.model);
-
-  /** Save a switch to config.toml; if that fails, it still applies for this run. */
-  const saveChoice = (label: string, save: () => void, note = "") => {
-    try {
-      save();
-      info(`${label} (saved to config.toml).${note}`);
-    } catch (err) {
-      info(`${label} for this run only. ${errorMessage(err)}${note}`, "warn");
-    }
+  /** Report a switch: saved to config.toml, or only until the daemon stops. */
+  const switched = (label: string, result: Switched, note = "") => {
+    setState(result);
+    if (result.saved) info(`${label} (saved to config.toml).${note}`);
+    else info(`${label} until Ivy restarts. ${result.error ?? ""}${note}`, "warn");
   };
 
   // /effort switches now and saves the choice as [generation] effort.
-  const [effort, setEffortState] = useState<Effort>(ivy.capabilities.effort);
-  const switchEffort = (level: Effort) => {
-    if (level === effort) return;
-    ivy.capabilities.setEffort(level);
-    setEffortState(level);
-    const used = ivy.capabilities.for(ivy.agent.modelRef).effort;
-    const note =
-      used === undefined
-        ? ` ${model} doesn't take an effort setting, so it isn't sent.`
-        : used !== level
-          ? ` ${model} doesn't support it; ${used} is used.`
-          : "";
-    saveChoice(`Effort: ${level}`, () => saveEffort(ivy.paths, level), note);
+  const switchEffort = (level: string) => {
+    if (level === state.effort) return;
+    client.setEffort(level).then((result) => {
+      const note =
+        result.effortUsed === undefined
+          ? ` ${result.model} doesn't take an effort setting, so it isn't sent.`
+          : result.effortUsed !== level
+            ? ` ${result.model} doesn't support it; ${result.effortUsed} is used.`
+            : "";
+      switched(`Effort: ${level}`, result, note);
+    }, failed);
   };
+  // /model switches now, to a model on any provider, and saves the choice as [agent] model.
   const switchModel = (name: string) => {
-    if (name === model) return;
-    try {
-      ivy.agent.setModel(name);
-    } catch (err) {
-      info(`Can't switch to ${name}: ${errorMessage(err)}`, "error");
-      return;
-    }
-    setModel(name);
-    saveChoice(`Model: ${name}`, () => saveModel(ivy.paths, name));
+    if (name === state.model) return;
+    client.setModel(name).then((result) => switched(`Model: ${name}`, result), failed);
   };
   const openPicker = () => {
-    const others = Session.list(ivy.paths.sessions).filter((s) => s.id !== sessionRef.current.id);
-    if (others.length > 0) setDialog({ kind: "sessions", sessions: others });
-    else info("No other sessions to resume.");
+    client.sessions().then((all) => {
+      const others = all.filter((s) => s.id !== sessionRef.current);
+      if (others.length > 0) setDialog({ kind: "sessions", sessions: others });
+      else info("No other sessions to resume.");
+    }, failed);
   };
   // biome-ignore lint/correctness/useExhaustiveDependencies: run once on mount
   useEffect(() => {
@@ -388,7 +396,8 @@ export function App({
   }, []);
 
   const runCommand = (line: string) => {
-    const [cmd, ...args] = line.trim().split(/\s+/);
+    const [cmd = "", ...args] = line.trim().split(/\s+/);
+    const id = sessionRef.current;
     switch (cmd) {
       case "/exit":
       case "/quit":
@@ -399,8 +408,8 @@ export function App({
         return;
       case "/model": {
         const name = args[0];
-        // Providers without a `models` limit are asked what they offer (once per run).
-        void ivy.modelChoices().then(({ models, errors }) => {
+        // Providers without a `models` limit are asked what they offer.
+        client.models().then(({ models, errors }) => {
           for (const e of errors) info(`Couldn't list the models of ${e}`, "warn");
           // The provider can be left out when only one provider has a model by that id.
           const byId = models.filter((m) => m.slice(m.indexOf("/") + 1) === name);
@@ -408,7 +417,7 @@ export function App({
             name && models.includes(name) ? name : byId.length === 1 ? byId[0] : undefined;
           if (models.length < 2) {
             info(
-              `Only one model is available (${model}). List more under \`models\` in a [providers.*] section, or leave \`models\` out to offer all the endpoint has.`,
+              `Only one model is available (${state.model}). List more under \`models\` in a [providers.*] section, or leave \`models\` out to offer all the endpoint has.`,
               "warn",
             );
           } else if (!name) {
@@ -418,24 +427,22 @@ export function App({
           } else {
             info(`Unknown model ${name}. /model lists the available ones.`, "error");
           }
-        });
+        }, failed);
         return;
       }
       case "/effort": {
         const level = args[0];
         if (!level) setDialog({ kind: "effort" });
-        else if ((EFFORT_LEVELS as readonly string[]).includes(level))
-          switchEffort(level as Effort);
+        else if ((EFFORT_LEVELS as readonly string[]).includes(level)) switchEffort(level);
         else info(`Unknown effort ${level}. Levels: ${EFFORT_LEVELS.join(", ")}`, "error");
         return;
       }
-      case "/status": {
-        const { id, file } = sessionRef.current;
-        void ivy.systemPrompt
-          .partsFor(id)
-          .then((parts) => info(statusReport(ivy, model, id, file, parts)));
+      case "/status":
+        client.status(id).then((r) => info(r.text), failed);
         return;
-      }
+      case "/usage":
+        client.usage(id).then((r) => info(r.text), failed);
+        return;
       case "/verbose": {
         const on = !verboseRef.current;
         verboseRef.current = on;
@@ -443,43 +450,27 @@ export function App({
         info(on ? "Verbose on. /status shows the current state." : "Verbose off.");
         return;
       }
-      case "/usage":
-        info(usageReport(ivy.paths.sessions, sessionRef.current.id));
-        return;
       case "/new":
-      case "/clear": {
-        const next = Session.create(ivy.paths.sessions, ivy.agent.model);
-        switchSession(next);
-        refresh([header(), { id: itemId(), kind: "info", text: `New session ${next.id}` }]);
+      case "/clear":
+        client
+          .createSession()
+          .then((next) => client.session(next))
+          .then((view) => show(view, `New session ${view.id}`), failed);
         return;
-      }
       case "/resume":
         if (args[0]) resumeSession(args[0]);
         else openPicker();
         return;
       default: {
-        const command = cmd ? ivy.plugins.getCommand(cmd) : undefined;
-        if (!command) {
+        if (!pluginCommands.some((c) => c.name === cmd)) {
           info(`Unknown command ${cmd}. Try /help.`, "error");
           return;
         }
-        const argText = line
-          .trim()
-          .slice(cmd?.length ?? 0)
-          .trim();
-        Promise.resolve()
-          .then(() =>
-            command.def.run(argText, {
-              sessionId: sessionRef.current.id,
-              log: createLogger(command.pluginId),
-            }),
-          )
-          .then(
-            (out) => {
-              if (out) info(out);
-            },
-            (err) => info(`${cmd} failed: ${errorMessage(err)}`, "error"),
-          );
+        const argText = line.trim().slice(cmd.length).trim();
+        client.runCommand(id, cmd, argText).then((result) => {
+          if (verboseRef.current) for (const l of result.logs) info(l);
+          if (result.output) info(result.output);
+        }, failed);
       }
     }
   };
@@ -487,19 +478,18 @@ export function App({
   const onSubmit = (text: string) => {
     history.add(text);
     if (text.startsWith("/")) runCommand(text);
-    else void runTurn(text);
+    // The daemon runs it now, or after the running turn; either way it shows in events.
+    else client.send(sessionRef.current, text).catch(failed);
   };
 
   const answerPermission = (choice: PermissionChoice) => {
     if (!permission) return;
-    permission.resolve(choice);
+    client.answer(permission.id, choice).catch(failed);
     setPermission(null);
   };
 
   const interrupt = () => {
-    permission?.resolve("deny");
-    setPermission(null);
-    abortRef.current?.abort();
+    client.interrupt(sessionRef.current).catch(failed);
   };
 
   useInput((input, key) => {
@@ -527,7 +517,8 @@ export function App({
   const reserved =
     6 +
     pendingTools.length * 2 +
-    (permission ? permissionPromptHeight(permission.call) : 0) +
+    (queue.length > 0 ? queue.length + 1 : 0) +
+    (permission ? permissionPromptHeight(permission) : 0) +
     (dialog?.kind === "sessions" ? pickerHeight(dialog.sessions.length) : 0) +
     (dialog?.kind === "model" ? pickerHeight(dialog.models.length, true) : 0) +
     (dialog?.kind === "effort" ? EFFORT_LEVELS.length + 4 : 0) +
@@ -547,7 +538,6 @@ export function App({
             key={item.id}
             item={item}
             lead={items[index - 1]?.kind !== "assistant"}
-            labelOf={labelOf}
             tight={item.kind === "tool" && items[index - 1]?.kind === "tool"}
             width={width}
             expandedTurn={expandedTurn}
@@ -572,7 +562,7 @@ export function App({
       {pendingTools.map((t, i) => (
         // Running tools sit right under the turn's finished ones, like those do.
         <Box key={t.id} marginTop={i > 0 || items.at(-1)?.kind === "tool" ? 0 : 1}>
-          <ToolLine name={t.name} input={t.input} label={labelOf(t.name, t.input)} />
+          <ToolLine name={t.name} input={t.input} label={t.label} />
         </Box>
       ))}
       {phase && !permission && (
@@ -580,14 +570,24 @@ export function App({
           <Spinner label={phase.label} startedAt={phase.startedAt} />
         </Box>
       )}
-      {permission && <PermissionPrompt call={permission.call} onChoose={answerPermission} />}
+      {permission && <PermissionPrompt call={permission} onChoose={answerPermission} />}
+      {queue.length > 0 && (
+        // Messages sent while Ivy replies: they run next, in this order.
+        <Box flexDirection="column" marginTop={1}>
+          {queue.map((p) => (
+            <Text key={p.id} dimColor wrap="truncate-end">
+              ⧗ {p.text.replace(/\s+/g, " ")}
+            </Text>
+          ))}
+        </Box>
+      )}
       {dialog?.kind === "model" && (
         <Picker
           title="Switch model (saved as default)"
           items={dialog.models}
           itemKey={(name) => name}
-          initialIndex={Math.max(0, dialog.models.indexOf(model))}
-          renderItem={(name) => (name === model ? `${name}  (current)` : name)}
+          initialIndex={Math.max(0, dialog.models.indexOf(state.model))}
+          renderItem={(name) => (name === state.model ? `${name}  (current)` : name)}
           filterText={(name) => name}
           onPick={(name) => {
             closeDialog();
@@ -600,9 +600,9 @@ export function App({
         <Picker
           title="Switch effort (saved as default)"
           items={[...EFFORT_LEVELS]}
-          initialIndex={EFFORT_LEVELS.indexOf(effort)}
+          initialIndex={Math.max(0, (EFFORT_LEVELS as readonly string[]).indexOf(state.effort))}
           itemKey={(level) => level}
-          renderItem={(level) => (level === effort ? `${level}  (current)` : level)}
+          renderItem={(level) => (level === state.effort ? `${level}  (current)` : level)}
           onPick={(level) => {
             closeDialog();
             switchEffort(level);
@@ -631,8 +631,8 @@ export function App({
         onChange={setInputValue}
       />
       <StatusBar
-        model={model}
-        effort={ivy.capabilities.for(ivy.agent.modelRef).effort}
+        model={state.model}
+        effort={state.effortUsed}
         sessionId={sessionId}
         tokens={formatTokens(tokens)}
         verbose={verboseOn}

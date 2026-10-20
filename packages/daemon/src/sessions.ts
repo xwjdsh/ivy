@@ -18,16 +18,15 @@ import {
   type ToolCallRequest,
   type Tracer,
 } from "@ivy/kernel";
-import {
-  type Display,
-  type Entry,
-  type PermissionAsk,
-  type Prompt,
-  type SessionEvent,
-  type SessionSummary,
-  type SessionView,
-  type TurnEnd,
-  tokensFromUsage,
+import type {
+  Display,
+  Entry,
+  PermissionAsk,
+  Prompt,
+  SessionEvent,
+  SessionSummary,
+  SessionView,
+  TurnEnd,
 } from "@ivy/protocol";
 import { DISPLAY_INSTRUCTIONS } from "./display.ts";
 
@@ -212,6 +211,11 @@ export class Sessions {
     return true;
   }
 
+  /** A session's file, for /status (it exists once the first message is written). */
+  fileOf(id: string): string {
+    return this.get(id).session.file;
+  }
+
   /** Whether any turn runs or waits, in any session. */
   get busy(): boolean {
     return [...this.live.values()].some((l) => l.running || l.queue.length > 0);
@@ -365,8 +369,14 @@ export class Sessions {
       }
       case "step": {
         running.open = false;
-        const { usage, ...rest } = e;
-        this.publish({ sessionId, ...rest, tokens: tokensFromUsage(usage) });
+        const { usage: u, ...rest } = e;
+        const usage = {
+          input: u.input_tokens,
+          output: u.output_tokens,
+          cacheRead: u.cache_read_input_tokens ?? 0,
+          cacheWrite: u.cache_creation_input_tokens ?? 0,
+        };
+        this.publish({ sessionId, ...rest, usage });
         return;
       }
       case "notice":

@@ -14,7 +14,7 @@ interface Props {
   commands: CommandInfo[];
   /** Receives keystrokes (false while a dialog has focus). */
   active: boolean;
-  /** A turn is running: typing ahead is fine, submitting is not. */
+  /** A turn is running: what is sent waits for it, and Ctrl-C interrupts it. */
   busy: boolean;
   width: number;
   onSubmit(text: string): void;
@@ -122,7 +122,7 @@ export function Input({ history, commands, active, busy, width, onSubmit, onChan
         if (state.value[state.cursor - 1] === "\\") {
           return set(E.insert(E.backspace(state), "\n"));
         }
-        if (!busy) submit(state);
+        submit(state);
         return;
       }
       if (key.tab) {
@@ -154,7 +154,7 @@ export function Input({ history, commands, active, busy, width, onSubmit, onChan
       const chunk = input.replace(/\r\n?/g, "\r");
       const enter = chunk.endsWith("\r");
       const next = E.insert(state, (enter ? chunk.slice(0, -1) : chunk).replace(/\r/g, "\n"));
-      if (enter && !busy) submit(next);
+      if (enter) submit(next);
       else set(next);
     },
     { isActive: active },
@@ -163,7 +163,7 @@ export function Input({ history, commands, active, busy, width, onSubmit, onChan
   usePaste((text) => set(E.insert(state, text.replace(/\r\n?/g, "\n"))), { isActive: active });
 
   const placeholder = busy
-    ? "Ivy is working… (type ahead, Ctrl-C to interrupt)"
+    ? "Ivy is working… (what you send waits for this reply; Esc to interrupt)"
     : "Message Ivy, or / for commands";
 
   return (

@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
+    "@ivy/daemon": "workspace:*",
     "@ivy/kernel": "workspace:*",
     "@ivy/plugin-core": "workspace:*",
     "@ivy/plugin-journal": "workspace:*",

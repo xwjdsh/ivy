@@ -8,11 +8,11 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
+import { DISPLAY_INSTRUCTIONS } from "@ivy/daemon";
 import { createIvy, errorMessage, type Ivy, resolvePaths, Session } from "@ivy/kernel";
 import core from "@ivy/plugin-core";
 import { createJournalPlugin } from "@ivy/plugin-journal";
 import { createMemoryPlugin } from "@ivy/plugin-memory";
-import { TUI_INSTRUCTIONS } from "../packages/cli/src/interface.ts";
 import basics from "./basics.ts";
 import type { EvalCase, Expect, MemoryFile, Pattern, StepRun } from "./eval.ts";
 import journal from "./journal.ts";
@@ -79,7 +79,7 @@ async function runCase(c: EvalCase, home: string): Promise<string[]> {
       plugins: [core, createMemoryPlugin(), createJournalPlugin()],
       paths: resolvePaths(home),
       confirm: async () => "deny", // nobody is there to answer; risky tools are refused
-      interfaceInstructions: TUI_INSTRUCTIONS,
+      interfaceInstructions: DISPLAY_INSTRUCTIONS.markdown,
     });
     if (values.model) ivy.agent.setModel(values.model);
   } catch (err) {

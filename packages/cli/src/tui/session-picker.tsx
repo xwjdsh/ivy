@@ -1,4 +1,4 @@
-import type { SessionSummary } from "@ivy/kernel";
+import type { SessionSummary } from "@ivy/protocol";
 import stringWidth from "string-width";
 import { relativeTime } from "../time.ts";
 import { Picker } from "./picker.tsx";

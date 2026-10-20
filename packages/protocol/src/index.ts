@@ -18,7 +18,16 @@ export interface Health {
   pid: number;
   startedAt: string;
   protocol: number;
+  /** Which code it runs: a build id, or in development a fingerprint of the source. */
+  code: string;
+  /** Started by `ivy` when none ran: it exits once idle, and a newer `ivy` may replace it. */
+  onDemand: boolean;
+  /** Exiting: a client waits for it to go and starts a new one. */
+  draining: boolean;
 }
+
+/** GET /events?notify=1: this client shows reminders (the app), so they are announced. */
+export const NOTIFY_PARAM = "notify";
 
 // --- How replies are shown -------------------------------------------------------------
 
@@ -68,19 +77,35 @@ export interface Tokens {
   out: number;
 }
 
-/** Tokens from one API response's usage. */
-export function tokensFromUsage(u: {
-  input_tokens: number;
-  output_tokens: number;
-  cache_read_input_tokens?: number | null;
-  cache_creation_input_tokens?: number | null;
-}): Tokens {
-  const cached = u.cache_read_input_tokens ?? 0;
-  return {
-    in: u.input_tokens + cached + (u.cache_creation_input_tokens ?? 0),
-    cached,
-    out: u.output_tokens,
-  };
+/** One model call's usage, as the API reports it: input excludes cache reads and writes. */
+export interface Usage {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+}
+
+export function tokensFromUsage(u: Usage): Tokens {
+  return { in: u.input + u.cacheRead + u.cacheWrite, cached: u.cacheRead, out: u.output };
+}
+
+export const addTokens = (a: Tokens, b: Tokens): Tokens => ({
+  in: a.in + b.in,
+  cached: a.cached + b.cached,
+  out: a.out + b.out,
+});
+
+/** 1234 → "1.2k", 1234567 → "1.2M". */
+export function compact(n: number): string {
+  if (n < 1000) return String(n);
+  if (n < 1_000_000) return `${(n / 1000).toFixed(1)}k`;
+  return `${(n / 1_000_000).toFixed(1)}M`;
+}
+
+/** "3.5k in (3.4k cached) / 32 out" */
+export function formatTokens(t: Tokens): string {
+  const cached = t.cached > 0 ? ` (${compact(t.cached)} cached)` : "";
+  return `${compact(t.in)} in${cached} / ${compact(t.out)} out`;
 }
 
 /** GET /sessions: most recently active first. */
@@ -160,7 +185,7 @@ export type SessionChange =
       step: number;
       model: string;
       stopReason: string | null;
-      tokens: Tokens;
+      usage: Usage;
       costUsd: number | null;
       latencyMs: number;
       traceFile?: string;
@@ -188,7 +213,32 @@ export interface DaemonState {
   effortUsed?: string;
   /** Whether /model has anything to switch to. */
   canSwitchModel: boolean;
+  /** Plugins loaded, and the tools they offer. */
+  plugins: number;
+  tools: number;
 }
+
+/** GET /commands: what plugins add to the command list (e.g. /journal). */
+export interface CommandInfo {
+  name: string;
+  /** How its argument reads, e.g. "<text>". */
+  args?: string;
+  description: string;
+}
+
+/** POST /sessions/:id/commands: what a plugin command printed, and what it logged. */
+export interface CommandResult {
+  output?: string;
+  logs: string[];
+}
+
+/** GET /sessions/:id/usage and /sessions/:id/status: a report, laid out for a terminal. */
+export interface Report {
+  text: string;
+}
+
+/** PUT /model and PUT /effort: the new state, and whether the choice reached config.toml. */
+export type Switched = DaemonState & { saved: boolean; error?: string };
 
 // --- Requests --------------------------------------------------------------------------
 
@@ -204,6 +254,11 @@ export const AnswerPermission = z.object({ choice: z.enum(["once", "session", "a
 export const SetModel = z.object({ model: z.string().min(1) });
 /** PUT /effort: likewise. */
 export const SetEffort = z.object({ effort: z.string().min(1) });
+/** POST /sessions/:id/commands: run a plugin command in a session. */
+export const RunCommand = z.object({
+  name: z.string().startsWith("/"),
+  args: z.string().default(""),
+});
 
 /** A refused request: the status says what kind, the message says why. */
 export interface ErrorBody {

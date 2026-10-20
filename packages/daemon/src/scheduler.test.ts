@@ -14,6 +14,7 @@ function setup(
   dueMinutes = 10,
   stateFile = join(mkdtempSync(join(tmpdir(), "ivy-s-")), "s.json"),
   startAt = T0,
+  deliverable = { now: true },
 ) {
   let clock = startAt;
   const windows: ReminderWindow[] = [];
@@ -23,6 +24,7 @@ function setup(
     now: () => clock,
     intervalMs: 1e9, // checks are driven by the test
     publish: (e) => events.push(e),
+    canDeliver: () => deliverable.now,
     reminders: async (w) => {
       windows.push(w);
       const due = at(dueMinutes);
@@ -105,4 +107,20 @@ test("a reminder more than 12 hours late is dropped, not shown", async () => {
   await weekend.scheduler.check();
   expect(weekend.events).toEqual([]);
   weekend.scheduler.stop();
+});
+
+test("with no one to show reminders, the window stays open until someone is", async () => {
+  const app = { now: true };
+  const s = setup(10, undefined, T0, app);
+  await s.scheduler.check(); // the first run, with the app there
+  app.now = false; // the app quit; only a terminal is connected
+  s.setClock(at(15));
+  await s.scheduler.check();
+  expect(s.events).toEqual([]);
+  app.now = true; // the app is back
+  s.setClock(at(20));
+  await s.scheduler.check();
+  expect(s.events.map((e) => (e.data as { title: string }).title)).toEqual(["Pick up the parcel"]);
+  expect(s.windows.at(-1)).toEqual({ since: T0, now: at(20) }); // one window from the last check
+  s.scheduler.stop();
 });

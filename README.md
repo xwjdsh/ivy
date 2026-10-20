@@ -14,6 +14,8 @@ bun run build:app      # the menu-bar app at app/build/darwin-arm64/Ivy.app; --i
 
 In dev, all data (config, `SOUL.md`, sessions, traces, plugin data) lives in `./.ivy/`; delete it to start fresh.
 
+Ivy runs in a background daemon that `ivy` starts when none is running (its log: `.ivy/daemon/daemon.log`); it exits after 30 idle minutes, and the next `ivy` replaces it when the code has changed since it started.
+
 ## License
 
 MIT, see [LICENSE](LICENSE).

@@ -4,6 +4,7 @@
 
 import {
   canSwitchModel,
+  createLogger,
   EFFORT_LEVELS,
   type Effort,
   errorMessage,
@@ -11,16 +12,23 @@ import {
   saveEffort,
   saveModel,
 } from "@ivy/kernel";
+import type { Logger } from "@ivy/plugin-api";
 import {
   AnswerPermission,
+  type CommandInfo,
+  type CommandResult,
   CreateSession,
   type DaemonState,
   Interrupt,
+  type Report,
+  RunCommand,
   SendPrompt,
   SetEffort,
   SetModel,
+  type Switched,
 } from "@ivy/protocol";
 import type { z } from "zod";
+import { statusReport, usageReport } from "./reports.ts";
 import type { Routes } from "./server.ts";
 import { SessionNotFoundError, type Sessions } from "./sessions.ts";
 
@@ -56,15 +64,44 @@ export function api(ivy: Ivy, sessions: Sessions): Routes {
     effort: ivy.capabilities.effort,
     effortUsed: ivy.capabilities.for(ivy.agent.modelRef).effort,
     canSwitchModel: canSwitchModel(ivy.config),
+    plugins: ivy.plugins.list().length,
+    tools: ivy.plugins.apiTools().length,
   });
 
   /** Save a switch to config.toml; if that fails it still applies until the daemon stops. */
-  const saved = (save: () => void) => {
+  const switched = (save: () => void): Switched => {
     try {
       save();
-      return { saved: true };
+      return { ...state(), saved: true };
     } catch (err) {
-      return { saved: false, error: errorMessage(err) };
+      return { ...state(), saved: false, error: errorMessage(err) };
+    }
+  };
+
+  /** Run a plugin command, keeping what it logs for the client's verbose view. */
+  const runCommand = async (sessionId: string, name: string, args: string) => {
+    const command = ivy.plugins.getCommand(name);
+    if (!command) return fail(404, `Unknown command ${name}. Try /help.`);
+    const logs: string[] = [];
+    const log = createLogger(command.pluginId);
+    const keep =
+      (level: keyof Logger) =>
+      (msg: string, data?: unknown): void => {
+        log[level](msg, data);
+        logs.push(
+          `[${level}] ${command.pluginId}: ${msg}${data === undefined ? "" : ` ${JSON.stringify(data)}`}`,
+        );
+      };
+    const ctx = {
+      sessionId,
+      log: { debug: keep("debug"), info: keep("info"), warn: keep("warn"), error: keep("error") },
+    };
+    try {
+      const output = await command.def.run(args, ctx);
+      const result: CommandResult = { logs, ...(output && { output }) };
+      return Response.json(result);
+    } catch (err) {
+      return fail(500, `${name} failed: ${errorMessage(err)}`);
     }
   };
 
@@ -91,7 +128,7 @@ export function api(ivy: Ivy, sessions: Sessions): Routes {
         } catch (err) {
           return fail(400, `Can't switch to ${model}: ${errorMessage(err)}`);
         }
-        return Response.json({ ...state(), ...saved(() => saveModel(ivy.paths, model)) });
+        return Response.json(switched(() => saveModel(ivy.paths, model)));
       }
       case "PUT /effort": {
         const { effort } = await body(req, SetEffort);
@@ -99,10 +136,31 @@ export function api(ivy: Ivy, sessions: Sessions): Routes {
           return fail(400, `Unknown effort ${effort}. Levels: ${EFFORT_LEVELS.join(", ")}`);
         }
         ivy.capabilities.setEffort(effort as Effort);
-        return Response.json({
-          ...state(),
-          ...saved(() => saveEffort(ivy.paths, effort as Effort)),
-        });
+        return Response.json(switched(() => saveEffort(ivy.paths, effort as Effort)));
+      }
+      case "GET /commands": {
+        const commands: CommandInfo[] = ivy.plugins.commands().map(({ def }) => ({
+          name: def.name,
+          description: def.description,
+          ...(def.args && { args: def.args }),
+        }));
+        return Response.json(commands);
+      }
+      case "POST /sessions/:/commands": {
+        const { name, args } = await body(req, RunCommand);
+        sessions.fileOf(id); // the session exists
+        return runCommand(id, name, args);
+      }
+      case "GET /sessions/:/usage": {
+        sessions.fileOf(id);
+        const report: Report = { text: usageReport(ivy.paths.sessions, id) };
+        return Response.json(report);
+      }
+      case "GET /sessions/:/status": {
+        const file = sessions.fileOf(id);
+        const parts = await ivy.systemPrompt.partsFor(id);
+        const report: Report = { text: statusReport(ivy, ivy.agent.model, id, file, parts) };
+        return Response.json(report);
       }
       case "GET /sessions":
         return Response.json(sessions.list());

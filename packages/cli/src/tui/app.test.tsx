@@ -2,8 +2,8 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { type Served, serve } from "@ivy/daemon";
 import {
-  createIvy,
   type ModelClient,
   type ModelMessage,
   type ModelRequest,
@@ -13,11 +13,14 @@ import {
 import { definePlugin, defineTool, type IvyPlugin } from "@ivy/plugin-api";
 import { render } from "ink-testing-library";
 import { z } from "zod";
+import { DaemonClient } from "../client.ts";
 import { InputHistory } from "../history.ts";
-import { App, type ConfirmBridge } from "./app.tsx";
+import { App } from "./app.tsx";
 
 type Block = ModelMessage["content"][number];
-type Step = { stop: string; content: Block[] } | ((signal: AbortSignal) => Promise<never>);
+type Reply = { stop: string; content: Block[] };
+/** A reply, or one made when the model is called (e.g. after waiting, or failing on abort). */
+type Step = Reply | ((signal: AbortSignal) => Promise<Reply>);
 
 const text = (t: string) => ({ type: "text", text: t, citations: null }) as unknown as Block;
 const toolUse = (id: string, name: string, input: unknown = {}) =>
@@ -37,9 +40,9 @@ class FakeModel implements ModelClient {
   }
   async stream(request: ModelRequest, handlers: { onText?(d: string): void }, signal: AbortSignal) {
     this.requests.push(request);
-    const step = this.script.shift();
-    if (!step) throw new Error("script exhausted");
-    if (typeof step === "function") return step(signal);
+    const next = this.script.shift();
+    if (!next) throw new Error("script exhausted");
+    const step = typeof next === "function" ? await next(signal) : next;
     for (const b of step.content) if (b.type === "text") handlers.onText?.(b.text);
     return {
       id: "msg",
@@ -113,8 +116,28 @@ const CTRL_C = "\x03";
 const CTRL_J = "\n";
 const CTRL_O = "\x0f";
 
+/** Counts what the UI sends and the turn ends it is told of, so tests can wait for turns. */
+class CountingClient extends DaemonClient {
+  sent = 0;
+  turnEnds = 0;
+  override send = async (id: string, text: string) => {
+    this.sent++;
+    return this.request("POST", `/sessions/${id}/prompts`, { text }) as never;
+  };
+  override follow(...[onEvent, signal, onConnect]: Parameters<DaemonClient["follow"]>) {
+    return super.follow(
+      (e) => {
+        onEvent(e);
+        if (e.type === "turn_end") this.turnEnds++;
+      },
+      signal,
+      onConnect,
+    );
+  }
+}
+
 let home: string;
-let cleanup: (() => void) | undefined;
+let cleanup: (() => Promise<void>) | undefined;
 
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), "ivy-tui-"));
@@ -123,7 +146,10 @@ beforeEach(() => {
     '[agent]\nmodel = "anthropic/claude-opus-5-5"\n[providers.anthropic]\napi_key = "test"\nmodels = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-4-5"]\n',
   );
 });
-afterEach(() => cleanup?.());
+afterEach(async () => {
+  await cleanup?.();
+  cleanup = undefined;
+});
 
 async function start(
   script: Step[],
@@ -133,14 +159,20 @@ async function start(
 ) {
   if (configToml) writeFileSync(join(home, "config.toml"), configToml);
   const model = new FakeModel(script, listed);
-  const bridge: ConfirmBridge = { confirm: async () => "deny" };
-  const ivy = await createIvy({
+  // Ivy runs in a daemon on a socket in the test's home, as it does for real; the TUI is
+  // its client.
+  const served: Served = await serve({
+    paths: resolvePaths(home),
     plugins: [writeTool, ...extraPlugins],
     model,
-    paths: resolvePaths(home),
-    confirm: (call) => bridge.confirm(call),
   });
-  const session = Session.create(ivy.paths.sessions, "claude-opus-5-5");
+  const client = new CountingClient(served.ivy.paths.daemonSocket);
+  const sessionId = await client.createSession();
+  const [view, state, pluginCommands] = await Promise.all([
+    client.session(sessionId),
+    client.state(),
+    client.commands(),
+  ]);
   const history = new InputHistory(join(home, "input_history.jsonl"));
   const screen = {
     clears: 0,
@@ -150,25 +182,37 @@ async function start(
   };
   const ui = render(
     <App
-      ivy={ivy}
-      session={session}
+      client={client}
+      session={view}
+      state={state}
+      pluginCommands={pluginCommands}
       history={history}
-      bridge={bridge}
       screen={screen}
       verbose={false}
     />,
   );
-  cleanup = ui.unmount;
+  let stopped = false;
+  const stop = async () => {
+    if (stopped) return;
+    stopped = true;
+    ui.unmount();
+    await served.stop();
+  };
+  cleanup = stop;
   await tick();
   const type = async (s: string) => {
     ui.stdin.write(s);
     await tick();
   };
   const frame = () => ui.lastFrame() ?? "";
-  // Enter sets the turn running synchronously, so right after it this waits for the turn's end;
-  // keys typed before then are lost (Enter is ignored while a turn runs).
-  const idle = () => eventually(() => expect(frame()).not.toContain("esc to interrupt"));
-  return { ui, model, session, screen, type, frame, idle };
+  // Every message sent so far has had its turn, and the UI has drawn the end of it.
+  const idle = async () => {
+    await eventually(() => expect(client.turnEnds).toBeGreaterThanOrEqual(client.sent));
+    await eventually(() => expect(frame()).not.toContain("esc to interrupt"));
+  };
+  /** What the user said first in the session, as the daemon stored it. */
+  const firstPrompt = async () => (await client.session(sessionId)).entries[0];
+  return { ui, model, sessionId, client, screen, type, frame, idle, stop, firstPrompt };
 }
 
 test("sends a message and renders the streamed Markdown answer", async () => {
@@ -274,6 +318,47 @@ test("denying a tool reports it and continues", async () => {
   expect(frame()).toContain("ok, not saving");
 });
 
+test("a message sent while Ivy replies waits, shows as waiting, then runs", async () => {
+  let release = () => {};
+  const slow = () =>
+    new Promise<Reply>((resolve) => {
+      release = () => resolve({ stop: "end_turn", content: [text("first answer")] });
+    });
+  const { type, frame, idle } = await start([
+    slow,
+    { stop: "end_turn", content: [text("second answer")] },
+  ]);
+  await type("first");
+  await type(ENTER);
+  await eventually(() => expect(frame()).toContain("esc to interrupt"));
+  await type("second");
+  await type(ENTER);
+  await eventually(() => expect(frame()).toContain("⧗ second"));
+  release();
+  await idle();
+  expect(frame()).not.toContain("⧗");
+  const f = frame();
+  expect(f.indexOf("first answer")).toBeLessThan(f.indexOf("› second"));
+  expect(f).toContain("second answer");
+});
+
+test("another client in the same session: its messages show, and it may answer prompts", async () => {
+  const { frame, idle, sessionId, client } = await start([
+    { stop: "tool_use", content: [toolUse("a", "t__save")] },
+    { stop: "end_turn", content: [text("saved from afar")] },
+  ]);
+  const other = new DaemonClient(client.socket);
+  await other.send(sessionId, "from the window");
+  await eventually(() => expect(frame()).toContain("› from the window"));
+  await eventually(() => expect(frame()).toContain("Allow t__save"));
+  const view = await other.session(sessionId);
+  await other.answer(view.permission?.id ?? "", "once");
+  await eventually(() => expect(frame()).not.toContain("Allow t__save"));
+  client.sent++; // the other client's message: wait for its turn too
+  await idle();
+  expect(frame()).toContain("saved from afar");
+});
+
 test("Ctrl-C interrupts a running turn", async () => {
   const hang = (signal: AbortSignal) =>
     new Promise<never>((_, reject) =>
@@ -309,7 +394,7 @@ test("slash commands: completion, /help and /new", async () => {
 });
 
 test("multi-line input with a trailing backslash", async () => {
-  const { type, frame, idle, session } = await start([
+  const { type, frame, idle, firstPrompt } = await start([
     { stop: "end_turn", content: [text("got it")] },
   ]);
   await type("line one\\");
@@ -319,24 +404,24 @@ test("multi-line input with a trailing backslash", async () => {
   expect(frame()).toContain("line two");
   await type(ENTER);
   await idle();
-  expect(session.messages[0]).toEqual({ role: "user", content: "line one\nline two" });
+  expect(await firstPrompt()).toEqual({ kind: "user", text: "line one\nline two" });
 });
 
 test("text and Enter arriving in one chunk still submits", async () => {
-  const { type, idle, session } = await start([{ stop: "end_turn", content: [text("ok")] }]);
+  const { type, idle, firstPrompt } = await start([{ stop: "end_turn", content: [text("ok")] }]);
   await type("quick\r");
   await idle();
-  expect(session.messages[0]).toEqual({ role: "user", content: "quick" });
+  expect(await firstPrompt()).toEqual({ kind: "user", text: "quick" });
 });
 
 test("Ctrl+J inserts a newline", async () => {
-  const { type, idle, session } = await start([{ stop: "end_turn", content: [text("ok")] }]);
+  const { type, idle, firstPrompt } = await start([{ stop: "end_turn", content: [text("ok")] }]);
   await type("a");
   await type(CTRL_J);
   await type("b");
   await type(ENTER);
   await idle();
-  expect(session.messages[0]).toEqual({ role: "user", content: "a\nb" });
+  expect(await firstPrompt()).toEqual({ kind: "user", text: "a\nb" });
 });
 
 test("Ctrl-C clears typed text instead of arming exit", async () => {
@@ -379,7 +464,7 @@ test("a failed tool shows ✗ and the first line of the error", async () => {
 });
 
 test("/resume clears the screen and redraws that session's history", async () => {
-  const { type, frame, idle, screen, session } = await start([
+  const { type, frame, idle, screen, sessionId } = await start([
     { stop: "end_turn", content: [text("first answer")] },
   ]);
   await type("first question");
@@ -388,9 +473,9 @@ test("/resume clears the screen and redraws that session's history", async () =>
   await type("/new");
   await type(ENTER);
   expect(screen.clears).toBe(1);
-  await type(`/resume ${session.id}`);
+  await type(`/resume ${sessionId}`);
   await type(ENTER);
-  await eventually(() => expect(frame()).toContain(`Resumed ${session.id}`));
+  await eventually(() => expect(frame()).toContain(`Resumed ${sessionId}`));
   expect(screen.clears).toBe(2);
   expect(frame()).toContain("first answer");
 });
@@ -597,7 +682,7 @@ test("a plugin command's log reaches the verbose view", async () => {
 });
 
 test("plugin context reaches the model but isn't shown, live or after /resume", async () => {
-  const { type, frame, idle, model, session } = await start(
+  const { type, frame, idle, model, sessionId } = await start(
     [{ stop: "end_turn", content: [text("Tea it is.")] }],
     undefined,
     [notes],
@@ -613,9 +698,9 @@ test("plugin context reaches the model but isn't shown, live or after /resume", 
 
   await type("/new");
   await type(ENTER);
-  await type(`/resume ${session.id}`);
+  await type(`/resume ${sessionId}`);
   await type(ENTER);
-  await eventually(() => expect(frame()).toContain(`Resumed ${session.id}`));
+  await eventually(() => expect(frame()).toContain(`Resumed ${sessionId}`));
   expect(frame()).toContain("› what should I drink?");
   expect(frame()).not.toContain("likes tea");
 });
@@ -751,7 +836,7 @@ test("/status shows provider, capabilities, prompt parts, plugins and paths", as
   const f = frame().replace(/\s+/g, " ");
   expect(f).toContain("provider: anthropic · https://api.anthropic.com");
   expect(f).toContain("model: anthropic/claude-opus-5-5");
-  expect(f).toMatch(/system prompt: rules\.md \d+ · total \d+ chars/);
+  expect(f).toMatch(/system prompt: rules\.md \d+ · interface \d+ · total \d+ chars/);
   expect(f).toContain("notes (context, /note)");
   expect(f).toContain("config: ");
 });
@@ -771,7 +856,7 @@ test("'Always' is saved to config.toml; a restart doesn't ask again", async () =
   expect(readFileSync(join(home, "config.toml"), "utf8")).toContain(
     '[permissions]\nallow = ["t__save"]',
   );
-  first.ui.unmount();
+  await first.stop(); // a restart: the daemon stops too
 
   const second = await start(script());
   await second.type("save again");

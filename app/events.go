@@ -51,7 +51,9 @@ func healthy(socket string) bool {
 // followEvents reads the daemon's event stream until it ends or ctx is done, calling
 // onEvent for each event. The first is `connected`; comment lines (heartbeats) are skipped.
 func followEvents(ctx context.Context, socket string, onEvent func(event)) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://ivy/events", nil)
+	// notify=1: this client shows reminders, so the daemon announces them (see the
+	// scheduler in packages/daemon).
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://ivy/events?notify=1", nil)
 	if err != nil {
 		return err
 	}

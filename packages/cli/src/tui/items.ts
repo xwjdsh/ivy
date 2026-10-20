@@ -1,4 +1,4 @@
-import { promptText, type Session } from "@ivy/kernel";
+import type { Entry, ToolLabel } from "@ivy/protocol";
 
 /** Something printed to the transcript. Once printed, items never change. */
 export type Item =
@@ -7,9 +7,10 @@ export type Item =
   | {
       id: string;
       kind: "tool";
-      /** Turn number in this process; undefined for items loaded from a resumed session. */
+      /** Turn number in this process; undefined for items loaded from a session. */
       turn?: number;
       name: string;
+      label: ToolLabel;
       input: unknown;
       result: string;
       isError: boolean;
@@ -20,52 +21,19 @@ export type Item =
 let seq = 0;
 export const itemId = () => `i${++seq}`;
 
-type Block = Exclude<Session["messages"][number]["content"], string>[number];
-
-/** Rebuild transcript items from a stored session, pairing tool calls with their results. */
-export function historyItems(messages: Session["messages"]): Item[] {
-  const results = new Map<string, { content: string; isError: boolean }>();
-  for (const m of messages) {
-    if (m.role !== "user" || typeof m.content === "string") continue;
-    for (const b of m.content) {
-      if (b.type === "tool_result") {
-        results.set(b.tool_use_id, { content: toolResultText(b), isError: b.is_error ?? false });
-      }
-    }
-  }
-
-  const items: Item[] = [];
-  for (const m of messages) {
-    if (m.role === "user") {
-      // Only what the user typed: no <context> block, no tool results.
-      const text = promptText(m);
-      if (text?.trim()) items.push({ id: itemId(), kind: "user", text });
-      continue;
-    }
-    if (typeof m.content === "string") {
-      items.push({ id: itemId(), kind: "assistant", markdown: m.content });
-      continue;
-    }
-    for (const b of m.content) {
-      if (b.type === "text" && b.text.trim()) {
-        items.push({ id: itemId(), kind: "assistant", markdown: b.text });
-      } else if (b.type === "tool_use") {
-        const result = results.get(b.id) ?? { content: "(no result)", isError: true };
-        items.push({
-          id: itemId(),
-          kind: "tool",
-          name: b.name,
-          input: b.input,
-          result: result.content,
-          isError: result.isError,
-        });
-      }
-    }
-  }
-  return items;
-}
-
-function toolResultText(b: Extract<Block, { type: "tool_result" }>): string {
-  if (typeof b.content === "string") return b.content;
-  return (b.content ?? []).map((c) => (c.type === "text" ? c.text : `[${c.type}]`)).join(" ");
+/** A session's transcript, as the daemon sends it, as items to print. */
+export function historyItems(entries: Entry[]): Item[] {
+  return entries.map((e): Item => {
+    if (e.kind === "user") return { id: itemId(), kind: "user", text: e.text };
+    if (e.kind === "assistant") return { id: itemId(), kind: "assistant", markdown: e.markdown };
+    return {
+      id: itemId(),
+      kind: "tool",
+      name: e.name,
+      label: e.label,
+      input: e.input,
+      result: e.running ? "(running)" : e.result,
+      isError: e.isError,
+    };
+  });
 }

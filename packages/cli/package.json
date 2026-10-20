@@ -12,6 +12,7 @@
     "@ivy/plugin-core": "workspace:*",
     "@ivy/plugin-journal": "workspace:*",
     "@ivy/plugin-memory": "workspace:*",
+    "@ivy/protocol": "workspace:*",
     "ink": "^8.0.0",
     "marked": "^18.1.1",
     "marked-terminal": "^7.3.0",
