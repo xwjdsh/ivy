@@ -27,6 +27,7 @@
         "ivy": "src/main.ts",
       },
       "dependencies": {
+        "@ivy/daemon": "workspace:*",
         "@ivy/kernel": "workspace:*",
         "@ivy/plugin-core": "workspace:*",
         "@ivy/plugin-journal": "workspace:*",
@@ -43,6 +44,13 @@
         "@types/react": "^19.3.0",
         "ink-testing-library": "^4.0.0",
         "zod": "^4.6.7",
+      },
+    },
+    "packages/daemon": {
+      "name": "@ivy/daemon",
+      "version": "0.0.1",
+      "dependencies": {
+        "@ivy/kernel": "workspace:*",
       },
     },
     "packages/kernel": {
@@ -118,6 +126,8 @@
     "@colors/colors": ["@colors/colors@1.5.0", "", {}, "sha512-ooWCrlZP11i8GImSjTHYHLkvFDP48nS4+204nGb1RiX/WXYHmJA2III9/e2DWVabCESdW7hBAEzHRqUn9OUVvQ=="],
 
     "@ivy/cli": ["@ivy/cli@workspace:packages/cli"],
+
+    "@ivy/daemon": ["@ivy/daemon@workspace:packages/daemon"],
 
     "@ivy/evals": ["@ivy/evals@workspace:evals"],
 

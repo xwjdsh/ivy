@@ -1,7 +1,8 @@
 #!/usr/bin/env bun
 import { join } from "node:path";
 import { parseArgs } from "node:util";
-import { createIvy, errorMessage, Session, setLogLevel } from "@ivy/kernel";
+import { runDaemon } from "@ivy/daemon";
+import { createIvy, errorMessage, resolvePaths, Session, setLogLevel } from "@ivy/kernel";
 import core from "@ivy/plugin-core";
 import journal from "@ivy/plugin-journal";
 import memory from "@ivy/plugin-memory";
@@ -22,6 +23,7 @@ const HELP = `Usage: ivy [options] [prompt]
   ivy "question"      Ask once, print the answer and exit
   ivy -c              Continue the most recent session
   ivy -r [id]         Resume a session (pick from a list without an id)
+  ivy daemon          Run Ivy in the background (the menu-bar app starts it)
 
 Options:
   -c, --continue      Continue the most recent session
@@ -39,6 +41,10 @@ function withOptionalResumeValue(argv: string[]): string[] {
 }
 
 async function main(): Promise<number> {
+  if (process.argv[2] === "daemon") {
+    await runDaemon(resolvePaths());
+    return 0;
+  }
   const { values, positionals } = parseArgs({
     args: withOptionalResumeValue(process.argv.slice(2)),
     allowPositionals: true,

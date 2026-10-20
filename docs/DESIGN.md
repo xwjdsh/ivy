@@ -245,7 +245,7 @@ An interface turns user I/O into kernel calls. All interfaces share the same ker
   - Finished text moves into Ink's `<Static>` (printed once, kept in scrollback) and the live area stays shorter than the screen, so redraws don't flicker; a full redraw remounts `<Static>` (as Gemini CLI does). Tool calls are one line each; their output shows with Ctrl+O or in the verbose view.
   - One-shot mode (`ivy "question"`) stays plain text for scripts and pipes.
 - **M2 — Daemon** (`ivy daemon`): runs the kernel for every interface, and the scheduler.
-  - **It owns sessions; interfaces are clients** over one local protocol (OpenClaw's gateway, §10.1, is the reference; OpenCode, on the same stack, already runs its TUI as a client of a local HTTP server with an OpenAPI spec, a generated SDK and SSE events, which is the first thing to try), so adding an interface never touches plugins. The CLI becomes one of them.
+  - **It owns sessions; interfaces are clients** over one local protocol (OpenClaw's gateway, §10.1, is the reference; OpenCode, on the same stack, already runs its TUI as a client of a local HTTP server with an OpenAPI spec, a generated SDK and SSE events, which is the first thing to try), so adding an interface never touches plugins. The CLI becomes one of them. The protocol is HTTP with Server-Sent Events on a Unix socket (`~/.ivy/daemon.sock`, the user's alone), not a TCP port: other users and web pages can't reach it, and there is no port to clash. A web interface, when it comes, gets a TCP port of its own behind a token. One daemon runs at a time; a socket left by a crash is replaced.
   - **A macOS app of its own** (a thin menu-bar shell, `Ivy.app`), which ships the `ivy` binary inside, starts it as the daemon and restarts it if it stops. Only an app can give Ivy what a terminal can't: notifications of its own (macOS shows notifications of packaged apps only; a due todo should pop up on time, with Ivy's name, and open Ivy when clicked), a login item, a place in the menu bar without a Dock icon, and, later, the grants macOS gives the responsible app (screen recording, accessibility, automation), which run from a terminal would go to the terminal and everything run in it. The menu offers to install the `ivy` command (a link to the binary in the app), so the terminal and the app run the same version.
   - **The shell stays thin:** tray, notifications, login item, supervising the daemon, and windows. All logic stays in the TypeScript daemon. Windows (a chat window, settings) come later and show a web interface the daemon serves, through the protocol above, in the system webview, so the interface is TypeScript too and could also be opened in a browser.
   - **Built with [MyGo](https://github.com/egoist/mygo)** (Go): its documented APIs cover the shell (tray icons with template images, the accessory activation policy, notifications, start at login, helper binaries shipped as resources, signing from the inside out with notarization, and signed updates), and pure Go builds without cgo. It was a month old when chosen, so its API may still change; the shell is small enough to move to Wails or Swift if it stalls. Its settings will edit `config.toml` in place (files stay the truth); API keys can move to the Keychain.
@@ -369,6 +369,8 @@ Ivy reuses other agents' work through open standards, not their plugin formats:
 ├── SOUL.md              # who Ivy is (optional, loaded into system prompt)
 ├── skills/              # Agent Skills: <name>/SKILL.md (M3)
 ├── cache/models.json    # model capabilities: Models API facts + features learned unsupported
+├── daemon.sock          # the daemon's socket, for the user alone (M2, §5.7)
+├── daemon/              # the daemon's own state, e.g. reminders already announced
 ├── sessions/            # append-only JSONL transcripts
 ├── data/<pluginId>/     # per-plugin storage
 │   ├── memory/          #   memory plugin: USER.md, MEMORY.md (hot), ARCHIVE.md (cold) (§8.1)
@@ -604,6 +606,7 @@ ivy/
 │   ├── kernel/              # loop, model client, capabilities, context, sessions, permissions, plugin host, traces
 │   │   └── src/prompts/rules.md  # built-in operating and safety rules
 │   ├── plugin-api/          # public types for plugin authors
+│   ├── daemon/              # `ivy daemon`: the local server on a Unix socket, the scheduler (M2)
 │   └── cli/                 # `ivy` command: TUI, one-shot plain mode, slash commands
 ├── evals/                   # real-model eval cases and their runner (`bun run eval`)
 ├── plugins/
