@@ -205,3 +205,17 @@ test("tool labels: the tool's own summary, else its name and first argument", as
   // A name the model made up: shown as is.
   expect(h.toolLabel("nope__x", { a: 1 })).toEqual({ plugin: "nope__x", text: "1" });
 });
+
+test("reminders from every plugin, ids prefixed; a failing plugin is skipped", async () => {
+  const h = host();
+  await h.register(plugin("mem", { reminders: () => [{ id: "a", title: "A" }] }));
+  await h.register(
+    plugin("bad", {
+      reminders: () => {
+        throw new Error("boom");
+      },
+    }),
+  );
+  const window = { since: new Date(0), now: new Date() };
+  expect(await h.reminders(window)).toEqual([{ id: "mem:a", title: "A", plugin: "mem" }]);
+});

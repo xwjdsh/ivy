@@ -42,6 +42,7 @@ retention_days = 7                # delete older trace folders on startup; 0 = k
 # [plugins.memory]
 # user_limit = 2000               # USER.md, characters (500-20000)
 # memory_limit = 8000             # MEMORY.md, characters (1000-50000)
+# remind_at = "09:00"            # when a todo with a date but no time is announced
 # enabled = false                 # turn memory off
 
 # Ivy's own journal: data/journal/IVY.md, what Ivy has lived with you, in its own words.

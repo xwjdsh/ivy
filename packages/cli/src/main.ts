@@ -42,7 +42,7 @@ function withOptionalResumeValue(argv: string[]): string[] {
 
 async function main(): Promise<number> {
   if (process.argv[2] === "daemon") {
-    await runDaemon(resolvePaths());
+    await runDaemon(resolvePaths(), [core, memory, journal]);
     return 0;
   }
   const { values, positionals } = parseArgs({

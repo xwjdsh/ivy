@@ -5,6 +5,8 @@ import type {
   CommandDef,
   ConversationHistory,
   IvyPlugin,
+  Reminder,
+  ReminderWindow,
   RiskLevel,
   SessionInfo,
   ToolContext,
@@ -183,6 +185,26 @@ export class PluginHost {
       }),
     );
     return results.filter((r) => r !== null);
+  }
+
+  /**
+   * Every plugin's reminders due in the window, ids prefixed with the plugin's. Capped in
+   * time like the turn context; a failing or slow plugin is skipped and logged.
+   */
+  async reminders(window: ReminderWindow): Promise<Array<Reminder & { plugin: string }>> {
+    const lists = await Promise.all(
+      this.list().map(async (p) => {
+        if (!p.reminders) return [];
+        try {
+          const found = await withTimeout(Promise.resolve(p.reminders(window)), CONTEXT_TIMEOUT_MS);
+          return found.map((r) => ({ ...r, id: `${p.id}:${r.id}`, plugin: p.id }));
+        } catch (err) {
+          createLogger(p.id).warn("reminders skipped", errorMessage(err));
+          return [];
+        }
+      }),
+    );
+    return lists.flat();
   }
 
   /** Whether the owning plugin lets this tool run without asking (see ToolDef.defaultAllow). */

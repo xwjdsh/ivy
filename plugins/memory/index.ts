@@ -5,6 +5,7 @@ import {
   defineTool,
   type IvyPlugin,
   type Logger,
+  type Reminder,
   type ToolResult,
 } from "@ivy/plugin-api";
 import { z } from "zod";
@@ -51,13 +52,24 @@ const configSchema = z.strictObject({
   user_limit: z.number().int().min(500).max(20_000).default(2000),
   /** MEMORY.md: facts, todos and notes in current use. */
   memory_limit: z.number().int().min(1000).max(50_000).default(8000),
+  /** When a todo with a date but no time is announced on its day, as HH:MM. */
+  remind_at: z
+    .string()
+    .regex(/^([01]\d|2[0-3]):[0-5]\d$/, "a time like 09:00")
+    .default("09:00"),
 });
 
 export function createMemoryPlugin(): IvyPlugin {
   /** Per session: the hot files' lines as the session prompt showed them. */
   const snapshots = new Map<string, Record<HotFile, Set<string>>>();
   let state:
-    | { files: MemoryFiles; limits: Limits; log: Logger; history: ConversationHistory }
+    | {
+        files: MemoryFiles;
+        limits: Limits;
+        remindAt: string;
+        log: Logger;
+        history: ConversationHistory;
+      }
     | undefined;
 
   const ready = () => {
@@ -99,6 +111,7 @@ export function createMemoryPlugin(): IvyPlugin {
       state = {
         files: new MemoryFiles(ctx.dataDir),
         limits: { user: config.user_limit, memory: config.memory_limit },
+        remindAt: config.remind_at,
         log: ctx.log,
         history: ctx.history,
       };
@@ -296,6 +309,11 @@ export function createMemoryPlugin(): IvyPlugin {
       return parts.length ? parts.join("\n") : null;
     },
 
+    // Due todos for the daemon to announce: reading MEMORY.md, no model involved.
+    reminders({ since, now }) {
+      return dueReminders(screen(store().read()).files, since, now, ready().remindAt);
+    },
+
     commands: [
       {
         name: "/memory",
@@ -334,6 +352,36 @@ function searchText(found: Found[]): string {
     `${found.length} ${found.length === 1 ? "entry" : "entries"} (until: = no longer true, replaced: = reworded):`,
     ...found.map((f) => `${FILE_NAMES[f.file]}: ${f.line}`),
   ].join("\n");
+}
+
+/**
+ * Open todos whose time falls after `since`, up to `now`: the time they have, or
+ * `remindAt` on their day for a todo with a date alone.
+ */
+export function dueReminders(files: Files, since: Date, now: Date, remindAt: string): Reminder[] {
+  const out: Reminder[] = [];
+  for (const line of files.memory) {
+    const e = line.entry;
+    const due = e?.type === "todo" && !e.fields.done ? e.fields.due : undefined;
+    if (!e || !due) continue;
+    const time = due.slice(11) || remindAt;
+    const at = localTime(due.slice(0, 10), time);
+    if (at > since && at <= now) {
+      out.push({
+        id: `${due}|${e.text}`,
+        title: e.text,
+        body: due.length > 10 ? `Due at ${time}` : "Due today",
+      });
+    }
+  }
+  return out;
+}
+
+/** "2026-10-19" and "17:00" as that moment in the machine's timezone. */
+function localTime(day: string, hhmm: string): Date {
+  const [y = 0, m = 1, d = 1] = day.split("-").map(Number);
+  const [h = 0, min = 0] = hhmm.split(":").map(Number);
+  return new Date(y, m - 1, d, h, min);
 }
 
 function dueTodos(files: Files, today: string): string[] {

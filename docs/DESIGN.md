@@ -234,7 +234,7 @@ Loads, configures and runs plugins; see §6 for the plugin contract. Responsibil
 - Plugin slash commands appear in the `/` list and `/help` next to the built-in ones; a name clash with a built-in command is an error at startup.
 - Namespacing: tool names are `<plugin>__<tool>` to avoid collisions (API tool names allow only `[a-zA-Z0-9_-]`, no dots).
 - Per-plugin data directory (`dataDir`); secrets access planned.
-- Scheduler in the daemon (M2): first for due todos, which it announces as notifications without running the agent; plugin jobs (cron syntax) that run the agent unattended come in M5, with permission modes.
+- Scheduler in the daemon (M2): first for reminders, which plugins report (`reminders`) and the daemon announces as notifications without running the agent; plugin jobs (cron syntax) that run the agent unattended come in M5, with permission modes.
 - **MCP bridge** (M3): any MCP server listed in config is wrapped as a plugin automatically, so existing MCP servers (Gmail, Calendar, GitHub, ...) are usable with no new code.
 
 ### 5.7 Interfaces
@@ -280,6 +280,7 @@ Principles; details are decided when this is built.
 | `instructions` | Static text added to the system prompt | Memory routing rules: what goes into `USER.md`, `MEMORY.md` or the archive |
 | `sessionPrompt(session)` | System prompt section computed when a session starts, frozen for that session | The memory hot files (`USER.md`, `MEMORY.md`) |
 | `contextFor(turn)` | Dynamic text added per turn | The current time; todos due today; memory changes since the session started |
+| `reminders(window)` | What came due since the daemon last asked, shown as notifications (M2) | Todos at their time |
 | `commands` | Slash commands for the user | `/today`, `/memory [query]` |
 | `jobs` | Scheduled tasks (daemon) | Morning brief at 08:30 on weekdays |
 | `hooks` | Lifecycle callbacks (planned, added when a plugin needs one) | `onSessionStart`, `beforeToolCall` |
@@ -303,6 +304,7 @@ export interface IvyPlugin {
   instructions?: string;      // static, appended to the system prompt
   contextFor?(turn: TurnInfo): Promise<string | null> | string | null;
   sessionPrompt?(session: { id: string }): Promise<string | null> | string | null;  // frozen per session
+  reminders?(window: { since: Date; now: Date }): Promise<Reminder[]> | Reminder[];  // due in the window
   commands?: CommandDef[];
   // Planned: jobs (M5), lifecycle hooks: first "before compaction" (memory saves what
   // is worth keeping) and "session idle" (notifications), as OpenCode's plugins have
@@ -499,6 +501,8 @@ Moving between hot and cold deletes nothing (the archive stays searchable), so t
 
 #### Per-turn context
 
+With the daemon (M2), `reminders` reports todos as they come due, at their time or, for a todo with a date alone, at `[plugins.memory] remind_at` (default 09:00), and the menu-bar app shows them as notifications.
+
 `contextFor` lists todos in `MEMORY.md` that are due today or overdue (a few at most), with their time (`- Dentist appointment (today at 15:00)`, `- Taxes (overdue since 2026-10-01)`), and asks the model to mention them once in the conversation, briefly, whatever the question: without that, models saw the line and said nothing. Nothing otherwise. It also carries changes to the hot files since the session started (above), as whole lines within the plugin's share of the turn's context, then a count of the rest and a pointer to search.
 
 #### Search
@@ -679,7 +683,7 @@ Goal: Ivy starts remembering. Built in this order; each step is shippable on its
 Goal: Ivy runs in the background and can reach the user, so a reminder comes on time. Before the work helper, because its background tasks and subagents need a process that outlives the terminal, and the switch to a client is cheapest while there is little to move.
 - The daemon owns sessions and runs the kernel; the TUI becomes its client over the local protocol (§5.7), started on demand so `ivy` works as before.
 - The menu-bar app (MyGo): status, start and stop, start at login, the `ivy` command.
-- Due todos as notifications at their time, opening Ivy when clicked. The scheduler watches `MEMORY.md` and times the next due todo: reading a file, not running the agent, so no model call, permission mode or sandbox is involved, which is why this comes long before jobs (M5). A reminder missed while the Mac slept comes once on waking; what was already announced is the daemon's own state, kept out of `MEMORY.md`.
+- Due todos as notifications at their time, opening Ivy when clicked. At the start of every minute the daemon's scheduler asks the plugins which reminders came due since its last check (`reminders`, §6): the memory plugin reads `MEMORY.md`, so no model call, permission mode or sandbox is involved, which is why this comes long before jobs (M5). The window since the last check (kept in `~/.ivy/daemon/`) announces each reminder once, catches up after a sleep or a stopped daemon, and on the very first run starts from now, so old overdue todos don't all pop up. Events published while no client listens wait briefly for the next one, so the app misses nothing while it starts.
 - **Done when:** "remind me at 5 pm to pick up the parcel" pops up at 5 pm without Ivy open in a terminal.
 
 ### M3 — Work helper

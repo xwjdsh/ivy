@@ -23,6 +23,19 @@ export interface Daemon {
 
 /** Comment lines keep idle event streams open through any timeout on the way. */
 const HEARTBEAT_MS = 15_000;
+/**
+ * Events published while no client listens (the app not yet connected, or restarting) are
+ * held, at most this many and this long, and go to the next client that connects.
+ */
+const HELD_MAX = 20;
+const HELD_MS = 60 * 60 * 1000;
+/**
+ * A client that stops reading is dropped once this many chunks wait for it, so a stuck
+ * client can't make the daemon's memory grow; it reconnects when it reads again.
+ */
+const CLIENT_QUEUE_MAX = 100;
+/** The first event on every stream: the client knows it is subscribed (comments aren't seen). */
+const CONNECTED = "event: connected\ndata: {}\n\n";
 
 const log = createLogger("daemon");
 
@@ -45,6 +58,12 @@ export async function startDaemon(paths: Paths): Promise<Daemon> {
     const bytes = encoder.encode(chunk);
     for (const client of clients) {
       try {
+        if ((client.desiredSize ?? 0) < -CLIENT_QUEUE_MAX) {
+          clients.delete(client);
+          client.close();
+          log.warn("dropped an event client that stopped reading");
+          continue;
+        }
         client.enqueue(bytes);
       } catch {
         clients.delete(client); // the client went away
@@ -52,40 +71,53 @@ export async function startDaemon(paths: Paths): Promise<Daemon> {
     }
   };
   const heartbeat = setInterval(() => send(": ping\n\n"), HEARTBEAT_MS);
+  let held: Array<{ chunk: string; at: number }> = [];
 
-  const server = Bun.serve({
+  const options = {
     unix: socket,
-    fetch(req, srv) {
+    // Event streams stay open for hours: no idle timeout. Bun applies it on Unix sockets
+    // too (it cut streams after 10 s), though its types only allow it on TCP servers, and
+    // a per-request server.timeout(req, 0) didn't lift it.
+    idleTimeout: 0,
+    fetch(req: Request) {
       const { pathname } = new URL(req.url);
       if (req.method === "GET" && pathname === "/health") {
         return Response.json({ ok: true, pid: process.pid, startedAt });
       }
       if (req.method === "GET" && pathname === "/events") {
-        srv.timeout(req, 0); // the stream stays open; the idle timeout would cut it
         let self: ReadableStreamDefaultController<Uint8Array> | undefined;
         const stream = new ReadableStream<Uint8Array>({
           start(controller) {
             self = controller;
             clients.add(controller);
-            controller.enqueue(encoder.encode(": connected\n\n"));
+            controller.enqueue(encoder.encode(CONNECTED));
+            const fresh = held.filter((h) => Date.now() - h.at < HELD_MS);
+            held = [];
+            for (const h of fresh) controller.enqueue(encoder.encode(h.chunk));
           },
           cancel() {
             if (self) clients.delete(self);
           },
         });
         return new Response(stream, {
-          headers: { "content-type": "text/event-stream", "cache-control": "no-store" },
+          headers: {
+            "content-type": "text/event-stream",
+            "cache-control": "no-cache, no-transform",
+          },
         });
       }
       return new Response("Not found", { status: 404 });
     },
-  });
+  };
+  const server = Bun.serve(options as unknown as Parameters<typeof Bun.serve>[0]);
   chmodSync(socket, 0o600);
   log.info(`listening on ${socket}`);
 
   return {
     publish(event) {
-      send(`event: ${event.type}\ndata: ${JSON.stringify(event.data)}\n\n`);
+      const chunk = `event: ${event.type}\ndata: ${JSON.stringify(event.data)}\n\n`;
+      if (clients.size === 0) held = [...held, { chunk, at: Date.now() }].slice(-HELD_MAX);
+      else send(chunk);
     },
     async stop() {
       clearInterval(heartbeat);

@@ -51,6 +51,7 @@
       "version": "0.0.1",
       "dependencies": {
         "@ivy/kernel": "workspace:*",
+        "@ivy/plugin-api": "workspace:*",
       },
     },
     "packages/kernel": {

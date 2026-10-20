@@ -81,6 +81,22 @@ export interface TurnInfo {
   now: Date;
 }
 
+/** A stretch of time the daemon asks about: after `since`, up to and including `now`. */
+export interface ReminderWindow {
+  since: Date;
+  now: Date;
+}
+
+/** Something to tell the user at its time, as a notification, even with no interface open. */
+export interface Reminder {
+  /** Stable across checks, e.g. the due time and text of a todo. */
+  id: string;
+  /** What it is about, in the user's words: "Pick up the parcel". */
+  title: string;
+  /** A short second line, e.g. "Due today at 17:00". */
+  body?: string;
+}
+
 /** What a plugin knows about the session it adds a system prompt section to. */
 export interface SessionInfo {
   id: string;
@@ -125,6 +141,12 @@ export interface IvyPlugin {
    * the host; errors are skipped.
    */
   contextFor?(turn: TurnInfo): Promise<string | null> | string | null;
+  /**
+   * Reminders that came due in the window. The daemon asks every half minute about the
+   * time since it last asked, so each one is announced once, and a reminder missed while
+   * the Mac slept comes on waking. No model is involved: this reads the plugin's data.
+   */
+  reminders?(window: ReminderWindow): Promise<Reminder[]> | Reminder[];
   commands?: CommandDef[];
 }
 

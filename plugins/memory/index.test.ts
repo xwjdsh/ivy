@@ -282,3 +282,32 @@ test("tool calls have short summaries for the transcript", () => {
   expect(summary("move", { match: "VPN", to: "archive" })).toBe("move to ARCHIVE.md: VPN");
   expect(summary("search", {})).toBe("list the newest entries");
 });
+
+test("reminders: open todos whose time falls in the window, dated ones at remind_at", async () => {
+  await start({ remind_at: "08:30" });
+  writeFileSync(
+    join(dir, "MEMORY.md"),
+    [
+      "# Memory",
+      "",
+      "- [todo 2026-10-19 due:2026-10-20T17:00] Pick up the parcel",
+      "- [todo 2026-10-19 due:2026-10-20] Pay the rent",
+      "- [todo 2026-10-19 due:2026-10-20T09:00 done:2026-10-20] Call Ken",
+      "- [fact 2026-10-19] Not a todo",
+      "",
+    ].join("\n"),
+  );
+  const local = (h: number, m = 0) => new Date(2026, 9, 20, h, m);
+  const ask = (since: Date, now: Date) => plugin.reminders?.({ since, now });
+  expect(await ask(local(16, 59), local(17))).toEqual([
+    {
+      id: "2026-10-20T17:00|Pick up the parcel",
+      title: "Pick up the parcel",
+      body: "Due at 17:00",
+    },
+  ]);
+  expect(await ask(local(8), local(9))).toEqual([
+    { id: "2026-10-20|Pay the rent", title: "Pay the rent", body: "Due today" },
+  ]);
+  expect(await ask(local(17), local(23))).toEqual([]); // (since, now]: 17:00 was the last window's
+});
