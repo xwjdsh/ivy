@@ -23,10 +23,12 @@ export interface Daemon {
 
 /**
  * A comment line this often keeps an event stream open: Bun closes a connection idle for
- * 10 s (its default idleTimeout), and on a Unix socket the per-request way out,
- * server.timeout(req, 0), does nothing (https://github.com/oven-sh/bun/issues/43816). A
- * heartbeat inside that limit needs no setting at all, leaves the timeout guarding every
- * other request, and finds clients that went away.
+ * 10 s (its default idleTimeout). On a Unix socket the per-request way out,
+ * server.timeout(req, 0), does nothing (https://github.com/oven-sh/bun/issues/43816), and a
+ * server-wide idleTimeout works but is missing from the types
+ * (https://github.com/oven-sh/bun/issues/46138) and would drop the timeout for every
+ * request. A heartbeat inside that limit needs no setting at all, leaves the timeout
+ * guarding every other request, and finds clients that went away.
  */
 const HEARTBEAT_MS = 5_000;
 /**
