@@ -58,6 +58,8 @@ export interface RequestInfo {
 }
 
 export interface ToolCallRequest {
+  /** The session whose turn asks. */
+  sessionId: string;
   name: string;
   input: unknown;
   risk: RiskLevel;
@@ -313,7 +315,13 @@ export class Agent {
     const { plugins, confirm, permissions } = this.opts;
     const toolLog = createLogger("tool");
 
-    type Verdict = "run" | "unknown tool" | "denied by rule" | "denied by user" | "interrupted";
+    type Verdict =
+      | "run"
+      | "unknown tool"
+      | "denied by rule"
+      | "denied by user"
+      | "unanswered"
+      | "interrupted";
     const verdicts: Verdict[] = [];
     for (const use of toolUses) {
       turn.onEvent({ type: "tool_call", id: use.id, name: use.name, input: use.input });
@@ -326,25 +334,29 @@ export class Agent {
         verdicts.push("unknown tool"); // a name the model made up; nothing to ask about
         continue;
       }
-      const decided = permissions.decide(use.name, risk);
+      const decided = permissions.decide(use.name, risk, sessionId);
       if (decided.decision !== "ask") {
         verdicts.push(decided.decision === "allow" ? "run" : "denied by rule");
         continue;
       }
       const choice = await confirm({
+        sessionId,
         name: use.name,
         input: use.input,
         risk,
         reason: decided.reason,
         canRemember: decided.canRemember,
       });
-      verdicts.push(permissions.remember(use.name, choice, decided) ? "run" : "denied by user");
+      const allowed = permissions.remember(use.name, choice, decided, sessionId);
+      verdicts.push(allowed ? "run" : choice === "unanswered" ? "unanswered" : "denied by user");
     }
 
     const messages: Record<Exclude<Verdict, "run">, (name: string) => string> = {
       "unknown tool": (name) => `Unknown tool: ${name}`,
       "denied by rule": () => "This tool call is blocked by a permission rule.",
       "denied by user": () => "The user denied this tool call.",
+      unanswered: () =>
+        "No one answered the permission prompt in time, so this tool call didn't run. The user may not be around.",
       interrupted: () => "Interrupted by the user before this tool ran.",
     };
     return Promise.all(

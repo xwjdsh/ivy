@@ -303,7 +303,6 @@ export function App({
   const switchSession = (next: Session) => {
     sessionRef.current = next;
     tracerRef.current = ivy.tracer(next.id);
-    ivy.permissions.clearSession();
     void ivy.systemPrompt.start(next.id); // re-read SOUL.md and plugins' session sections
     setSessionId(next.id);
     setTokens(sessionTokens(next.id));

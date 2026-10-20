@@ -6,6 +6,8 @@
   "main": "src/index.ts",
   "dependencies": {
     "@ivy/kernel": "workspace:*",
-    "@ivy/plugin-api": "workspace:*"
+    "@ivy/plugin-api": "workspace:*",
+    "@ivy/protocol": "workspace:*",
+    "zod": "^4.6.7"
   }
 }

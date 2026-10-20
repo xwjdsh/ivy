@@ -1,0 +1,12 @@
+{
+  "name": "@ivy/protocol",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "dependencies": {
+    "@ivy/kernel": "workspace:*",
+    "@ivy/plugin-api": "workspace:*",
+    "zod": "^4.6.7"
+  }
+}

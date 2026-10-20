@@ -22,38 +22,52 @@ export interface PromptPart {
  * cache. Per-turn data (like the time) goes into the turn's context instead.
  */
 export class SystemPrompt {
-  private current: { sessionId: string; parts: Promise<PromptPart[]> } | undefined;
+  /** Frozen prompts by session id; several sessions may run at once (the daemon). */
+  private readonly sessions = new Map<string, Promise<PromptPart[]>>();
 
   constructor(
     private readonly paths: Paths,
     private readonly plugins: PluginHost,
+    /** For sessions started without instructions of their own. */
     private readonly interfaceInstructions = "",
   ) {}
 
-  /** Build the prompt for a session that starts now (startup, /new, /resume), even if built before. */
-  start(sessionId: string): Promise<PromptPart[]> {
-    const parts = this.build(sessionId);
-    this.current = { sessionId, parts };
+  /**
+   * Build the prompt for a session that starts now (startup, /new, /resume), even if built
+   * before. `interfaceInstructions` describe the interface it starts in, when it differs
+   * from the default (e.g. one-shot plain text).
+   */
+  start(
+    sessionId: string,
+    interfaceInstructions = this.interfaceInstructions,
+  ): Promise<PromptPart[]> {
+    const parts = this.build(sessionId, interfaceInstructions);
+    this.sessions.set(sessionId, parts);
     return parts;
   }
 
   /** The prompt's sections for a session: the frozen ones, or built now if it hasn't started. */
   partsFor(sessionId: string): Promise<PromptPart[]> {
-    return this.current?.sessionId === sessionId ? this.current.parts : this.start(sessionId);
+    return this.sessions.get(sessionId) ?? this.start(sessionId);
+  }
+
+  /** Drop a session's frozen prompt (it was closed); it is built afresh if it runs again. */
+  end(sessionId: string): void {
+    this.sessions.delete(sessionId);
   }
 
   async textFor(sessionId: string): Promise<string> {
     return (await this.partsFor(sessionId)).map((p) => p.text).join("\n\n");
   }
 
-  private async build(sessionId: string): Promise<PromptPart[]> {
+  private async build(sessionId: string, interfaceInstructions: string): Promise<PromptPart[]> {
     const parts = [{ name: "rules.md", text: RULES.trim() }];
 
     const soul = readOptional(this.paths.soul);
     if (soul) parts.push({ name: "SOUL.md", text: soul });
 
-    if (this.interfaceInstructions.trim()) {
-      parts.push({ name: "interface", text: `# Interface\n${this.interfaceInstructions.trim()}` });
+    if (interfaceInstructions.trim()) {
+      parts.push({ name: "interface", text: `# Interface\n${interfaceInstructions.trim()}` });
     }
 
     const instructions = this.plugins.instructions();

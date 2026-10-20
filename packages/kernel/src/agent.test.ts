@@ -242,6 +242,7 @@ describe("Agent.runTurn", () => {
     await run(agent, "go");
     expect(asked).toEqual([
       {
+        sessionId: session.id,
         name: "t__echo",
         input: { msg: "x" },
         risk: "read",

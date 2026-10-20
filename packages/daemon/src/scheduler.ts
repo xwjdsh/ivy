@@ -54,7 +54,7 @@ export function startScheduler(opts: SchedulerOptions): Scheduler {
           log.info(`reminder too late to show: ${r.title}`);
           continue;
         }
-        opts.publish({ type: "reminder", data: r });
+        opts.publish({ type: "reminder", data: r, hold: true });
         log.info(`reminder: ${r.title}`);
       }
     }

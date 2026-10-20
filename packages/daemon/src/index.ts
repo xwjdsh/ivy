@@ -1,8 +1,11 @@
 import { join } from "node:path";
 import { createIvy, createLogger, type Paths } from "@ivy/kernel";
 import type { IvyPlugin } from "@ivy/plugin-api";
+import { api } from "./api.ts";
+import { DISPLAY_INSTRUCTIONS } from "./display.ts";
 import { startScheduler } from "./scheduler.ts";
-import { startDaemon } from "./server.ts";
+import { type Daemon, startDaemon } from "./server.ts";
+import { Sessions } from "./sessions.ts";
 
 export { type Scheduler, startScheduler } from "./scheduler.ts";
 export {
@@ -10,17 +13,31 @@ export {
   type DaemonEvent,
   DaemonRunningError,
   isAlive,
+  type Routes,
   startDaemon,
 } from "./server.ts";
+export { PERMISSION_TIMEOUT_MS, Sessions } from "./sessions.ts";
+export { api };
 
 /**
  * `ivy daemon`: load Ivy with its plugins, serve on the socket and run the scheduler until
  * SIGINT or SIGTERM, then remove the socket and exit.
  */
 export async function runDaemon(paths: Paths, plugins: IvyPlugin[]): Promise<void> {
-  // No one is there to answer a permission prompt yet: anything that asks is refused.
-  const ivy = await createIvy({ plugins, paths, confirm: async () => "deny" });
-  const daemon = await startDaemon(paths);
+  // Permission prompts go to the clients following the session (see Sessions).
+  let sessions: Sessions | undefined;
+  const ivy = await createIvy({
+    plugins,
+    paths,
+    confirm: (call) => (sessions ? sessions.confirm(call) : Promise.resolve("deny")),
+    interfaceInstructions: DISPLAY_INSTRUCTIONS.markdown,
+  });
+  let daemon: Daemon | undefined;
+  sessions = new Sessions({
+    ivy,
+    publish: (event) => daemon?.publish({ type: "session", data: event }),
+  });
+  daemon = await startDaemon(paths, api(ivy, sessions));
   const scheduler = startScheduler({
     stateFile: join(paths.daemonState, "scheduler.json"),
     reminders: (window) => ivy.plugins.reminders(window),

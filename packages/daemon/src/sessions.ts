@@ -1,0 +1,355 @@
+// Sessions in the daemon (DESIGN.md §5.7). Each has one inbox: a message that arrives while
+// a turn runs waits for it, then runs as the next turn, whichever client sent it. What
+// happens goes out as events to every client, so several can follow one session; any of
+// them may answer a permission prompt, and the first answer counts.
+
+import {
+  type AgentEvent,
+  errorMessage,
+  type Ivy,
+  type PermissionChoice,
+  promptText,
+  Session,
+  summarizeUsage,
+  type ToolCallRequest,
+  type Tracer,
+} from "@ivy/kernel";
+import {
+  type Display,
+  type Entry,
+  type PermissionAsk,
+  type Prompt,
+  type SessionEvent,
+  type SessionSummary,
+  type SessionView,
+  type TurnEnd,
+  tokensFromUsage,
+} from "@ivy/protocol";
+import { DISPLAY_INSTRUCTIONS } from "./display.ts";
+
+/** A permission prompt no client answers is refused after this long. */
+export const PERMISSION_TIMEOUT_MS = 10 * 60 * 1000;
+
+export interface SessionsOptions {
+  ivy: Ivy;
+  publish(event: SessionEvent): void;
+  permissionTimeoutMs?: number;
+}
+
+/** A session the daemon holds: loaded, or started here. */
+interface Live {
+  session: Session;
+  tracer?: Tracer;
+  queue: Prompt[];
+  running?: {
+    prompt: Prompt;
+    controller: AbortController;
+    /** The session's messages before this turn: what `entries` already covers. */
+    before: number;
+    /** The turn so far, as clients show it. */
+    entries: Entry[];
+    /** The last entry is assistant text still streaming. */
+    open: boolean;
+  };
+}
+
+interface PendingAsk {
+  ask: PermissionAsk;
+  resolve(choice: PermissionChoice): void;
+}
+
+export class SessionNotFoundError extends Error {}
+
+export class Sessions {
+  private readonly live = new Map<string, Live>();
+  private readonly asks = new Map<string, PendingAsk>();
+  private readonly ivy: Ivy;
+  private readonly publish: (event: SessionEvent) => void;
+  private readonly permissionTimeoutMs: number;
+
+  constructor(opts: SessionsOptions) {
+    this.ivy = opts.ivy;
+    this.publish = opts.publish;
+    this.permissionTimeoutMs = opts.permissionTimeoutMs ?? PERMISSION_TIMEOUT_MS;
+  }
+
+  /** Sessions on disk, most recently active first, with whether a turn runs in each. */
+  list(limit = 50): SessionSummary[] {
+    return Session.list(this.ivy.paths.sessions, limit).map(({ file: _, ...s }) => ({
+      ...s,
+      busy: this.live.get(s.id)?.running !== undefined,
+    }));
+  }
+
+  /** Start a session. Its file is written with the first message. */
+  create(display: Display): string {
+    const session = Session.create(this.ivy.paths.sessions, this.ivy.agent.model);
+    this.live.set(session.id, this.hold(session));
+    void this.ivy.systemPrompt.start(session.id, DISPLAY_INSTRUCTIONS[display]);
+    return session.id;
+  }
+
+  view(id: string): SessionView {
+    const live = this.get(id);
+    const messages = live.running
+      ? live.session.messages.slice(0, live.running.before)
+      : live.session.messages;
+    const entries = [...this.entries(messages), ...(live.running?.entries ?? [])];
+    const permission = [...this.asks.values()].find((p) => p.ask.sessionId === id)?.ask;
+    return {
+      id,
+      entries,
+      running: live.running?.prompt,
+      queue: [...live.queue],
+      tokens: tokensOf(summarizeUsage(this.ivy.paths.sessions, { sessionId: id })),
+      ...(permission && { permission }),
+    };
+  }
+
+  /** Take a message for a session: it runs now, or after the turns before it. */
+  send(id: string, text: string): Prompt {
+    const live = this.get(id);
+    const prompt = { id: crypto.randomUUID(), text };
+    live.queue.push(prompt);
+    this.publish({ sessionId: id, type: "prompt", prompt });
+    void this.pump(id, live);
+    return prompt;
+  }
+
+  /** Take back a message still waiting; false if it already ran or never was. */
+  withdraw(id: string, promptId: string): boolean {
+    const live = this.get(id);
+    const i = live.queue.findIndex((p) => p.id === promptId);
+    if (i < 0) return false;
+    live.queue.splice(i, 1);
+    this.publish({ sessionId: id, type: "prompt_withdrawn", promptId });
+    return true;
+  }
+
+  /** Stop the running turn, and with `clearQueue` the waiting messages too. */
+  interrupt(id: string, clearQueue: boolean): void {
+    const live = this.get(id);
+    if (clearQueue) {
+      for (const p of [...live.queue]) this.withdraw(id, p.id);
+    }
+    live.running?.controller.abort();
+    // A prompt waiting for an answer holds the turn up: answer it for the user.
+    for (const [askId, pending] of this.asks) {
+      if (pending.ask.sessionId === id) this.answer(askId, "deny");
+    }
+  }
+
+  /** The kernel's confirm(): ask every client, and wait for the first answer. */
+  confirm = (call: ToolCallRequest): Promise<PermissionChoice> =>
+    new Promise((resolve) => {
+      const ask: PermissionAsk = {
+        id: crypto.randomUUID(),
+        sessionId: call.sessionId,
+        name: call.name,
+        label: this.ivy.plugins.toolLabel(call.name, call.input),
+        input: call.input,
+        risk: call.risk,
+        reason: call.reason,
+        choices: call.canRemember ? ["once", "session", "always", "deny"] : ["once", "deny"],
+      };
+      const timer = setTimeout(() => this.answer(ask.id, "unanswered"), this.permissionTimeoutMs);
+      this.asks.set(ask.id, {
+        ask,
+        resolve: (choice) => {
+          clearTimeout(timer);
+          resolve(choice);
+        },
+      });
+      this.publish({ sessionId: ask.sessionId, type: "permission", ask });
+    });
+
+  /** Answer a permission prompt; false if it was already answered (or never asked). */
+  answer(askId: string, choice: PermissionChoice): boolean {
+    const pending = this.asks.get(askId);
+    if (!pending) return false;
+    this.asks.delete(askId);
+    pending.resolve(choice);
+    this.publish({
+      sessionId: pending.ask.sessionId,
+      type: "permission_answered",
+      id: askId,
+      choice,
+    });
+    return true;
+  }
+
+  /** Whether any turn runs or waits, in any session. */
+  get busy(): boolean {
+    return [...this.live.values()].some((l) => l.running || l.queue.length > 0);
+  }
+
+  /** A session held here, loaded from disk when first asked for. */
+  private get(id: string): Live {
+    let live = this.live.get(id);
+    if (!live) {
+      if (!/^[\w-]+$/.test(id)) throw new SessionNotFoundError(`Session not found: ${id}`);
+      let session: Session;
+      try {
+        session = Session.load(this.ivy.paths.sessions, id);
+      } catch {
+        throw new SessionNotFoundError(`Session not found: ${id}`);
+      }
+      live = this.hold(session);
+      this.live.set(id, live);
+    }
+    return live;
+  }
+
+  private hold(session: Session): Live {
+    return { session, tracer: this.ivy.tracer(session.id), queue: [] };
+  }
+
+  /** Run the waiting messages one turn at a time. */
+  private async pump(id: string, live: Live): Promise<void> {
+    if (live.running) return;
+    const prompt = live.queue.shift();
+    if (!prompt) return;
+    const running = {
+      prompt,
+      controller: new AbortController(),
+      before: live.session.messages.length,
+      entries: [{ kind: "user", text: prompt.text } as Entry],
+      open: false,
+    };
+    live.running = running;
+    this.publish({ sessionId: id, type: "turn_start", prompt });
+
+    let end: TurnEnd;
+    try {
+      end = await this.ivy.agent.runTurn(live.session, prompt.text, {
+        signal: running.controller.signal,
+        tracer: live.tracer,
+        onEvent: (event) => this.onAgentEvent(id, running, event),
+      });
+    } catch (err) {
+      end = { stopReason: "error", steps: 0, costUsd: 0, error: errorMessage(err) };
+    }
+    live.running = undefined;
+    this.publish({ sessionId: id, type: "turn_end", promptId: prompt.id, end });
+    await this.pump(id, live);
+  }
+
+  /** Pass an agent event on to clients, and keep the turn so far for clients that open it. */
+  private onAgentEvent(
+    sessionId: string,
+    running: NonNullable<Live["running"]>,
+    e: AgentEvent,
+  ): void {
+    const { entries } = running;
+    switch (e.type) {
+      case "text": {
+        const last = entries.at(-1);
+        if (running.open && last?.kind === "assistant") last.markdown += e.delta;
+        else entries.push({ kind: "assistant", markdown: e.delta });
+        running.open = true;
+        this.publish({ sessionId, type: "text", delta: e.delta });
+        return;
+      }
+      case "tool_call": {
+        running.open = false;
+        const label = this.ivy.plugins.toolLabel(e.name, e.input);
+        entries.push({
+          kind: "tool",
+          id: e.id,
+          name: e.name,
+          label,
+          input: e.input,
+          result: "",
+          isError: false,
+          running: true,
+        });
+        this.publish({
+          sessionId,
+          type: "tool_call",
+          id: e.id,
+          name: e.name,
+          label,
+          input: e.input,
+        });
+        return;
+      }
+      case "tool_result": {
+        const entry = entries.find((x) => x.kind === "tool" && x.id === e.id);
+        if (entry?.kind === "tool") {
+          entry.result = e.content;
+          entry.isError = e.isError;
+          entry.running = undefined;
+        }
+        this.publish({ sessionId, ...e });
+        return;
+      }
+      case "step": {
+        running.open = false;
+        const { usage, ...rest } = e;
+        this.publish({ sessionId, ...rest, tokens: tokensFromUsage(usage) });
+        return;
+      }
+      case "notice":
+      case "context":
+      case "request":
+        this.publish({ sessionId, ...e });
+        return;
+    }
+  }
+
+  /** A stored transcript as clients show it: what was said, and tool calls with their results. */
+  private entries(messages: Session["messages"]): Entry[] {
+    const results = new Map<string, { content: string; isError: boolean }>();
+    for (const m of messages) {
+      if (m.role !== "user" || typeof m.content === "string") continue;
+      for (const b of m.content) {
+        if (b.type !== "tool_result") continue;
+        const content =
+          typeof b.content === "string"
+            ? b.content
+            : (b.content ?? []).map((c) => (c.type === "text" ? c.text : `[${c.type}]`)).join(" ");
+        results.set(b.tool_use_id, { content, isError: b.is_error ?? false });
+      }
+    }
+    const entries: Entry[] = [];
+    for (const m of messages) {
+      if (m.role === "user") {
+        const text = promptText(m); // what the user typed: no context block, no tool results
+        if (text?.trim()) entries.push({ kind: "user", text });
+      } else if (typeof m.content === "string") {
+        if (m.content.trim()) entries.push({ kind: "assistant", markdown: m.content });
+      } else {
+        for (const b of m.content) {
+          if (b.type === "text" && b.text.trim()) {
+            entries.push({ kind: "assistant", markdown: b.text });
+          } else if (b.type === "tool_use") {
+            const result = results.get(b.id) ?? { content: "(no result)", isError: true };
+            entries.push({
+              kind: "tool",
+              id: b.id,
+              name: b.name,
+              label: this.ivy.plugins.toolLabel(b.name, b.input),
+              input: b.input,
+              result: result.content,
+              isError: result.isError,
+            });
+          }
+        }
+      }
+    }
+    return entries;
+  }
+}
+
+function tokensOf(u: {
+  inputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  outputTokens: number;
+}) {
+  return {
+    in: u.inputTokens + u.cacheReadTokens + u.cacheWriteTokens,
+    cached: u.cacheReadTokens,
+    out: u.outputTokens,
+  };
+}

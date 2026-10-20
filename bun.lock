@@ -52,6 +52,8 @@
       "dependencies": {
         "@ivy/kernel": "workspace:*",
         "@ivy/plugin-api": "workspace:*",
+        "@ivy/protocol": "workspace:*",
+        "zod": "^4.6.7",
       },
     },
     "packages/kernel": {
@@ -67,6 +69,15 @@
       "name": "@ivy/plugin-api",
       "version": "0.0.1",
       "dependencies": {
+        "zod": "^4.6.7",
+      },
+    },
+    "packages/protocol": {
+      "name": "@ivy/protocol",
+      "version": "0.0.1",
+      "dependencies": {
+        "@ivy/kernel": "workspace:*",
+        "@ivy/plugin-api": "workspace:*",
         "zod": "^4.6.7",
       },
     },
@@ -141,6 +152,8 @@
     "@ivy/plugin-journal": ["@ivy/plugin-journal@workspace:plugins/journal"],
 
     "@ivy/plugin-memory": ["@ivy/plugin-memory@workspace:plugins/memory"],
+
+    "@ivy/protocol": ["@ivy/protocol@workspace:packages/protocol"],
 
     "@opentelemetry/api": ["@opentelemetry/api@1.9.1", "", {}, "sha512-gLyJlPHPZYdAk1JENA9LeHejZe1Ti77/pTeFm/nMXmQH/HFZlcS/O2XJB+L8fkbrNSqhdtlvjBVjxwUYanNH5Q=="],
 

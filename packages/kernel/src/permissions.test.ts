@@ -24,9 +24,9 @@ test("globs match whole tool names", () => {
 
 test("risk defaults: read runs, the rest asks", () => {
   const p = new Permissions(rules(), noSave);
-  expect(p.decide("t__r", "read").decision).toBe("allow");
+  expect(p.decide("t__r", "read", "s").decision).toBe("allow");
   for (const risk of ["write", "external", "dangerous"] as const) {
-    expect(p.decide("t__x", risk).decision).toBe("ask");
+    expect(p.decide("t__x", risk, "s").decision).toBe("ask");
   }
 });
 
@@ -36,20 +36,23 @@ test("deny beats every allow; ask beats allow and a read label", () => {
     noSave,
     () => true,
   );
-  expect(p.decide("t__send", "read")).toMatchObject({ decision: "deny", reason: "deny rule" });
-  expect(p.decide("t__sneaky", "read")).toMatchObject({ decision: "ask", reason: "ask rule" });
-  expect(p.decide("t__other", "write")).toMatchObject({ decision: "allow", reason: "allow rule" });
+  expect(p.decide("t__send", "read", "s")).toMatchObject({ decision: "deny", reason: "deny rule" });
+  expect(p.decide("t__sneaky", "read", "s")).toMatchObject({ decision: "ask", reason: "ask rule" });
+  expect(p.decide("t__other", "write", "s")).toMatchObject({
+    decision: "allow",
+    reason: "allow rule",
+  });
 });
 
 test("only risk-default asks can be remembered", () => {
   const p = new Permissions(rules({ ask: ["t__sneaky"] }), noSave);
-  expect(p.decide("t__x", "write")).toEqual({
+  expect(p.decide("t__x", "write", "s")).toEqual({
     decision: "ask",
     reason: "write tool",
     canRemember: true,
   });
-  expect(p.decide("t__x", "dangerous").canRemember).toBe(false);
-  expect(p.decide("t__sneaky", "read").canRemember).toBe(false);
+  expect(p.decide("t__x", "dangerous", "s").canRemember).toBe(false);
+  expect(p.decide("t__sneaky", "read", "s").canRemember).toBe(false);
 });
 
 test("'always' is ignored where it would have no effect, whatever the interface sent", () => {
@@ -59,10 +62,10 @@ test("'always' is ignored where it would have no effect, whatever the interface 
     ["shell__run", "dangerous"],
     ["t__sneaky", "read"],
   ] as const) {
-    const asked = p.decide(tool, risk);
-    expect(p.remember(tool, "always", asked)).toBe(true); // runs this once
-    expect(p.remember(tool, "session", asked)).toBe(true);
-    expect(p.decide(tool, risk).decision).toBe("ask"); // still asked next time
+    const asked = p.decide(tool, risk, "s");
+    expect(p.remember(tool, "always", asked, "s")).toBe(true); // runs this once
+    expect(p.remember(tool, "session", asked, "s")).toBe(true);
+    expect(p.decide(tool, risk, "s").decision).toBe("ask"); // still asked next time
   }
   expect(s.saved).toEqual([]); // nothing was saved
 });
@@ -71,25 +74,28 @@ test("plugin defaults allow, but user rules still win", () => {
   const p = new Permissions(rules({ deny: ["memory__save"] }), noSave, (t) =>
     t.startsWith("memory__"),
   );
-  expect(p.decide("memory__update", "write")).toMatchObject({
+  expect(p.decide("memory__update", "write", "s")).toMatchObject({
     decision: "allow",
     reason: "plugin default",
   });
-  expect(p.decide("memory__save", "write").decision).toBe("deny");
+  expect(p.decide("memory__save", "write", "s").decision).toBe("deny");
 });
 
 test("'always' adds an allow rule (saved to config.toml); 'session' doesn't", () => {
   const s = saver();
   const p = new Permissions(rules(), s.save);
-  const ask = p.decide("t__any", "write");
-  expect(p.remember("t__save", "always", ask)).toBe(true);
-  expect(p.remember("t__draft", "session", ask)).toBe(true);
-  expect(p.remember("t__send", "deny", ask)).toBe(false);
+  const ask = p.decide("t__any", "write", "s");
+  expect(p.remember("t__save", "always", ask, "s")).toBe(true);
+  expect(p.remember("t__draft", "session", ask, "s")).toBe(true);
+  expect(p.remember("t__send", "deny", ask, "s")).toBe(false);
   expect(s.saved).toEqual(["t__save"]);
-  expect(p.decide("t__save", "write")).toMatchObject({ decision: "allow", reason: "allow rule" });
+  expect(p.decide("t__save", "write", "s")).toMatchObject({
+    decision: "allow",
+    reason: "allow rule",
+  });
   expect(p.summary().allow).toEqual(["t__save"]);
   // Already covered by a rule: nothing more is saved.
-  p.remember("t__save", "always", ask);
+  p.remember("t__save", "always", ask, "s");
   expect(s.saved).toEqual(["t__save"]);
 });
 
@@ -98,15 +104,16 @@ test("a failed save still allows the tool for this run", () => {
     throw new Error("config.toml is read-only");
   });
   setLogSink(() => {}); // the warning is expected here
-  expect(p.remember("t__save", "always", p.decide("t__save", "write"))).toBe(true);
+  expect(p.remember("t__save", "always", p.decide("t__save", "write", "s"), "s")).toBe(true);
   setLogSink(null);
-  expect(p.decide("t__save", "write").decision).toBe("allow");
+  expect(p.decide("t__save", "write", "s").decision).toBe("allow");
 });
 
-test("session choices end with clearSession", () => {
+test("session choices belong to their session, and end with it", () => {
   const p = new Permissions(rules(), noSave);
-  p.remember("t__draft", "session", p.decide("t__draft", "write"));
-  expect(p.decide("t__draft", "write").decision).toBe("allow");
-  p.clearSession();
-  expect(p.decide("t__draft", "write").decision).toBe("ask");
+  p.remember("t__draft", "session", p.decide("t__draft", "write", "s"), "s");
+  expect(p.decide("t__draft", "write", "s").decision).toBe("allow");
+  expect(p.decide("t__draft", "write", "other").decision).toBe("ask");
+  p.endSession("s");
+  expect(p.decide("t__draft", "write", "s").decision).toBe("ask");
 });

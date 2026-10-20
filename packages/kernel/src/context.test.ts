@@ -115,3 +115,19 @@ test("a failing or oversized session section is skipped or capped, never fatal",
   expect(parts[1]?.text.length).toBe(SESSION_PROMPT_MAX_CHARS);
   expect(warnings.some((w) => w.includes("sessionPrompt skipped"))).toBe(true);
 });
+
+test("each session keeps its own frozen prompt, with its interface", async () => {
+  const paths = tempPaths();
+  writeFileSync(paths.soul, "Before.\n");
+  const system = new SystemPrompt(paths, new PluginHost(paths.data, {}), "Renders Markdown.");
+  const tui = await system.textFor("a");
+  await system.start("b", "Plain text only.");
+  writeFileSync(paths.soul, "After.\n"); // a hand edit while both run
+
+  expect(await system.textFor("a")).toBe(tui);
+  const plain = await system.textFor("b");
+  expect(plain).toContain("Plain text only.");
+  expect(plain).toContain("Before.");
+  system.end("a");
+  expect(await system.textFor("a")).toContain("After.");
+});

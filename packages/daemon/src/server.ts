@@ -7,12 +7,22 @@
 
 import { chmodSync, existsSync, unlinkSync } from "node:fs";
 import { createLogger, type Paths } from "@ivy/kernel";
+import { type Health, PROTOCOL_VERSION } from "@ivy/protocol";
 
 /** Something the daemon tells its clients, e.g. a reminder that is due. */
 export interface DaemonEvent {
   type: string;
   data: unknown;
+  /**
+   * Keep it for the next client when none listens (a reminder, which must not be lost
+   * while the app starts). A session's events aren't kept: a client opening the session
+   * reads where it stands.
+   */
+  hold?: boolean;
 }
+
+/** The daemon's other requests (sessions, prompts, …); undefined for a path it doesn't serve. */
+export type Routes = (req: Request) => Promise<Response | undefined> | Response | undefined;
 
 export interface Daemon {
   /** Send an event to every connected client. */
@@ -32,8 +42,8 @@ export interface Daemon {
  */
 const HEARTBEAT_MS = 5_000;
 /**
- * Events published while no client listens (the app not yet connected, or restarting) are
- * held, at most this many and this long, and go to the next client that connects.
+ * Events to hold, published while no client listens (the app not yet connected, or
+ * restarting), are kept, at most this many and this long, for the next client that connects.
  */
 const HELD_MAX = 20;
 const HELD_MS = 60 * 60 * 1000;
@@ -53,7 +63,7 @@ export class DaemonRunningError extends Error {}
 export const MAX_SOCKET_PATH = 103;
 
 /** Start serving on the socket; throws DaemonRunningError if a daemon already answers there. */
-export async function startDaemon(paths: Paths): Promise<Daemon> {
+export async function startDaemon(paths: Paths, routes?: Routes): Promise<Daemon> {
   const socket = paths.daemonSocket;
   const length = Buffer.byteLength(socket);
   if (length > MAX_SOCKET_PATH) {
@@ -92,10 +102,16 @@ export async function startDaemon(paths: Paths): Promise<Daemon> {
 
   const server = Bun.serve({
     unix: socket,
-    fetch(req) {
+    async fetch(req) {
       const { pathname } = new URL(req.url);
       if (req.method === "GET" && pathname === "/health") {
-        return Response.json({ ok: true, pid: process.pid, startedAt });
+        const health: Health = {
+          ok: true,
+          pid: process.pid,
+          startedAt,
+          protocol: PROTOCOL_VERSION,
+        };
+        return Response.json(health);
       }
       if (req.method === "GET" && pathname === "/events") {
         let self: ReadableStreamDefaultController<Uint8Array> | undefined;
@@ -119,7 +135,7 @@ export async function startDaemon(paths: Paths): Promise<Daemon> {
           },
         });
       }
-      return new Response("Not found", { status: 404 });
+      return (await routes?.(req)) ?? Response.json({ error: "Not found" }, { status: 404 });
     },
   });
   chmodSync(socket, 0o600);
@@ -128,8 +144,8 @@ export async function startDaemon(paths: Paths): Promise<Daemon> {
   return {
     publish(event) {
       const chunk = `event: ${event.type}\ndata: ${JSON.stringify(event.data)}\n\n`;
-      if (clients.size === 0) held = [...held, { chunk, at: Date.now() }].slice(-HELD_MAX);
-      else send(chunk);
+      if (clients.size > 0) send(chunk);
+      else if (event.hold) held = [...held, { chunk, at: Date.now() }].slice(-HELD_MAX);
     },
     async stop() {
       clearInterval(heartbeat);

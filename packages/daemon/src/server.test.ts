@@ -71,12 +71,14 @@ test("stop removes the socket", async () => {
 
 test("events published while no client listens go to the next one that connects", async () => {
   const { d, p } = await start();
-  d.publish({ type: "reminder", data: { title: "early" } });
+  d.publish({ type: "reminder", data: { title: "early" }, hold: true });
+  d.publish({ type: "session", data: { title: "not kept" } });
   const res = await get(p.daemonSocket, "/events");
   const reader = res.body?.getReader() as ReadableStreamDefaultReader<Uint8Array>;
   let text = "";
   while (!text.includes("early")) text += new TextDecoder().decode((await reader.read()).value);
   expect(text).toContain('event: reminder\ndata: {"title":"early"}');
+  expect(text).not.toContain("not kept"); // held events are written together, in one chunk
   await reader.cancel();
 });
 
