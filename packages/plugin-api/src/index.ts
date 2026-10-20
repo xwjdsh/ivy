@@ -133,10 +133,16 @@ export interface IvyPlugin {
   instructions?: string;
   /**
    * A system prompt section for one session (e.g. the user's profile), or null for nothing.
-   * Computed when the session starts (startup, /new, /resume) and frozen for the rest of it,
-   * so the prompt cache holds. Capped in size and time by the host; errors are skipped.
+   * Computed when the session starts, or is loaded again after being let go, and frozen
+   * until then, so the prompt cache holds. Capped in size and time by the host; errors are
+   * skipped.
    */
   sessionPrompt?(session: SessionInfo): Promise<string | null> | string | null;
+  /**
+   * The host let a session go (idle for a while): forget what you keep for it. If it comes
+   * back, `sessionPrompt` runs again first.
+   */
+  sessionReleased?(session: SessionInfo): void;
   /**
    * Text to add to this turn's `<context>` block (e.g. the time, todos due today),
    * or null for nothing. Capped in size (CONTEXT_MAX_CHARS, cut off past it) and time by

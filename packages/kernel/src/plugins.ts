@@ -154,6 +154,17 @@ export class PluginHost {
     return contextBlock(parts);
   }
 
+  /** Tell plugins a session was let go (see IvyPlugin.sessionReleased); errors are logged. */
+  releaseSession(session: SessionInfo): void {
+    for (const p of this.list()) {
+      try {
+        p.sessionReleased?.(session);
+      } catch (err) {
+        createLogger(p.id).warn("sessionReleased failed", errorMessage(err));
+      }
+    }
+  }
+
   /**
    * Every plugin's system prompt section for a session, in plugin-id order. Same rules as
    * turnContext: capped in size and time, a failing or slow plugin is skipped.

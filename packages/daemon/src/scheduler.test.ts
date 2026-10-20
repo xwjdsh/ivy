@@ -65,7 +65,7 @@ test("each reminder is announced once, in the check after its time", async () =>
     {
       type: "reminder",
       data: { id: "memory:x", plugin: "memory", title: "Pick up the parcel", at: at(10) },
-      hold: true,
+      notify: true,
     },
   ]);
   s.scheduler.stop();

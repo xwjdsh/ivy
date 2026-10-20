@@ -244,6 +244,9 @@ export function createJournalPlugin(): IvyPlugin {
       ].join("\n");
     },
 
+    sessionReleased({ id }) {
+      snapshots.delete(id);
+    },
     contextFor({ sessionId }) {
       const before = snapshots.get(sessionId);
       if (!before) return null;

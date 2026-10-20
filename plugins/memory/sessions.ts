@@ -4,11 +4,12 @@
 // message for context. All sessions are searched; an index can come when it gets slow.
 
 import type { ConversationHistory, PastMessage } from "@ivy/plugin-api";
+import { localDate } from "./format.ts";
 import { search, terms } from "./search.ts";
 
 export interface SessionSearchInput {
   query: string;
-  /** YYYY-MM-DD: only sessions active since then. */
+  /** YYYY-MM-DD, local: only sessions active since then. */
   since?: string;
   /** How many sessions to show. */
   limit?: number;
@@ -30,14 +31,18 @@ export function searchSessions(
   const sessions = history
     .sessions()
     // The current conversation is in context already, and its last message is the question.
-    .filter((s) => s.id !== currentSession && (!input.since || s.updatedAt >= input.since));
+    .filter(
+      (s) =>
+        s.id !== currentSession &&
+        (!input.since || localDate(new Date(s.updatedAt)) >= input.since),
+    );
   const items = sessions.flatMap((s) => {
     const messages = history.messages(s.id);
     return messages.map((m, index) => ({
       session: s.id,
       messages,
       index,
-      entry: { text: m.text, tags: [], date: m.ts.slice(0, 10) },
+      entry: { text: m.text, tags: [], date: localDate(new Date(m.ts)) },
     }));
   });
 

@@ -124,8 +124,13 @@ export interface SessionSummary {
 /** GET /sessions/:id: everything a client needs to show a session it opens. */
 export interface SessionView {
   id: string;
-  /** The transcript, with the running turn so far (its prompt, text and tool calls). */
+  /**
+   * The transcript, with the running turn so far: its prompt, its finished text, and its
+   * tool calls (`running` while one is).
+   */
   entries: Entry[];
+  /** The running turn's text still being written, after the last entry. */
+  streaming?: string;
   /** The prompt whose turn is running, if any. */
   running?: Prompt;
   /** Prompts waiting for the running turn to end, oldest first. */
@@ -173,7 +178,14 @@ export type SessionChange =
   | { type: "turn_start"; prompt: Prompt }
   | { type: "text"; delta: string }
   | { type: "tool_call"; id: string; name: string; label: ToolLabel; input: unknown }
-  | { type: "tool_result"; id: string; name: string; content: string; isError: boolean }
+  | {
+      type: "tool_result";
+      id: string;
+      name: string;
+      label: ToolLabel;
+      content: string;
+      isError: boolean;
+    }
   /** Something the user should know, e.g. a feature the endpoint doesn't support. */
   | { type: "notice"; text: string }
   /** The turn's plugin context (verbose view). */

@@ -98,11 +98,6 @@ export class Permissions {
     return true;
   }
 
-  /** Forget a session's "for this session" choices (it was closed, or ended). */
-  endSession(sessionId: string): void {
-    this.sessions.delete(sessionId);
-  }
-
   /** Rules in effect, for /status. */
   summary(): PermissionRules {
     return { allow: [...this.rules.allow], ask: [...this.rules.ask], deny: [...this.rules.deny] };

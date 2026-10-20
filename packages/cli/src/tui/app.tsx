@@ -70,6 +70,16 @@ interface PendingTool {
   input: unknown;
 }
 
+/** What of a session is still live, for a client joining a turn that runs. */
+function liveOf(view: SessionView): { tools: PendingTool[]; text: string } {
+  const tools = view.entries.flatMap((e) =>
+    e.kind === "tool" && e.running
+      ? [{ id: e.id, name: e.name, label: e.label, input: e.input }]
+      : [],
+  );
+  return { tools, text: view.streaming ?? "" };
+}
+
 const EXIT_CONFIRM_MS = 2000;
 const RESIZE_DEBOUNCE_MS = 100;
 const NO_TOKENS: Tokens = { in: 0, cached: 0, out: 0 };
@@ -123,7 +133,8 @@ export function App({
   const [state, setState] = useState(initialState);
   const [tokens, setTokens] = useState(initialSession.tokens);
   const turnTokens = useRef(NO_TOKENS);
-  const turnStarted = useRef(0);
+  // A turn joined while it runs is timed from when it was joined.
+  const turnStarted = useRef(initialSession.running ? Date.now() : 0);
 
   const header = (): Item => ({
     id: itemId(),
@@ -179,9 +190,10 @@ export function App({
   const [expandedTurn, setExpandedTurn] = useState<number | null>(null);
 
   // Assistant text still streaming; finished paragraphs move into `items`.
-  const bufRef = useRef("");
-  const [streaming, setStreaming] = useState("");
-  const [pendingTools, setPendingTools] = useState<PendingTool[]>([]);
+  const initialLive = liveOf(initialSession);
+  const bufRef = useRef(initialLive.text);
+  const [streaming, setStreaming] = useState(initialLive.text);
+  const [pendingTools, setPendingTools] = useState<PendingTool[]>(initialLive.tools);
   const [phase, setPhase] = useState<{ label: string; startedAt: number } | null>(() =>
     initialSession.running ? { label: "Thinking", startedAt: Date.now() } : null,
   );
@@ -243,7 +255,7 @@ export function App({
             kind: "tool",
             turn: turnRef.current,
             name: e.name,
-            label: pending?.label ?? { plugin: e.name, text: "" },
+            label: e.label,
             input: pending?.input,
             result: e.content,
             isError: e.isError,
@@ -305,9 +317,11 @@ export function App({
   const show = (view: SessionView, note?: string) => {
     sessionRef.current = view.id;
     setSessionId(view.id);
-    bufRef.current = "";
-    setStreaming("");
-    setPendingTools([]);
+    const live = liveOf(view);
+    bufRef.current = live.text;
+    setStreaming(live.text);
+    setPendingTools(live.tools);
+    turnStarted.current = Date.now();
     setPhase(view.running ? { label: "Thinking", startedAt: Date.now() } : null);
     setQueue(view.queue);
     setPermission(view.permission ?? null);

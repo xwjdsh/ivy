@@ -109,11 +109,9 @@ test("a failed save still allows the tool for this run", () => {
   expect(p.decide("t__save", "write", "s").decision).toBe("allow");
 });
 
-test("session choices belong to their session, and end with it", () => {
+test("session choices belong to their session", () => {
   const p = new Permissions(rules(), noSave);
   p.remember("t__draft", "session", p.decide("t__draft", "write", "s"), "s");
   expect(p.decide("t__draft", "write", "s").decision).toBe("allow");
   expect(p.decide("t__draft", "write", "other").decision).toBe("ask");
-  p.endSession("s");
-  expect(p.decide("t__draft", "write", "s").decision).toBe("ask");
 });

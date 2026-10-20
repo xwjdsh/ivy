@@ -69,17 +69,26 @@ test("stop removes the socket", async () => {
   expect(await isAlive(p.daemonSocket)).toBe(false);
 });
 
-test("events published while no client listens go to the next one that connects", async () => {
+test("a notification goes only to a client that shows them, and waits for one", async () => {
   const { d, p } = await start();
-  d.publish({ type: "reminder", data: { title: "early" }, hold: true });
-  d.publish({ type: "session", data: { title: "not kept" } });
-  const res = await get(p.daemonSocket, "/events");
-  const reader = res.body?.getReader() as ReadableStreamDefaultReader<Uint8Array>;
+  const decoder = new TextDecoder();
+  // A terminal is connected, but it doesn't show notifications.
+  const terminal = (await get(p.daemonSocket, "/events")).body?.getReader();
+  await terminal?.read(); // connected
+  d.publish({ type: "reminder", data: { title: "early" }, notify: true });
+  d.publish({ type: "session", data: { title: "for everyone" } });
+  expect(decoder.decode((await terminal?.read())?.value)).toContain("for everyone");
+
+  const app = (await get(p.daemonSocket, "/events?notify=1")).body?.getReader();
   let text = "";
-  while (!text.includes("early")) text += new TextDecoder().decode((await reader.read()).value);
+  while (!text.includes("early")) text += decoder.decode((await app?.read())?.value);
   expect(text).toContain('event: reminder\ndata: {"title":"early"}');
-  expect(text).not.toContain("not kept"); // held events are written together, in one chunk
-  await reader.cancel();
+  expect(text).not.toContain("for everyone"); // session events aren't kept for later clients
+
+  d.publish({ type: "reminder", data: { title: "now" }, notify: true });
+  expect(decoder.decode((await app?.read())?.value)).toContain("now");
+  await terminal?.cancel();
+  await app?.cancel();
 });
 
 test("an event stream stays open past Bun's default idle timeout of 10 s", async () => {

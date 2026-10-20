@@ -14,11 +14,12 @@ export interface DaemonEvent {
   type: string;
   data: unknown;
   /**
-   * Keep it for the next client when none listens (a reminder, which must not be lost
-   * while the app starts). A session's events aren't kept: a client opening the session
+   * A notification (a reminder): it goes only to clients that show them (`notify=1`, the
+   * app), and waits for one when none is connected, so it isn't lost while the app
+   * restarts. Other events go to every client and aren't kept: a client opening a session
    * reads where it stands.
    */
-  hold?: boolean;
+  notify?: boolean;
 }
 
 /** The daemon's other requests (sessions, prompts, …); undefined for a path it doesn't serve. */
@@ -51,8 +52,8 @@ export interface Daemon {
  */
 const HEARTBEAT_MS = 5_000;
 /**
- * Events to hold, published while no client listens (the app not yet connected, or
- * restarting), are kept, at most this many and this long, for the next client that connects.
+ * Notifications published while no client shows them (the app not yet connected, or
+ * restarting) are kept, at most this many and this long, for the next one that connects.
  */
 const HELD_MAX = 20;
 const HELD_MS = 60 * 60 * 1000;
@@ -103,9 +104,9 @@ export async function startDaemon(
   const notifiers = new Set<ReadableStreamDefaultController<Uint8Array>>();
   let draining = false;
   const encoder = new TextEncoder();
-  const send = (chunk: string) => {
+  const send = (chunk: string, to = clients) => {
     const bytes = encoder.encode(chunk);
-    for (const client of clients) {
+    for (const client of to) {
       try {
         if ((client.desiredSize ?? 0) < -CLIENT_QUEUE_MAX) {
           clients.delete(client);
@@ -150,9 +151,11 @@ export async function startDaemon(
             clients.add(controller);
             if (notify) notifiers.add(controller);
             controller.enqueue(encoder.encode(CONNECTED));
-            const fresh = held.filter((h) => Date.now() - h.at < HELD_MS);
-            held = [];
-            for (const h of fresh) controller.enqueue(encoder.encode(h.chunk));
+            if (notify) {
+              const fresh = held.filter((h) => Date.now() - h.at < HELD_MS);
+              held = [];
+              for (const h of fresh) controller.enqueue(encoder.encode(h.chunk));
+            }
           },
           cancel() {
             if (self) {
@@ -186,8 +189,9 @@ export async function startDaemon(
     },
     publish(event) {
       const chunk = `event: ${event.type}\ndata: ${JSON.stringify(event.data)}\n\n`;
-      if (clients.size > 0) send(chunk);
-      else if (event.hold) held = [...held, { chunk, at: Date.now() }].slice(-HELD_MAX);
+      if (!event.notify) send(chunk);
+      else if (notifiers.size > 0) send(chunk, notifiers);
+      else held = [...held, { chunk, at: Date.now() }].slice(-HELD_MAX);
     },
     async stop() {
       clearInterval(heartbeat);

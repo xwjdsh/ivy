@@ -61,6 +61,11 @@ export interface Ivy {
   modelChoices(): Promise<{ models: string[]; errors: string[] }>;
   /** Tracer for a session, or undefined when tracing is off. */
   tracer(sessionId: string): Tracer | undefined;
+  /**
+   * Let a session go (idle): its frozen system prompt and what plugins keep for it. If it
+   * comes back, both are built afresh.
+   */
+  releaseSession(sessionId: string): void;
 }
 
 /** Wire up the kernel: config, plugins, system prompt and agent. */
@@ -145,6 +150,10 @@ export async function createIvy(opts: IvyOptions): Promise<Ivy> {
     permissions,
     modelChoices: choices,
     tracer,
+    releaseSession(id) {
+      systemPrompt.end(id);
+      plugins.releaseSession({ id });
+    },
   };
 }
 

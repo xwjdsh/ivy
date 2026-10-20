@@ -21,19 +21,13 @@ export type Item =
 let seq = 0;
 export const itemId = () => `i${++seq}`;
 
-/** A session's transcript, as the daemon sends it, as items to print. */
+/** A session's transcript, as the daemon sends it, as items to print (tools still running aren't). */
 export function historyItems(entries: Entry[]): Item[] {
-  return entries.map((e): Item => {
-    if (e.kind === "user") return { id: itemId(), kind: "user", text: e.text };
-    if (e.kind === "assistant") return { id: itemId(), kind: "assistant", markdown: e.markdown };
-    return {
-      id: itemId(),
-      kind: "tool",
-      name: e.name,
-      label: e.label,
-      input: e.input,
-      result: e.running ? "(running)" : e.result,
-      isError: e.isError,
-    };
+  return entries.flatMap((e): Item[] => {
+    if (e.kind === "user") return [{ id: itemId(), kind: "user", text: e.text }];
+    if (e.kind === "assistant") return [{ id: itemId(), kind: "assistant", markdown: e.markdown }];
+    if (e.running) return [];
+    const { id: _, running: __, kind, ...tool } = e;
+    return [{ id: itemId(), kind, ...tool }];
   });
 }

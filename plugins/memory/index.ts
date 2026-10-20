@@ -290,6 +290,9 @@ export function createMemoryPlugin(): IvyPlugin {
       ].join("\n");
     },
 
+    sessionReleased({ id }) {
+      snapshots.delete(id);
+    },
     contextFor({ sessionId, now }) {
       const current = screen(store().read()).files;
       const parts: string[] = [];

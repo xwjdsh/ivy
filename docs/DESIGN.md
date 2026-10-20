@@ -286,6 +286,7 @@ Principles; details are decided when this is built.
 | `tools` | Functions the model can call | `memory__search`, `gmail__list_threads` |
 | `instructions` | Static text added to the system prompt | Memory routing rules: what goes into `USER.md`, `MEMORY.md` or the archive |
 | `sessionPrompt(session)` | System prompt section computed when a session starts, frozen for that session | The memory hot files (`USER.md`, `MEMORY.md`) |
+| `sessionReleased(session)` | The daemon let an idle session go: forget what is kept for it (`sessionPrompt` runs again if it comes back) | Memory drops its snapshot for change notices |
 | `contextFor(turn)` | Dynamic text added per turn | The current time; todos due today; memory changes since the session started |
 | `reminders(window)` | What came due since the daemon last asked, shown as notifications (M2) | Todos at their time |
 | `commands` | Slash commands for the user | `/today`, `/memory [query]` |
@@ -311,6 +312,7 @@ export interface IvyPlugin {
   instructions?: string;      // static, appended to the system prompt
   contextFor?(turn: TurnInfo): Promise<string | null> | string | null;
   sessionPrompt?(session: { id: string }): Promise<string | null> | string | null;  // frozen per session
+  sessionReleased?(session: { id: string }): void;  // an idle session let go
   reminders?(window: { since: Date; now: Date }): Promise<Reminder[]> | Reminder[];  // due in the window
   commands?: CommandDef[];
   // Planned: jobs (M5), lifecycle hooks: first "before compaction" (memory saves what

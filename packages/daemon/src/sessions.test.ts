@@ -209,11 +209,10 @@ test("a message sent while a turn runs waits, then runs next, from any client", 
   let view = (await call("GET", `/sessions/${body.id}`)).body as SessionView;
   expect(view.running?.text).toBe("first");
   expect(view.queue).toEqual([second]);
-  // The turn so far is part of the view, for a client that opens it now.
-  expect(view.entries).toEqual([
-    { kind: "user", text: "first" },
-    { kind: "assistant", markdown: "one" },
-  ]);
+  // The turn so far is part of the view, for a client that opens it now; the text still
+  // being written comes apart, so the client can keep streaming into it.
+  expect(view.entries).toEqual([{ kind: "user", text: "first" }]);
+  expect(view.streaming).toBe("one");
 
   first.open();
   await b.until((e) => e.type === "turn_end" && e.promptId === second.id);

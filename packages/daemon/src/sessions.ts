@@ -125,12 +125,18 @@ export class Sessions {
     const messages = live.running
       ? live.session.messages.slice(0, live.running.before)
       : live.session.messages;
-    const entries = [...this.entries(messages), ...(live.running?.entries ?? [])];
+    // The text still being written goes apart, so a client can keep streaming into it.
+    const turn = [...(live.running?.entries ?? [])];
+    const last = turn.at(-1);
+    const streaming = live.running?.open && last?.kind === "assistant" ? last.markdown : undefined;
+    if (streaming !== undefined) turn.pop();
+    const entries = [...this.entries(messages), ...turn];
     const permission = [...this.asks.values()].find((p) => p.ask.sessionId === id)?.ask;
     return {
       id,
       entries,
       running: live.running?.prompt,
+      ...(streaming !== undefined && { streaming }),
       queue: [...live.queue],
       tokens: tokensOf(summarizeUsage(this.ivy.paths.sessions, { sessionId: id })),
       ...(permission && { permission }),
@@ -235,7 +241,7 @@ export class Sessions {
       if (live.pumping || this.now() - live.touched < IDLE_MS) continue;
       if (!existsSync(live.session.file)) continue;
       this.live.delete(id);
-      this.ivy.systemPrompt.end(id);
+      this.ivy.releaseSession(id);
     }
   }
 
@@ -359,12 +365,11 @@ export class Sessions {
       }
       case "tool_result": {
         const entry = entries.find((x) => x.kind === "tool" && x.id === e.id);
-        if (entry?.kind === "tool") {
-          entry.result = e.content;
-          entry.isError = e.isError;
-          entry.running = undefined;
-        }
-        this.publish({ sessionId, ...e });
+        if (entry?.kind !== "tool") return; // every result follows its call
+        entry.result = e.content;
+        entry.isError = e.isError;
+        entry.running = undefined;
+        this.publish({ sessionId, ...e, label: entry.label });
         return;
       }
       case "step": {

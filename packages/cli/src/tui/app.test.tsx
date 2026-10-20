@@ -359,6 +359,30 @@ test("another client in the same session: its messages show, and it may answer p
   expect(frame()).toContain("saved from afar");
 });
 
+test("joining a turn that runs: its running tool and prompt show, and finish once", async () => {
+  const { type, frame, idle, client } = await start([
+    { stop: "tool_use", content: [text("Let me save that."), toolUse("a", "t__save")] },
+    { stop: "end_turn", content: [text("Saved.")] },
+  ]);
+  // Another client starts a turn in another session; it waits on a permission prompt.
+  const other = new DaemonClient(client.socket);
+  const busy = await other.createSession();
+  await other.send(busy, "save it");
+  for (let i = 0; i < 100 && !(await other.session(busy)).permission; i++) await tick(10);
+
+  await type(`/resume ${busy}`);
+  await type(ENTER);
+  await eventually(() => expect(frame()).toContain("Allow t__save"));
+  expect(frame()).toContain("Let me save that.");
+  expect(frame()).not.toContain("(running)");
+  await type("y");
+  client.sent++; // the other client's turn: wait for its end too
+  await idle();
+  expect(frame().match(/t · save/g)?.length).toBe(1); // one line, not a second unlabeled one
+  expect(frame()).toContain("Saved.");
+  expect(frame()).toMatch(/\d+ step\(s\) · \d\.\ds/); // timed from the join, not from 1970
+});
+
 test("Ctrl-C interrupts a running turn", async () => {
   const hang = (signal: AbortSignal) =>
     new Promise<never>((_, reject) =>

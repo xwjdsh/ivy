@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { definePlugin, defineTool, type IvyPlugin } from "@ivy/plugin-api";
 import { z } from "zod";
+import { setLogSink } from "./log.ts";
 import { CONTEXT_MAX_CHARS, PluginHost } from "./plugins.ts";
 
 const turn = { sessionId: "s", userText: "hello", now: new Date() };
@@ -218,4 +219,21 @@ test("reminders from every plugin, ids prefixed; a failing plugin is skipped", a
   );
   const window = { since: new Date(0), now: new Date() };
   expect(await h.reminders(window)).toEqual([{ id: "mem:a", title: "A", plugin: "mem" }]);
+});
+
+test("releasing a session tells every plugin; one that throws doesn't stop the rest", async () => {
+  const released: string[] = [];
+  const h = host();
+  await h.register(
+    plugin("a", {
+      sessionReleased: () => {
+        throw new Error("boom");
+      },
+    }),
+  );
+  await h.register(plugin("b", { sessionReleased: ({ id }) => void released.push(id) }));
+  setLogSink(() => {}); // the failure is logged
+  h.releaseSession({ id: "s1" });
+  setLogSink(null);
+  expect(released).toEqual(["s1"]);
 });
