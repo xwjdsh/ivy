@@ -16,6 +16,11 @@ import type { DaemonEvent } from "./server.ts";
  * due at 17:00 is announced at 17:00, not up to an interval later.
  */
 const AFTER_MINUTE_MS = 200;
+/**
+ * A reminder this late (the Mac asleep overnight and more) is dropped rather than shown:
+ * a weekend's worth shouldn't pop up on Monday, and overdue todos still come up in chat.
+ */
+export const STALE_AFTER_MS = 12 * 60 * 60 * 1000;
 
 export interface SchedulerOptions {
   /** Where the time of the last check is kept, so a restart or a sleep loses nothing. */
@@ -45,6 +50,10 @@ export function startScheduler(opts: SchedulerOptions): Scheduler {
     // A clock set back gives an empty window; the next check starts from the new time.
     if (until > since) {
       for (const r of await opts.reminders({ since, now: until })) {
+        if (r.at && until.getTime() - r.at.getTime() > STALE_AFTER_MS) {
+          log.info(`reminder too late to show: ${r.title}`);
+          continue;
+        }
         opts.publish({ type: "reminder", data: r });
         log.info(`reminder: ${r.title}`);
       }

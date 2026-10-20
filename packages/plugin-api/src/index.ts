@@ -93,8 +93,10 @@ export interface Reminder {
   id: string;
   /** What it is about, in the user's words: "Pick up the parcel". */
   title: string;
-  /** A short second line, e.g. "Due today at 17:00". */
+  /** A short second line, e.g. "Due at 17:00", or "Was due Fri 17:00" when it comes late. */
   body?: string;
+  /** When it came due. A reminder more than 12 hours late (asleep all weekend) is dropped. */
+  at?: Date;
 }
 
 /** What a plugin knows about the session it adds a system prompt section to. */

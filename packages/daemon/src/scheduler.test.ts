@@ -27,7 +27,7 @@ function setup(
       windows.push(w);
       const due = at(dueMinutes);
       return due > w.since && due <= w.now
-        ? [{ id: "memory:x", plugin: "memory", title: "Pick up the parcel" }]
+        ? [{ id: "memory:x", plugin: "memory", title: "Pick up the parcel", at: due }]
         : [];
     },
   });
@@ -60,7 +60,10 @@ test("each reminder is announced once, in the check after its time", async () =>
   s.setClock(at(10.5));
   await s.scheduler.check();
   expect(s.events).toEqual([
-    { type: "reminder", data: { id: "memory:x", plugin: "memory", title: "Pick up the parcel" } },
+    {
+      type: "reminder",
+      data: { id: "memory:x", plugin: "memory", title: "Pick up the parcel", at: at(10) },
+    },
   ]);
   s.scheduler.stop();
 });
@@ -91,4 +94,14 @@ test("a clock set back asks about nothing; a broken state file starts from now",
   await fresh.scheduler.check();
   expect(fresh.events).toEqual([]);
   fresh.scheduler.stop();
+});
+
+test("a reminder more than 12 hours late is dropped, not shown", async () => {
+  const s = setup(10);
+  await s.scheduler.check();
+  s.scheduler.stop();
+  const weekend = setup(10, s.stateFile, at(10 + 12 * 60 + 1));
+  await weekend.scheduler.check();
+  expect(weekend.events).toEqual([]);
+  weekend.scheduler.stop();
 });

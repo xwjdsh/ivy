@@ -367,14 +367,22 @@ export function dueReminders(files: Files, since: Date, now: Date, remindAt: str
     const time = due.slice(11) || remindAt;
     const at = localTime(due.slice(0, 10), time);
     if (at > since && at <= now) {
-      out.push({
-        id: `${due}|${e.text}`,
-        title: e.text,
-        body: due.length > 10 ? `Due at ${time}` : "Due today",
-      });
+      out.push({ id: `${due}|${e.text}`, title: e.text, body: dueLine(due, at, now), at });
     }
   }
   return out;
+}
+
+/** When a reminder comes after a sleep, it says so: "Was due Fri 17:00", not "Due at 17:00". */
+const LATE_MS = 5 * 60 * 1000;
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+function dueLine(due: string, at: Date, now: Date): string {
+  const time = due.slice(11);
+  if (now.getTime() - at.getTime() <= LATE_MS) return time ? `Due at ${time}` : "Due today";
+  const sameDay = at.toDateString() === now.toDateString();
+  const day = sameDay ? "" : WEEKDAYS[at.getDay()];
+  return `Was due ${[day, time || (sameDay ? "today" : "")].filter(Boolean).join(" ")}`;
 }
 
 /** "2026-10-19" and "17:00" as that moment in the machine's timezone. */

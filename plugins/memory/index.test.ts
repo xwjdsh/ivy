@@ -297,17 +297,26 @@ test("reminders: open todos whose time falls in the window, dated ones at remind
       "",
     ].join("\n"),
   );
-  const local = (h: number, m = 0) => new Date(2026, 9, 20, h, m);
+  const local = (h: number, m = 0, day = 20) => new Date(2026, 9, day, h, m);
   const ask = (since: Date, now: Date) => plugin.reminders?.({ since, now });
   expect(await ask(local(16, 59), local(17))).toEqual([
     {
       id: "2026-10-20T17:00|Pick up the parcel",
       title: "Pick up the parcel",
       body: "Due at 17:00",
+      at: local(17),
     },
   ]);
-  expect(await ask(local(8), local(9))).toEqual([
-    { id: "2026-10-20|Pay the rent", title: "Pay the rent", body: "Due today" },
+  expect(await ask(local(8, 29), local(8, 30))).toEqual([
+    { id: "2026-10-20|Pay the rent", title: "Pay the rent", body: "Due today", at: local(8, 30) },
   ]);
   expect(await ask(local(17), local(23))).toEqual([]); // (since, now]: 17:00 was the last window's
+  // After a sleep, a reminder says it is late.
+  const late = async (now: Date) => (await ask(local(16), now))?.[0]?.body;
+  expect(await late(local(17, 4))).toBe("Due at 17:00");
+  expect(await late(local(19))).toBe("Was due 17:00");
+  expect(await late(local(8, 0, 21))).toBe("Was due Tue 17:00");
+  expect((await ask(local(8), local(10)))?.find((r) => r.title === "Pay the rent")?.body).toBe(
+    "Was due today",
+  );
 });
