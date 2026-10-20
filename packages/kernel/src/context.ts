@@ -37,6 +37,9 @@ export class SystemPrompt {
    */
   start(sessionId: string, interfaceInstructions: string): Promise<PromptPart[]> {
     const parts = this.build(sessionId, interfaceInstructions);
+    // A failure (SOUL.md unreadable) isn't lost when nobody awaits this: the next turn's
+    // textFor gets the same rejection and the turn ends with it.
+    parts.catch(() => {});
     this.sessions.set(sessionId, parts);
     return parts;
   }

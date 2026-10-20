@@ -39,7 +39,6 @@ import { asToolResult, fullNote, usageText } from "./write.ts";
  */
 const TAGS_HELP = 'Comma-separated, in both languages, e.g. "dentist, 牙医, 看牙"';
 
-/** From this share of a limit on, results remind the model to consolidate. */
 /** Todos overdue for longer than this are flagged in /memory. */
 const LONG_OVERDUE_DAYS = 30;
 /** At most this many due todos in a turn's context. */

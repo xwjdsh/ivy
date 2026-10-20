@@ -306,3 +306,21 @@ test("closing interrupts running turns and refuses new messages", async () => {
   expect(() => sessions.send(body.id, "late")).toThrow("stopping");
   await client.close();
 });
+
+test("a Markdown session let go and loaded again keeps its instructions", async () => {
+  const { call, socket, sessions, model, clock } = await start([
+    { content: [text("one")] },
+    { content: [text("two")] },
+  ]);
+  const client = await follow(socket);
+  const id = (await call("POST", "/sessions", {})).body.id; // the default display
+  const first = (await call("POST", `/sessions/${id}/prompts`, { text: "first" })).body;
+  await client.until((e) => e.type === "turn_end" && e.promptId === first.id);
+  clock.now += IDLE_MS + 1000;
+  sessions.sweep();
+  expect(sessions.loaded).toBe(0);
+  const second = (await call("POST", `/sessions/${id}/prompts`, { text: "second" })).body;
+  await client.until((e) => e.type === "turn_end" && e.promptId === second.id);
+  expect(JSON.stringify(model.requests[1]?.system)).toContain("renders Markdown");
+  await client.close();
+});

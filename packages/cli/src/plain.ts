@@ -18,6 +18,9 @@ const c = {
   bold: (s: string) => `\x1b[1m${s}\x1b[0m`,
 };
 
+/** Why a turn's result never came: the connection dropped while it ran. */
+const LOST = "Lost the connection to Ivy's daemon; the reply's end wasn't received";
+
 /** A tool call in one line, as the TUI shows it: "memory · save: Dentist on Friday". */
 const label = (l: ToolLabel) => (l.text ? `${c.bold(l.plugin)} · ${l.text}` : c.bold(l.plugin));
 
@@ -116,11 +119,26 @@ export async function runPlain(
   const ready = new Promise<void>((resolve) => {
     connected = resolve;
   });
+  /**
+   * After the stream dropped and came back, events may have been missed: if the prompt
+   * neither runs nor waits any more, its turn ended meanwhile (or went with a daemon that
+   * stopped), so stop waiting.
+   */
+  const checkPrompt = () => {
+    const id = promptId;
+    if (!id) return; // not sent yet: checked once `send` returns
+    void client.session(sessionId).then(
+      (view) => {
+        if (view.running?.id === id || view.queue.some((p) => p.id === id)) return;
+        finish(endedTurns.get(id) ?? { stopReason: "error", steps: 0, costUsd: 0, error: LOST });
+      },
+      () => finish({ stopReason: "error", steps: 0, costUsd: 0, error: LOST }),
+    );
+  };
   let connects = 0;
   const following = client.follow(render, stop.signal, () => {
-    // A second connect means the daemon went away mid-turn: the turn ended with it.
     if (++connects === 1) connected();
-    else finish({ stopReason: "error", steps: 0, costUsd: 0, error: "Ivy's daemon stopped" });
+    else checkPrompt();
   });
   const onSigint = () => void client.interrupt(sessionId).catch(() => {});
   process.on("SIGINT", onSigint);
@@ -129,6 +147,7 @@ export async function runPlain(
     promptId = (await client.send(sessionId, prompt)).id;
     const already = endedTurns.get(promptId);
     if (already) finish(already);
+    else if (connects > 1) checkPrompt(); // reconnected while sending
     const end = await ended;
     newline();
     if (end.stopReason === "error") process.stderr.write(c.red(`[error] ${end.error ?? ""}\n`));

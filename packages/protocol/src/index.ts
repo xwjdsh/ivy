@@ -2,11 +2,11 @@
 // and Server-Sent Events on the daemon's Unix socket (DESIGN.md §5.7).
 //
 // What a client shows comes from the daemon: tool labels, history as entries, a permission
-// prompt's choices. Clients only draw it.
+// prompt's choices. Clients only draw it. Only types are taken from the kernel, so a web
+// client can use this package without bundling the kernel.
 //
 // The menu-bar app (Go, app/events.go) reads part of it too: /health, /events?notify=1 and
-// the reminder event. Change those here and there together. Only types are taken from the kernel, so a web
-// client can use this package without bundling the kernel.
+// the reminder event. Change those here and there together.
 
 import type { PermissionChoice, RequestInfo, StopReason, TokenCounts } from "@ivy/kernel";
 import type { RiskLevel } from "@ivy/plugin-api";

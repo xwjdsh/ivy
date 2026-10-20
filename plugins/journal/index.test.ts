@@ -138,6 +138,8 @@ test("changes during the session reach the turn's context", async () => {
     `IVY.md changed since this session started:\n+ - [${today}] Second moment`,
   );
   expect(await turn("other")).toBeNull(); // no prompt built for that session
+  plugin.sessionReleased?.({ id: "s" }); // let go: the snapshot goes with it
+  expect(await turn()).toBeNull();
 });
 
 const SOUL = "You are Ivy.\n\n## How you talk\n\n- Be direct.\n";

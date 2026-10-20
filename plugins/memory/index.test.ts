@@ -256,6 +256,11 @@ test("changes to the hot files during a session reach the turn's context", async
   // A session that started later has its own snapshot.
   await plugin.sessionPrompt?.({ id: "s2" });
   expect(turn("s2")).toBeNull();
+  // A session let go forgets its snapshot; built again, it starts from the files as they are.
+  plugin.sessionReleased?.({ id: "s1" });
+  expect(turn()).toBeNull();
+  await plugin.sessionPrompt?.({ id: "s1" });
+  expect(turn()).toBeNull();
 });
 
 test("many changes fit the turn's context: whole lines, then a pointer to search", async () => {

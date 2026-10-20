@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { definePlugin } from "@ivy/plugin-api";
@@ -138,4 +138,13 @@ test("each session keeps its own frozen prompt, with its interface", async () =>
   expect(() => system.partsFor("a")).toThrow("wasn't started"); // let go: start it again
   await system.start("a", "Renders Markdown.");
   expect(await system.textFor("a")).toContain("After.");
+});
+
+test("a prompt that can't be built fails the turn that reads it, not the process", async () => {
+  const paths = tempPaths();
+  mkdirSync(paths.soul); // SOUL.md can't be read as a file
+  const system = new SystemPrompt(paths, new PluginHost(paths.data, {}));
+  void system.start("s", ""); // nobody awaits it, as the daemon doesn't
+  await Bun.sleep(10);
+  await expect(system.textFor("s")).rejects.toThrow();
 });

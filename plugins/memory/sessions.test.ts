@@ -69,12 +69,19 @@ test("long messages are cut around the match", () => {
 });
 
 test("dates are the user's local ones, for `since` and in headers", () => {
-  // 01:00 local on the 20th; in UTC it can still be the 19th (e.g. east of Greenwich).
-  const ts = new Date(2026, 9, 20, 1, 0).toISOString();
-  const early: ConversationHistory = {
-    sessions: () => [{ id: "early", updatedAt: ts }],
-    messages: () => [{ role: "user", text: "the ffmpeg flags again", ts }],
-  };
-  const out = searchSessions(early, { query: "ffmpeg", since: "2026-10-20" });
-  expect(out).toContain("## 2026-10-20 (session early)");
+  // Pinned to a timezone east of UTC, so the test tells local from UTC dates wherever it
+  // runs (a UTC machine, like CI, would see no difference).
+  const tz = process.env.TZ;
+  process.env.TZ = "Asia/Tokyo";
+  try {
+    const ts = "2026-10-19T16:00:00.000Z"; // 01:00 on the 20th in Tokyo, still the 19th in UTC
+    const early: ConversationHistory = {
+      sessions: () => [{ id: "early", updatedAt: ts }],
+      messages: () => [{ role: "user", text: "the ffmpeg flags again", ts }],
+    };
+    const out = searchSessions(early, { query: "ffmpeg", since: "2026-10-20" });
+    expect(out).toContain("## 2026-10-20 (session early)");
+  } finally {
+    process.env.TZ = tz;
+  }
 });

@@ -24,8 +24,7 @@ const NAME_RE = /^[a-zA-Z0-9_-]+$/;
 const COMMAND_RE = /^\/[a-z][a-z0-9-]*$/;
 
 // Per-plugin limits for contextFor, so one plugin can't bloat or stall a turn. The size
-// limit is part of the plugin API, so plugins can fit their text in.
-
+// limit, CONTEXT_MAX_CHARS, is in the plugin API, so plugins can fit their text in.
 const CONTEXT_TIMEOUT_MS = 1000;
 /**
  * Per-plugin limits for sessionPrompt. Room for the memory plugin's two hot files at their
