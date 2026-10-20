@@ -47,7 +47,7 @@ export interface Ivy {
   plugins: PluginHost;
   config: Config;
   paths: Paths;
-  /** Built per session: call `start(id)` when a session starts or is switched to. */
+  /** Frozen per session: `start(id, …)` when a session starts or is loaded again. */
   systemPrompt: SystemPrompt;
   capabilities: Capabilities;
   permissions: Permissions;

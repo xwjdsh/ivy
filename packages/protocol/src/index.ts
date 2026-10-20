@@ -2,7 +2,10 @@
 // and Server-Sent Events on the daemon's Unix socket (DESIGN.md §5.7).
 //
 // What a client shows comes from the daemon: tool labels, history as entries, a permission
-// prompt's choices. Clients only draw it. Only types are taken from the kernel, so a web
+// prompt's choices. Clients only draw it.
+//
+// The menu-bar app (Go, app/events.go) reads part of it too: /health, /events?notify=1 and
+// the reminder event. Change those here and there together. Only types are taken from the kernel, so a web
 // client can use this package without bundling the kernel.
 
 import type { PermissionChoice, RequestInfo, StopReason, TokenCounts } from "@ivy/kernel";
@@ -207,6 +210,7 @@ export type SessionChange =
   | { type: "turn_end"; promptId: string; end: TurnEnd };
 
 /** A reminder that came due, sent as `event: reminder` (see Reminder in plugin-api). */
+// Mirrored by `reminder` in app/events.go, which reads id, title, body and plugin.
 export interface ReminderEvent {
   id: string;
   title: string;

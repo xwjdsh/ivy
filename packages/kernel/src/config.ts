@@ -118,7 +118,7 @@ export function resolvePaths(home = process.env.IVY_HOME ?? join(homedir(), ".iv
     traces: join(home, "traces"),
     data: join(home, "data"),
     modelsCache: join(home, "cache", "models.json"),
-    daemonSocket: join(home, "daemon.sock"),
+    daemonSocket: join(home, "daemon.sock"), // also in app/paths.go
     daemonState: join(home, "daemon"),
   };
 }

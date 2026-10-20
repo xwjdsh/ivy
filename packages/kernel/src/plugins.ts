@@ -25,7 +25,6 @@ const COMMAND_RE = /^\/[a-z][a-z0-9-]*$/;
 
 // Per-plugin limits for contextFor, so one plugin can't bloat or stall a turn. The size
 // limit is part of the plugin API, so plugins can fit their text in.
-export { CONTEXT_MAX_CHARS };
 
 const CONTEXT_TIMEOUT_MS = 1000;
 /**

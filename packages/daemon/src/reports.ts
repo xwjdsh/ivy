@@ -35,7 +35,6 @@ export function usageReport(sessionsDir: string, sessionId: string, now = new Da
 /** `/status`: where things are and why the current model behaves as it does. */
 export function statusReport(
   ivy: Ivy,
-  model: string,
   sessionId: string,
   sessionFile: string,
   prompt: PromptPart[],
@@ -54,7 +53,7 @@ export function statusReport(
   });
   const lines = [
     "Status",
-    `  model: ${model}`,
+    `  model: ${ivy.agent.model}`,
     `  provider: ${ref.provider.name} · ${ref.provider.base_url}`,
     ...ivy.capabilities.explain(ref).map((l) => `    ${l}`),
     `  system prompt: ${prompt.map((part) => `${part.name} ${part.text.length}`).join(" · ")} · total ${total} chars`,

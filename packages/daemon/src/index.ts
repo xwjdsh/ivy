@@ -15,21 +15,11 @@ import { type Daemon, startDaemon } from "./server.ts";
 import { Sessions } from "./sessions.ts";
 import { codeVersion } from "./version.ts";
 
+// What other packages use: `ivy daemon` (runDaemon), a daemon to test against (serve,
+// startDaemon), what a client checks (health, codeVersion), and the evals' display text.
 export { DISPLAY_INSTRUCTIONS } from "./display.ts";
-export { type Scheduler, startScheduler } from "./scheduler.ts";
-export {
-  type Daemon,
-  type DaemonEvent,
-  DaemonRunningError,
-  health,
-  isAlive,
-  MAX_SOCKET_PATH,
-  type Routes,
-  startDaemon,
-} from "./server.ts";
-export { IDLE_MS, PERMISSION_TIMEOUT_MS, Sessions } from "./sessions.ts";
+export { type Daemon, health, startDaemon } from "./server.ts";
 export { codeVersion } from "./version.ts";
-export { api };
 
 export interface ServeOptions {
   paths: Paths;

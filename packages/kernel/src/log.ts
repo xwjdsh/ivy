@@ -11,8 +11,8 @@ export function setLogLevel(level: LogLevel): void {
 }
 
 /**
- * Send log lines somewhere other than stderr, e.g. into the TUI (where stderr would
- * corrupt the screen). Pass null to go back to stderr.
+ * Send log lines somewhere other than stderr as they are (the daemon adds the time to
+ * each line of its log file). Pass null to go back to stderr.
  */
 export function setLogSink(fn: ((line: string, level: LogLevel) => void) | null): void {
   sink = fn;

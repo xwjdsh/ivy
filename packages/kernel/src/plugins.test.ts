@@ -2,10 +2,10 @@ import { expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { definePlugin, defineTool, type IvyPlugin } from "@ivy/plugin-api";
+import { CONTEXT_MAX_CHARS, definePlugin, defineTool, type IvyPlugin } from "@ivy/plugin-api";
 import { z } from "zod";
 import { setLogSink } from "./log.ts";
-import { CONTEXT_MAX_CHARS, PluginHost } from "./plugins.ts";
+import { PluginHost } from "./plugins.ts";
 
 const turn = { sessionId: "s", userText: "hello", now: new Date() };
 const host = (configs: Record<string, Record<string, unknown>> = {}) =>

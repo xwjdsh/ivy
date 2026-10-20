@@ -350,7 +350,7 @@ function searchText(found: Found[]): string {
  * Open todos whose time falls after `since`, up to `now`: the time they have, or
  * `remindAt` on their day for a todo with a date alone.
  */
-export function dueReminders(files: Files, since: Date, now: Date, remindAt: string): Reminder[] {
+function dueReminders(files: Files, since: Date, now: Date, remindAt: string): Reminder[] {
   const out: Reminder[] = [];
   for (const line of files.memory) {
     const e = line.entry;

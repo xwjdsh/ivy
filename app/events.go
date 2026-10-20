@@ -17,7 +17,8 @@ type event struct {
 	Data json.RawMessage
 }
 
-// reminder is the data of a `reminder` event (see Reminder in packages/plugin-api).
+// reminder is the data of a `reminder` event: ReminderEvent in packages/protocol, which
+// says what the daemon sends. The app reads only these fields.
 type reminder struct {
 	ID     string `json:"id"`
 	Title  string `json:"title"`
@@ -51,8 +52,8 @@ func healthy(socket string) bool {
 // followEvents reads the daemon's event stream until it ends or ctx is done, calling
 // onEvent for each event. The first is `connected`; comment lines (heartbeats) are skipped.
 func followEvents(ctx context.Context, socket string, onEvent func(event)) error {
-	// notify=1: this client shows reminders, so the daemon announces them (see the
-	// scheduler in packages/daemon).
+	// notify=1 (NOTIFY_PARAM in packages/protocol): this client shows reminders, so the
+	// daemon sends them here and announces them only while such a client is connected.
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://ivy/events?notify=1", nil)
 	if err != nil {
 		return err

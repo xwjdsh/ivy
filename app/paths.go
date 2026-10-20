@@ -22,10 +22,11 @@ func ivyHome() string {
 	return filepath.Join(dir, ".ivy")
 }
 
-// socketPath is where the daemon listens (see packages/daemon).
+// socketPath is where the daemon listens: resolvePaths' daemonSocket in packages/kernel.
 func socketPath() string { return filepath.Join(ivyHome(), "daemon.sock") }
 
-// maxSocketPath is the longest Unix socket path macOS takes, in bytes.
+// maxSocketPath is the longest Unix socket path macOS takes, in bytes; the daemon checks
+// the same (MAX_SOCKET_PATH in packages/daemon/src/server.ts).
 const maxSocketPath = 103
 
 // socketProblem says why the socket can't be used, or "".

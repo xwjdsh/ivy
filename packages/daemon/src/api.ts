@@ -167,7 +167,7 @@ export function api(ivy: Ivy, sessions: Sessions): Routes {
       case "GET /sessions/:/status": {
         const file = sessions.fileOf(id);
         const parts = await ivy.systemPrompt.partsFor(id);
-        const report: Report = { text: statusReport(ivy, ivy.agent.model, id, file, parts) };
+        const report: Report = { text: statusReport(ivy, id, file, parts) };
         return Response.json(report);
       }
       case "GET /sessions":

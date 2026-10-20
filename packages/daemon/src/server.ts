@@ -69,7 +69,10 @@ const log = createLogger("daemon");
 
 export class DaemonRunningError extends Error {}
 
-/** macOS takes Unix socket paths of at most 103 bytes (104 with the final NUL). */
+/**
+ * macOS takes Unix socket paths of at most 103 bytes (104 with the final NUL). The app
+ * checks the same before starting the daemon (maxSocketPath in app/paths.go).
+ */
 export const MAX_SOCKET_PATH = 103;
 
 export interface DaemonInfo {
