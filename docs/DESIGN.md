@@ -245,7 +245,7 @@ An interface turns user I/O into requests to the daemon. All interfaces speak th
 
 - **M0 — TUI** (`ivy`, built with Ink): the user's messages as full-width shaded blocks and Ivy's replies indented under a dot, so who said what is clear at a glance; streamed answers rendered as Markdown, spinner with phase and elapsed time, one line per tool call (the plugin and the tool's own summary of the call, else its name and first argument; never raw JSON outside the verbose view), consecutive calls without blank lines, results folded, multi-line input (Shift/Option+Enter or trailing `\`) with persistent history and `/` command completion, permission dialog (once / for this session / always / deny; Yes/No only for dangerous tools and `ask` rules), status bar (model as `provider/model`, effort, session, session token totals, `verbose` when on); each turn ends with steps, time and tokens. No money anywhere in the UI (verbose included): `/usage` shows token usage for this session, today, the last 7 days and all time (an estimated cost is still recorded in session files, but not shown). A message sent while Ivy replies waits under the reply (`⧗`) and runs next; Esc or Ctrl-C interrupts and drops what waits; Ctrl-C twice or Ctrl-D quits. The real terminal cursor follows the input caret so IME composition (e.g. Chinese) appears in place.
   - Finished text moves into Ink's `<Static>` (printed once, kept in scrollback) and the live area stays shorter than the screen, so redraws don't flicker; a full redraw remounts `<Static>` (as Gemini CLI does). Tool calls are one line each; their output shows with Ctrl+O or in the verbose view.
-  - One-shot mode (`ivy "question"`) stays plain text for scripts and pipes.
+  - One-shot mode (`ivy "question"`) stays plain text for scripts and pipes: the reply on stdout; tool calls (one line each, with the daemon's labels) and notices on stderr.
 - **M2 — Daemon** (`ivy daemon`): runs the kernel for every interface, and the scheduler.
   - **It owns sessions; interfaces are clients** over one local protocol (OpenClaw's gateway, §10.1, is the reference; OpenCode, on the same stack, runs its TUI as a client of a local HTTP server with SSE events too), so adding an interface never touches plugins. The CLI is one of them. The protocol is a handful of requests and one event stream, written as TypeScript types and zod schemas in `@ivy/protocol` rather than an OpenAPI spec with a generated SDK: every client so far is TypeScript, and a spec can be derived if one isn't. The protocol is HTTP with Server-Sent Events on a Unix socket (`~/.ivy/daemon.sock`, the user's alone), not a TCP port: other users and web pages can't reach it, and there is no port to clash. A web interface, when it comes, gets a TCP port of its own behind a token. One daemon runs at a time; a socket left by a crash is replaced. macOS takes socket paths of at most 103 bytes, so a long `IVY_HOME` is refused with that reason rather than a bare `invalid argument`.
   - **Sessions in the daemon:** every session keeps its own state (its frozen system prompt, its "for this session" permissions), so several can run at once; the model and effort stay global, as `/model` and `/effort` already save the default. A session doesn't care which client a message came from: it has one inbox, and a message that arrives while a turn runs waits for it to end, then runs as the next turn (steering, in M3, adds "into this turn" to the same queue). Events go to every client following the session, so the terminal and the window can watch the same chat; any of them may answer a permission prompt, the first answer counts, and one left unanswered for 10 minutes is refused, with the reason in the session. One-shot mode goes through the daemon too, so the daemon is the only writer of sessions. A session is held in memory while it is used and let go after 30 idle minutes, then loaded again when asked for, its system prompt built afresh (the prompt cache has expired by then); on shutdown running turns are interrupted and write what they have.
@@ -350,6 +350,10 @@ export interface CommandDef {
   description: string;
   run(args: string, ctx: CommandContext): Promise<string | undefined> | string | undefined;  // returned text is shown to the user
 }
+
+// Shared so plugins agree: the turn-context cap, and dates as Ivy writes them.
+export const CONTEXT_MAX_CHARS = 2000;
+export function localDate(d: Date): string;  // YYYY-MM-DD in the machine's timezone
 ```
 
 A plugin is a folder with an `index.ts` that default-exports an `IvyPlugin`. The contract will be versioned (`apiVersion`) once M3 is done.
@@ -618,8 +622,9 @@ ivy/
 ├── scripts/build.ts         # `bun run build`: single binary in dist/
 ├── packages/
 │   ├── kernel/              # loop, model client, capabilities, context, sessions, permissions, plugin host, traces
-│   │   └── src/prompts/rules.md  # built-in operating and safety rules
-│   ├── plugin-api/          # public types for plugin authors
+│   │   ├── src/prompts/rules.md  # built-in operating and safety rules
+│   │   └── src/testing.ts   # a scripted model for tests (`@ivy/kernel/testing`)
+│   ├── plugin-api/          # public types for plugin authors, and the few helpers plugins share
 │   ├── protocol/            # what the daemon and its clients say to each other: requests, events, display entries (M2)
 │   ├── daemon/              # `ivy daemon`: the local server on a Unix socket, sessions and their queues, reports, the scheduler (M2)
 │   └── cli/                 # `ivy` command: the daemon's client (started on demand), TUI, one-shot plain mode, slash commands
@@ -627,7 +632,7 @@ ivy/
 ├── app/                     # the menu-bar app, in Go with MyGo (§5.7): tray, notifications, supervising the daemon; `bun run build:app`
 ├── plugins/
 │   ├── core/                # time context + date_calc
-│   ├── memory/              # long-term memory (§8.1); the model's rules in instructions.md
+│   ├── memory/              # long-term memory (§8.1); the model's rules in instructions.md; its lines module (line format, LineFile, safety scan, limits) is shared
 │   ├── journal/             # IVY.md, Ivy's own journal (§8.1); builds on memory's lines module
 │   └── ...
 ├── biome.json
