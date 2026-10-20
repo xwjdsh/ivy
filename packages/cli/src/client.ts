@@ -133,19 +133,22 @@ export class DaemonClient {
 
 /** The daemon for this data folder, brought up first if need be (see ensureDaemon). */
 export async function connect(paths: Paths): Promise<DaemonClient> {
-  await ensureDaemon(paths);
-  return new DaemonClient(paths.daemonSocket, () => ensureDaemon(paths));
+  await ensureDaemon(paths, { replace: true });
+  // Later, when the stream finds no daemon, start one; but never replace one: by then this
+  // process may be the older code (a TUI left open across an update or an edit).
+  return new DaemonClient(paths.daemonSocket, () => ensureDaemon(paths, { replace: false }));
 }
 
 /**
  * Make sure a daemon this ivy can use answers on the socket:
  * - none: start one in the background (it exits on its own once unused);
  * - one exiting: wait for it to go, then start one;
- * - one running other code that `ivy` started: stop it and start one with this code;
- * - one running other code that the app started: use it if it speaks this protocol,
- *   else refuse with what to do (the app owns it).
+ * - one running other code that `ivy` started: with `replace` (as `ivy` starts, holding
+ *   the newest code), stop it and start one with this code; else use it;
+ * - one running other code that the app started: use it.
+ * Either way, one that speaks another protocol is refused with what to do.
  */
-export async function ensureDaemon(paths: Paths): Promise<void> {
+export async function ensureDaemon(paths: Paths, opts: { replace: boolean }): Promise<void> {
   const socket = paths.daemonSocket;
   const deadline = Date.now() + START_TIMEOUT_MS;
   let started = false;
@@ -156,7 +159,7 @@ export async function ensureDaemon(paths: Paths): Promise<void> {
     if (h && !h.draining && h.pid !== stopped) {
       const sameProtocol = h.protocol === PROTOCOL_VERSION;
       if (sameProtocol && h.code === codeVersion()) return;
-      if (h.onDemand && stopped === undefined) {
+      if (opts.replace && h.onDemand && stopped === undefined) {
         stopped = h.pid;
         process.kill(h.pid, "SIGTERM"); // it interrupts running turns and writes them
       } else if (sameProtocol) {

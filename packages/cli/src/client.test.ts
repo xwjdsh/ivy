@@ -16,14 +16,22 @@ const paths = () => resolvePaths(mkdtempSync(join(tmpdir(), "ivy-c-")));
 test("a daemon running this code is used as it is", async () => {
   const p = paths();
   running.push(await startDaemon(p, undefined, { code: codeVersion(), onDemand: true }));
-  await ensureDaemon(p); // returns without starting or stopping anything
+  await ensureDaemon(p, { replace: true }); // returns without starting or stopping anything
   expect(running[0]?.clients).toBe(0);
 });
 
 test("the app's daemon is used even when it runs other code of the same protocol", async () => {
   const p = paths();
   running.push(await startDaemon(p, undefined, { code: "older", onDemand: false }));
-  await ensureDaemon(p); // not replaced: the app owns it
+  await ensureDaemon(p, { replace: true }); // not replaced: the app owns it
+});
+
+test("reconnecting never replaces a daemon: this process may be the older code", async () => {
+  const p = paths();
+  // Started by a newer ivy (its code differs from this process's); this process is the
+  // one left open since. Replacing would stop the newer daemon (here: kill this test).
+  running.push(await startDaemon(p, undefined, { code: "newer", onDemand: true }));
+  await ensureDaemon(p, { replace: false });
 });
 
 test("a client whose daemon went away brings one up and reconnects", async () => {
