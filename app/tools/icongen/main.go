@@ -3,10 +3,11 @@
 //   - resources/icon.png, the app icon: art/ivy.webp (Ivy, drawn with ChatGPT's image tool)
 //     in a macOS rounded square, 824 pixels on a 1024 canvas with a soft shadow, as the
 //     system's own icons are laid out. The square's corners cover the artwork's own.
-//   - resources/tray.png, the menu-bar icon: art/tray.png (her silhouette, black on
-//     white) as a template image: the black kept as ink, cut to its edges
-//     and 36 pixels tall, for the menu bar's 18 points. macOS tints it for light and dark
-//     menu bars.
+//   - resources/tray.png, the menu-bar icon: art/tray.webp, an ivy leaf like the one on her
+//     hair clip (drawn with the same tool), black on white. A leaf reads at the menu bar's
+//     18 points where a face doesn't, so its veins and stalk are drawn thick. The black is
+//     kept as ink, cut to its edges and made 36 pixels tall: a template image, which
+//     macOS tints for light and dark menu bars.
 //
 // Run it from the app folder after changing a source: go run ./tools/icongen
 package main
@@ -35,7 +36,7 @@ func main() {
 	if err := writePNG("resources/icon.png", appIcon(art)); err != nil {
 		log.Fatal(err)
 	}
-	if err := writePNG("resources/tray.png", trayIcon(load("art/tray.png"))); err != nil {
+	if err := writePNG("resources/tray.png", trayIcon(load("art/tray.webp"))); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -141,8 +142,8 @@ func boxBlur(m *image.Alpha, r int, horizontal bool) *image.Alpha {
 	return out
 }
 
-// trayIcon keeps the silhouette's dark pixels as ink, so the background and the face
-// read as clear, and fits the ink to trayPx in height.
+// trayIcon keeps the artwork's dark pixels as ink, so the background and the veins read
+// as clear, and fits the ink to trayPx in height.
 func trayIcon(art image.Image) image.Image {
 	b := art.Bounds()
 	ink := image.NewAlpha(b)
