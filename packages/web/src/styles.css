@@ -1,31 +1,35 @@
-/* The chat window. Quiet surfaces, one accent (ivy green), type doing most of the work. */
+/* The chat window. Warm, quiet neutrals, so her face is the most colorful thing on screen; one
+   accent, the coral of her cheeks, the complement of her green. Type does most of the work. */
 
 :root {
   color-scheme: light dark;
 
-  --bg: #ffffff;
-  --side: #f4f4f2;
-  --side-hover: rgb(0 0 0 / 0.045);
-  --text: #1d1f21;
-  --muted: #6d7176;
-  --faint: #9a9da2;
-  --line: rgb(0 0 0 / 0.08);
-  --line-strong: rgb(0 0 0 / 0.13);
-  --surface: #f6f6f4;
-  --bubble: #f1f1ee;
-  --accent: #2f7d4f;
-  --accent-soft: rgb(47 125 79 / 0.1);
+  --bg: #fcfaf8;
+  --side: #f5f1ed;
+  --side-hover: rgb(60 30 15 / 0.05);
+  --text: #221d1a;
+  --muted: #6f655e;
+  --faint: #9d928a;
+  --line: rgb(60 35 20 / 0.09);
+  --line-strong: rgb(60 35 20 / 0.15);
+  --surface: #f6f2ee;
+  --bubble: #fbe8e0;
+  /* For text and lines; buttons take the brighter fill. */
+  --accent: #bf4c25;
+  --accent-soft: rgb(232 103 63 / 0.13);
   --accent-text: #ffffff;
+  --accent-fill: linear-gradient(140deg, #f27d52, #dd5a32);
   --warn: #9a6200;
   --warn-soft: rgb(196 133 0 / 0.1);
-  --error: #c4312b;
-  --error-soft: rgb(196 49 43 / 0.08);
-  --shadow: 0 1px 2px rgb(0 0 0 / 0.04), 0 6px 24px rgb(0 0 0 / 0.06);
-  --code-bg: #f7f7f5;
+  --error: #cf3046;
+  --error-soft: rgb(207 48 70 / 0.08);
+  --shadow: 0 1px 2px rgb(50 25 10 / 0.04), 0 6px 24px rgb(50 25 10 / 0.07);
+  --code-bg: #f6f2ee;
   --menu: #ffffff;
-  --menu-lit: rgb(0 0 0 / 0.05);
+  --menu-lit: rgb(60 30 15 / 0.05);
   --menu-shadow:
-    0 0 0 1px rgb(0 0 0 / 0.07), 0 2px 4px rgb(0 0 0 / 0.04), 0 12px 32px -6px rgb(0 0 0 / 0.16);
+    0 0 0 1px rgb(60 35 20 / 0.08), 0 2px 4px rgb(50 25 10 / 0.04),
+    0 12px 32px -6px rgb(50 25 10 / 0.16);
 
   --sans: -apple-system, BlinkMacSystemFont, "PingFang SC", system-ui, sans-serif;
   --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
@@ -39,29 +43,30 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #1c1c1e;
-    --side: #232325;
-    --side-hover: rgb(255 255 255 / 0.05);
-    --text: #ececec;
-    --muted: #a0a0a5;
-    --faint: #75757a;
-    --line: rgb(255 255 255 / 0.08);
-    --line-strong: rgb(255 255 255 / 0.14);
-    --surface: #262628;
-    --bubble: #2c2c2f;
-    --accent: #5dbb83;
-    --accent-soft: rgb(93 187 131 / 0.14);
-    --accent-text: #0d1f14;
+    --bg: #1a1715;
+    --side: #201c1a;
+    --side-hover: rgb(255 235 225 / 0.05);
+    --text: #efe9e5;
+    --muted: #a89e97;
+    --faint: #7a706a;
+    --line: rgb(255 235 225 / 0.08);
+    --line-strong: rgb(255 235 225 / 0.14);
+    --surface: #231f1c;
+    --bubble: #3a2620;
+    --accent: #ff8c66;
+    --accent-soft: rgb(255 140 102 / 0.14);
+    --accent-text: #2a110a;
+    --accent-fill: linear-gradient(140deg, #ffa07f, #f57a52);
     --warn: #e0ae4a;
     --warn-soft: rgb(224 174 74 / 0.12);
-    --error: #ff7b72;
-    --error-soft: rgb(255 123 114 / 0.1);
-    --shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 8px 28px rgb(0 0 0 / 0.35);
-    --code-bg: #232326;
-    --menu: #2a2a2d;
-    --menu-lit: rgb(255 255 255 / 0.07);
+    --error: #ff6b7f;
+    --error-soft: rgb(255 107 127 / 0.1);
+    --shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 8px 28px rgb(0 0 0 / 0.38);
+    --code-bg: #201c1a;
+    --menu: #282320;
+    --menu-lit: rgb(255 235 225 / 0.07);
     --menu-shadow:
-      0 0 0 1px rgb(255 255 255 / 0.08), 0 2px 6px rgb(0 0 0 / 0.3),
+      0 0 0 1px rgb(255 235 225 / 0.08), 0 2px 6px rgb(0 0 0 / 0.3),
       0 16px 40px -8px rgb(0 0 0 / 0.6);
   }
 }
@@ -165,7 +170,7 @@ button.ghost {
 }
 
 button.primary {
-  background: var(--accent);
+  background: var(--accent-fill);
   color: var(--accent-text);
 }
 
@@ -265,6 +270,7 @@ main {
   position: relative;
   flex: none;
   display: inline-block;
+  border-radius: 50%;
 }
 
 .portrait .crop {
@@ -539,6 +545,14 @@ main {
   border: none;
   border-radius: 50%;
   background: none;
+}
+
+/* Her face, where it is large, sits in a soft halo of the accent. */
+.hello .portrait,
+.profile .portrait {
+  box-shadow:
+    0 0 0 6px var(--accent-soft),
+    0 14px 40px -10px color-mix(in srgb, var(--accent) 60%, transparent);
 }
 
 .hello h1 {
@@ -1007,6 +1021,9 @@ main {
 
 .composer:focus-within {
   border-color: color-mix(in srgb, var(--accent) 45%, var(--line-strong));
+  box-shadow:
+    var(--shadow),
+    0 0 0 3px var(--accent-soft);
 }
 
 .composer textarea {
@@ -1260,8 +1277,9 @@ main {
   padding: 0;
   border: none;
   border-radius: 50%;
-  background: var(--accent);
+  background: var(--accent-fill);
   color: var(--accent-text);
+  box-shadow: 0 2px 8px -2px color-mix(in srgb, var(--accent) 60%, transparent);
   transition:
     opacity 0.15s,
     transform 0.1s;
