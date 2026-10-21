@@ -33,13 +33,13 @@ export function SettingsPage(props: {
   );
 
   return (
-    <div className="settings-page">
+    <div className="st-page">
       <nav aria-label="Settings">
         {SECTIONS.map((s) => (
           <button
             key={s}
             type="button"
-            className="section"
+            className="st-section"
             aria-current={s === section ? "page" : undefined}
             onClick={() => setSection(s)}
           >
@@ -47,7 +47,7 @@ export function SettingsPage(props: {
           </button>
         ))}
       </nav>
-      <div className="settings-body">
+      <div className="st-body">
         <h2>{section}</h2>
         {section === "General" && <General onError={onError} />}
         {section === "Models" && (
@@ -72,12 +72,12 @@ export function SettingsPage(props: {
 /** A labelled row: what it is on the left, the control on the right, a note under it. */
 function Row(props: { label: string; note?: ReactNode; children: ReactNode }) {
   return (
-    <div className="setting">
-      <div className="what">
-        <span className="label">{props.label}</span>
-        {props.note && <span className="note">{props.note}</span>}
+    <div className="st-row">
+      <div className="st-what">
+        <span className="st-label">{props.label}</span>
+        {props.note && <span className="st-note">{props.note}</span>}
       </div>
-      <div className="control">{props.children}</div>
+      <div className="st-control">{props.children}</div>
     </div>
   );
 }
@@ -86,7 +86,11 @@ function Row(props: { label: string; note?: ReactNode; children: ReactNode }) {
 function OpenConfig({ onError }: { onError(err: unknown): void }) {
   if (!inApp) return null;
   return (
-    <button type="button" className="ghost open" onClick={() => api.open("config").catch(onError)}>
+    <button
+      type="button"
+      className="ghost st-open"
+      onClick={() => api.open("config").catch(onError)}
+    >
       Open config.toml
       <ExternalLink size={13} />
     </button>
@@ -102,7 +106,9 @@ function General({ onError }: { onError(err: unknown): void }) {
     api.command().then(setCommand, onError);
   }, [onError]);
   if (!inApp) {
-    return <p className="hint">These are the app's own settings: open Ivy's app to change them.</p>;
+    return (
+      <p className="st-hint">These are the app's own settings: open Ivy's app to change them.</p>
+    );
   }
   return (
     <section>
@@ -112,7 +118,7 @@ function General({ onError }: { onError(err: unknown): void }) {
       <Row label="Start at login" note="Ivy waits in the Dock, reminders coming on time.">
         <input
           type="checkbox"
-          className="switch"
+          className="st-switch"
           checked={login ?? false}
           disabled={login === undefined}
           onChange={(e) => api.setLogin(e.target.checked).then(setLogin, onError)}
@@ -150,12 +156,12 @@ function Models(props: {
   return (
     <section>
       {props.state && (
-        <div className="group">
+        <div className="st-current">
           <ModelSettings state={props.state} onState={props.onState} onError={onError} />
         </div>
       )}
       <h3>Providers</h3>
-      <p className="hint">
+      <p className="st-hint">
         Where models are reached. A provider's models are offered once it is added: the ones its
         endpoint lists, or only those you name.
       </p>
@@ -172,7 +178,7 @@ function Models(props: {
           onCancel={() => setAdding(false)}
         />
       ) : (
-        <button type="button" className="ghost add" onClick={() => setAdding(true)}>
+        <button type="button" className="ghost st-add" onClick={() => setAdding(true)}>
           <Plus size={14} />
           Add a provider
         </button>
@@ -217,14 +223,14 @@ function Provider(props: {
   };
 
   return (
-    <div className="provider">
-      <div className="head">
-        <span className="name">{p.name}</span>
-        {p.inUse && <span className="badge">In use</span>}
-        <span className="where">{p.official ? "Anthropic API" : p.base_url}</span>
+    <div className="st-provider">
+      <div className="st-head">
+        <span className="st-name">{p.name}</span>
+        {p.inUse && <span className="st-badge">In use</span>}
+        <span className="st-where">{p.official ? "Anthropic API" : p.base_url}</span>
       </div>
-      <div className="info">
-        <span className={`key ${p.key}`}>
+      <div className="st-info">
+        <span className={`st-key st-key-${p.key}`}>
           <KeyRound size={12} />
           {KEY_TEXT[p.key]}
         </span>
@@ -232,7 +238,7 @@ function Provider(props: {
       </div>
 
       {editing && (
-        <div className="form">
+        <div className="st-form">
           <label>
             Endpoint
             <input
@@ -250,7 +256,7 @@ function Provider(props: {
               onChange={(e) => setModels(e.target.value)}
             />
           </label>
-          <div className="actions">
+          <div className="st-actions">
             <button type="button" className="ghost" onClick={() => setEditing(false)}>
               Cancel
             </button>
@@ -276,7 +282,7 @@ function Provider(props: {
       )}
 
       {keying && (
-        <div className="form">
+        <div className="st-form">
           <label>
             API key
             <input
@@ -287,7 +293,7 @@ function Provider(props: {
               onChange={(e) => setKey(e.target.value)}
             />
           </label>
-          <div className="actions">
+          <div className="st-actions">
             <button type="button" className="ghost" onClick={() => setKeying(false)}>
               Cancel
             </button>
@@ -316,7 +322,7 @@ function Provider(props: {
       )}
 
       {!editing && !keying && (
-        <div className="actions">
+        <div className="st-actions">
           <button type="button" className="ghost" onClick={() => setEditing(true)}>
             Edit
           </button>
@@ -356,7 +362,7 @@ function Provider(props: {
           </button>
         </div>
       )}
-      {problem && <p className="problem">{problem}</p>}
+      {problem && <p className="st-problem">{problem}</p>}
     </div>
   );
 }
@@ -388,8 +394,8 @@ function AddProvider(props: {
   };
 
   return (
-    <div className="provider adding">
-      <div className="form">
+    <div className="st-provider st-adding">
+      <div className="st-form">
         <label>
           Name
           <input
@@ -419,11 +425,11 @@ function AddProvider(props: {
             onChange={(e) => setKey(e.target.value)}
           />
         </label>
-        <p className="hint">
+        <p className="st-hint">
           It speaks the Anthropic Messages API. Ivy lists the endpoint's models with this key before
           anything is saved.
         </p>
-        <div className="actions">
+        <div className="st-actions">
           <button type="button" className="ghost" onClick={props.onCancel}>
             Cancel
           </button>
@@ -436,7 +442,7 @@ function AddProvider(props: {
             {busy ? "Checking…" : "Add"}
           </button>
         </div>
-        {problem && <p className="problem">{problem}</p>}
+        {problem && <p className="st-problem">{problem}</p>}
       </div>
     </div>
   );
@@ -453,7 +459,7 @@ function Permissions(props: { settings: Settings; onError(err: unknown): void })
   const { allow, ask, deny } = settings.permissions;
   return (
     <section>
-      <p className="hint">
+      <p className="st-hint">
         What runs without asking, what always asks, and what never runs; the rest asks by its risk.{" "}
         <em>Always</em> in a permission prompt adds to the first list.
       </p>
@@ -461,13 +467,13 @@ function Permissions(props: { settings: Settings; onError(err: unknown): void })
       <Rules name="Ask" rules={ask} />
       <Rules name="Deny" rules={deny} />
       <h3>Tools</h3>
-      <table className="tools">
+      <table className="st-tools">
         <tbody>
           {settings.tools.map((t) => (
             <tr key={t.name}>
-              <td className="name">{t.name}</td>
-              <td className={`risk ${t.risk}`}>{t.risk}</td>
-              <td className="allowed">{t.defaultAllow ? "runs without asking" : ""}</td>
+              <td className="st-name">{t.name}</td>
+              <td className={`st-risk st-risk-${t.risk}`}>{t.risk}</td>
+              <td className="st-allowed">{t.defaultAllow ? "runs without asking" : ""}</td>
             </tr>
           ))}
         </tbody>
@@ -479,18 +485,18 @@ function Permissions(props: { settings: Settings; onError(err: unknown): void })
 
 function Rules({ name, rules }: { name: string; rules: string[] }) {
   return (
-    <div className="rules">
-      <span className="label">{name}</span>
+    <div className="st-rules">
+      <span className="st-label">{name}</span>
       {rules.length ? (
-        <span className="list">
+        <span className="st-list">
           {rules.map((r) => (
-            <code key={r} className="rule">
+            <code key={r} className="st-rule">
               {r}
             </code>
           ))}
         </span>
       ) : (
-        <span className="none">None</span>
+        <span className="st-empty">None</span>
       )}
     </div>
   );
@@ -500,17 +506,19 @@ function Plugins(props: { settings: Settings; onError(err: unknown): void }) {
   const { settings } = props;
   return (
     <section>
-      <p className="hint">
-        Turned on and off, and set, under <code className="mono">[plugins.&lt;id&gt;]</code> in
+      <p className="st-hint">
+        Turned on and off, and set, under <code className="st-mono">[plugins.&lt;id&gt;]</code> in
         config.toml.
       </p>
       {settings.plugins.map((p) => (
-        <div key={p.id} className="plugin-card">
-          <div className="head">
-            <span className="name">{p.id}</span>
-            <span className={`badge${p.enabled ? "" : " off"}`}>{p.enabled ? "On" : "Off"}</span>
+        <div key={p.id} className="st-plugin">
+          <div className="st-head">
+            <span className="st-name">{p.id}</span>
+            <span className={`st-badge${p.enabled ? "" : " st-off"}`}>
+              {p.enabled ? "On" : "Off"}
+            </span>
           </div>
-          <p className="description">{p.description}</p>
+          <p className="st-description">{p.description}</p>
           {Object.keys(p.config).length > 0 && (
             <dl>
               {Object.entries(p.config).map(([k, v]) => (
@@ -532,7 +540,7 @@ function About({ settings, onError }: { settings: Settings; onError(err: unknown
   return (
     <section>
       <Row label="Version" note="Which code the daemon runs">
-        <code className="mono">{settings.code}</code>
+        <code className="st-mono">{settings.code}</code>
       </Row>
       <Row label="Ivy's folder" note={settings.paths.home}>
         {inApp && (
