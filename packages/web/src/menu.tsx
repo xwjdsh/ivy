@@ -103,14 +103,17 @@ function Menu(props: {
   const list = useRef<HTMLDivElement>(null);
   const field = useRef<HTMLInputElement>(null);
   useEffect(() => {
-    (field.current ?? list.current)?.focus();
+    // The page around stays where it is.
+    (field.current ?? list.current)?.focus({ preventScroll: true });
   }, []);
   // Keep the lit option in sight; on opening, the chosen one in the middle.
   const opened = useRef(false);
   // biome-ignore lint/correctness/useExhaustiveDependencies: runs when what is lit or shown changes
   useLayoutEffect(() => {
     const el = list.current?.querySelector<HTMLElement>("[data-lit]");
-    el?.scrollIntoView({ block: opened.current ? "nearest" : "center" });
+    if (list.current && el) {
+      scrollWithin(list.current, el, { center: !opened.current, top: GROUP_HEIGHT });
+    }
     opened.current = true;
   }, [lit, query]);
   const onKeyDown = (e: KeyboardEvent) => {
@@ -163,7 +166,16 @@ function Menu(props: {
           />
         </label>
       )}
-      <div className="options" role="listbox" tabIndex={-1} ref={list}>
+      <div
+        className="options"
+        role="listbox"
+        tabIndex={-1}
+        ref={list}
+        // Scrolled, a group's name stuck at the top lies over options: a line shows it does.
+        onScroll={(e) => {
+          e.currentTarget.toggleAttribute("data-scrolled", e.currentTarget.scrollTop > 0);
+        }}
+      >
         {shown.map((o, i) => (
           <Fragment key={o.value}>
             {o.group && o.group !== shown[i - 1]?.group && <div className="group">{o.group}</div>}
@@ -221,4 +233,28 @@ export function Bars({ level, of }: { level: number; of: number }) {
       })}
     </svg>
   );
+}
+
+/** What a group's name, stuck at the top of a list, covers of it. */
+const GROUP_HEIGHT = 28;
+
+/**
+ * Scroll `list` alone so that `el` is in sight (or in its middle), never what holds the list:
+ * scrollIntoView would move every scrolling box around it, the page included.
+ */
+export function scrollWithin(
+  list: HTMLElement,
+  el: HTMLElement,
+  opts: { center?: boolean; top?: number } = {},
+): void {
+  const box = list.getBoundingClientRect();
+  const at = el.getBoundingClientRect();
+  const top = box.top + (opts.top ?? 0);
+  if (opts.center) {
+    list.scrollTop += at.top + at.height / 2 - (box.top + box.height / 2);
+  } else if (at.top < top) {
+    list.scrollTop -= top - at.top;
+  } else if (at.bottom > box.bottom) {
+    list.scrollTop += at.bottom - box.bottom;
+  }
 }

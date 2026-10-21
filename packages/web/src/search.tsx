@@ -5,6 +5,7 @@
 import type { SessionSummary } from "@ivy/protocol";
 import { Search as SearchIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { scrollWithin } from "./menu.tsx";
 import { dayLabel, matching, timeLabel } from "./sessions.ts";
 
 export function Search(props: {
@@ -35,7 +36,8 @@ export function Search(props: {
   }, [onClose]);
   // The one lit stays in sight as the keys move it.
   useEffect(() => {
-    list.current?.children[lit]?.scrollIntoView({ block: "nearest" });
+    const el = list.current?.children[lit];
+    if (list.current && el instanceof HTMLElement) scrollWithin(list.current, el);
   }, [lit]);
 
   const onKeyDown = (e: React.KeyboardEvent) => {
