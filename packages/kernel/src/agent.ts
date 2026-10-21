@@ -3,14 +3,22 @@ import type { RiskLevel } from "@ivy/plugin-api";
 import { type Capabilities, type OptionalFeature, rejectedFeature } from "./capabilities.ts";
 import { type Config, type ModelRef, type ProviderConfig, resolveModel } from "./config.ts";
 import { createLogger, errorMessage } from "./log.ts";
-import { estimateCost, type ModelClient, type ModelMessage, type ModelRequest } from "./model.ts";
+import {
+  endpointKey,
+  estimateCost,
+  type ModelClient,
+  type ModelMessage,
+  type ModelRequest,
+  type RequestExtras,
+} from "./model.ts";
 import type { PermissionChoice, Permissions } from "./permissions.ts";
 import type { PluginHost } from "./plugins.ts";
-import type { Session } from "./session.ts";
+import type { Origin, Session } from "./session.ts";
 import type { Tracer } from "./trace.ts";
 import { CONTEXT_SYSTEM_BETA, type ContextMode, renderMessages } from "./turn-context.ts";
 
 type ToolUseBlock = Anthropic.Beta.BetaToolUseBlock;
+type MessageParam = Anthropic.Beta.BetaMessageParam;
 type ToolResultBlock = Anthropic.Beta.BetaToolResultBlockParam;
 
 export type StopReason =
@@ -150,8 +158,9 @@ export class Agent {
     // One model for the whole turn; a switch applies from the next one.
     const target = this.current;
     const client = this.opts.clientFor(target.provider);
+    const origin: Origin = { endpoint: endpointKey(target.provider.base_url), model: target.id };
     for (let step = 1; step <= config.agent.max_steps; step++) {
-      const request = this.buildRequest(target, session, system);
+      const { request, extras } = this.buildRequest(target, session, system);
       turn.onEvent({ type: "request", step, info: this.describe(request, context !== "") });
       const startedAt = new Date();
       let message: ModelMessage;
@@ -161,6 +170,7 @@ export class Agent {
           request,
           { onText: (delta) => turn.onEvent({ type: "text", delta }) },
           turn.signal,
+          extras,
         );
       } catch (err) {
         const latencyMs = Date.now() - startedAt.getTime();
@@ -173,7 +183,7 @@ export class Agent {
         if (turn.signal.aborted) return { stopReason: "interrupted", steps: step, costUsd };
         // The endpoint rejected an optional feature (compatibility first): turn it off for
         // this model, remember that, and resend. Nothing was appended, so this is safe.
-        const feature = downgradable(err, request);
+        const feature = downgradable(err, request, extras);
         if (feature) {
           this.opts.capabilities.markUnsupported(target, feature);
           turn.onEvent({
@@ -228,14 +238,14 @@ export class Agent {
       if (message.stop_reason === "refusal") return { stopReason: "refusal", steps: step, costUsd };
 
       if (message.stop_reason === "pause_turn") {
-        session.append({ role: "assistant", content: message.content });
+        session.appendFrom(origin, { role: "assistant", content: message.content });
         continue;
       }
 
       const toolUses = message.content.filter((b): b is ToolUseBlock => b.type === "tool_use");
       if (toolUses.length === 0) {
         if (message.content.length > 0) {
-          session.append({ role: "assistant", content: message.content });
+          session.appendFrom(origin, { role: "assistant", content: message.content });
         }
         return { stopReason: mapStopReason(message.stop_reason), steps: step, costUsd };
       }
@@ -246,7 +256,8 @@ export class Agent {
       }
 
       const results = await this.runTools(session.id, toolUses, turn);
-      session.append(
+      session.appendFrom(
+        origin,
         { role: "assistant", content: message.content },
         { role: "user", content: results },
       );
@@ -256,7 +267,11 @@ export class Agent {
     return { stopReason: "max_steps", steps: config.agent.max_steps, costUsd };
   }
 
-  private buildRequest(target: ModelRef, session: Session, systemPrompt: string): ModelRequest {
+  private buildRequest(
+    target: ModelRef,
+    session: Session,
+    systemPrompt: string,
+  ): { request: ModelRequest; extras: RequestExtras } {
     const { config, plugins } = this.opts;
     const caps = this.opts.capabilities.for(target);
     const request: ModelRequest = {
@@ -268,7 +283,7 @@ export class Agent {
       tools: plugins.apiTools(),
       // System messages for context where the model and endpoint support them, else text blocks.
       messages: renderMessages(
-        session.messages,
+        session.messages.map((m) => forModel(m, session.originOf(m), target)),
         (m) => session.contextOf(m),
         caps.systemMessages ? "system" : "block",
       ),
@@ -285,7 +300,11 @@ export class Agent {
     }
     if (request.messages.some((m) => m.role === "system")) betas.push(CONTEXT_SYSTEM_BETA);
     if (betas.length > 0) request.betas = betas;
-    return request;
+    const extras: RequestExtras = {
+      ...(caps.streamUsage && { streamUsage: true }),
+      ...(caps.cacheKey && { cacheKey: session.id }),
+    };
+    return { request, extras };
   }
 
   private describe(request: ModelRequest, hasContext: boolean): RequestInfo {
@@ -383,17 +402,46 @@ const FEATURE_NAMES: Record<OptionalFeature, string> = {
   effort: "the effort setting",
   fallbacks: "server-side refusal fallback",
   systemMessages: "mid-conversation system messages",
+  streamUsage: "usage in the stream",
+  cacheKey: "a prompt cache key",
 };
 
+/** The optional features a request carries. */
+function optionalUsed(request: ModelRequest, extras: RequestExtras): OptionalFeature[] {
+  const used: OptionalFeature[] = [];
+  if (request.output_config?.effort !== undefined) used.push("effort");
+  if (request.fallbacks !== undefined) used.push("fallbacks");
+  if (request.messages.some((m) => m.role === "system")) used.push("systemMessages");
+  if (extras.streamUsage) used.push("streamUsage");
+  if (extras.cacheKey) used.push("cacheKey");
+  return used;
+}
+
 /** A 400 about an optional feature this request actually used. */
-function downgradable(err: unknown, request: ModelRequest): OptionalFeature | null {
+function downgradable(
+  err: unknown,
+  request: ModelRequest,
+  extras: RequestExtras,
+): OptionalFeature | null {
   if (!(err instanceof Anthropic.BadRequestError)) return null;
   const feature = rejectedFeature(err.message);
-  const used =
-    (feature === "effort" && request.output_config?.effort !== undefined) ||
-    (feature === "fallbacks" && request.fallbacks !== undefined) ||
-    (feature === "systemMessages" && request.messages.some((m) => m.role === "system"));
-  return used ? feature : null;
+  return feature && optionalUsed(request, extras).includes(feature) ? feature : null;
+}
+
+/**
+ * A message as `target` may see it: a reply's thinking goes back only to the model that wrote
+ * it, at the endpoint it came from (DESIGN.md §5.2.1); elsewhere it is dropped, as another
+ * backend may reject what it can't verify. Replies from before origins were recorded keep it.
+ */
+function forModel(m: MessageParam, origin: Origin | undefined, target: ModelRef): MessageParam {
+  if (m.role !== "assistant" || !origin || typeof m.content === "string") return m;
+  if (origin.endpoint === endpointKey(target.provider.base_url) && origin.model === target.id) {
+    return m;
+  }
+  const content = m.content.filter((b) => b.type !== "thinking" && b.type !== "redacted_thinking");
+  if (content.length === m.content.length) return m;
+  // A reply of thinking alone keeps its place, the turns staying in order.
+  return { ...m, content: content.length ? content : [{ type: "text", text: "…" }] };
 }
 
 /**

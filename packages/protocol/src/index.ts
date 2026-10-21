@@ -277,9 +277,10 @@ export interface DaemonState {
 /** A provider as the settings page shows it. Never its key: only where one is kept. */
 export interface ProviderInfo {
   name: string;
+  /** The protocol: "anthropic" (the Messages API) or "openai" (Chat Completions). */
   type: string;
   base_url: string;
-  /** Unset: Anthropic's own API. */
+  /** The vendor's own API for its protocol (by `base_url`). */
   official: boolean;
   /** Models offered on it; empty: whatever its endpoint lists. */
   models: string[];

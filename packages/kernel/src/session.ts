@@ -14,11 +14,23 @@ import { promptText } from "./turn-context.ts";
 
 type MessageParam = Anthropic.Beta.BetaMessageParam;
 
+/**
+ * Where a reply came from: the endpoint (its `base_url`, see endpointKey) and the model. Its
+ * thinking goes back only to that model there (DESIGN.md §5.2.1).
+ */
+export interface Origin {
+  endpoint: string;
+  model: string;
+}
+
 /** One line of a session JSONL file. */
 export type SessionRecord =
   | { type: "meta"; id: string; createdAt: string; model: string }
-  /** `context`: the turn's plugin context, kept apart from what the user typed (see turn-context.ts). */
-  | { type: "message"; ts: string; message: MessageParam; context?: string }
+  /**
+   * `context`: the turn's plugin context, kept apart from what the user typed (see
+   * turn-context.ts). `origin`: where a reply came from (none before it was recorded).
+   */
+  | { type: "message"; ts: string; message: MessageParam; context?: string; origin?: Origin }
   | { type: "usage"; ts: string; usage: Anthropic.Beta.BetaUsage; costUsd: number };
 
 export interface SessionSummary {
@@ -41,6 +53,8 @@ export class Session {
   readonly messages: MessageParam[] = [];
   /** Plugin context attached to user prompts, keyed by message object. */
   private readonly contexts = new Map<MessageParam, string>();
+  /** Where each reply came from, keyed by message object. */
+  private readonly origins = new Map<MessageParam, Origin>();
 
   /** Meta record not yet written: the file is created lazily on the first append. */
   private pendingMeta: SessionRecord | null = null;
@@ -69,6 +83,7 @@ export class Session {
     const messages = parseRecords(content).flatMap((r) => {
       if (r.type !== "message") return [];
       if (r.context) session.contexts.set(r.message, r.context);
+      if (r.origin) session.origins.set(r.message, r.origin);
       return [r.message];
     });
     session.messages.push(...withoutDanglingToolUse(messages));
@@ -120,11 +135,25 @@ export class Session {
     return this.contexts.get(message);
   }
 
+  originOf(message: MessageParam): Origin | undefined {
+    return this.origins.get(message);
+  }
+
   /** Messages passed together are written in one call, so a tool call and its results land together. */
   append(...messages: MessageParam[]): void {
+    this.appendFrom(undefined, ...messages);
+  }
+
+  /** As `append`, with where the replies among them came from. */
+  appendFrom(origin: Origin | undefined, ...messages: MessageParam[]): void {
     const ts = new Date().toISOString();
     this.messages.push(...messages);
-    this.write(...messages.map((message): SessionRecord => ({ type: "message", ts, message })));
+    const records = messages.map((message): SessionRecord => {
+      const from = message.role === "assistant" ? origin : undefined;
+      if (from) this.origins.set(message, from);
+      return { type: "message", ts, message, ...(from && { origin: from }) };
+    });
+    this.write(...records);
   }
 
   recordUsage(usage: Anthropic.Beta.BetaUsage, costUsd: number): void {

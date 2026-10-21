@@ -25,10 +25,19 @@ export interface ResolvedCapabilities {
   systemMessages: boolean;
   /** Upper bound for `max_tokens`, when the Models API reports one. */
   maxTokens?: number;
+  /** Usage at the end of a Chat Completions stream (`stream_options`). */
+  streamUsage: boolean;
+  /** A prompt cache key on Chat Completions. */
+  cacheKey: boolean;
 }
 
 /** Optional request features that can be learned to be unsupported. */
-export type OptionalFeature = "effort" | "fallbacks" | "systemMessages";
+export type OptionalFeature =
+  | "effort"
+  | "fallbacks"
+  | "systemMessages"
+  | "streamUsage"
+  | "cacheKey";
 
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -116,6 +125,9 @@ export class Capabilities {
       fallbacks: modern && provider.refusal_fallback && !off.has("fallbacks"),
       systemMessages: modern && !off.has("systemMessages"),
       maxTokens: facts?.maxTokens,
+      // Harmless if ignored, and a 400 if refused: tried everywhere (DESIGN.md §5.2.1).
+      streamUsage: !off.has("streamUsage"),
+      cacheKey: !off.has("cacheKey"),
     };
   }
 
@@ -232,6 +244,9 @@ export function rejectedFeature(message: string): OptionalFeature | null {
     return "systemMessages";
   }
   if (m.includes("fallbacks") || m.includes("server-side-fallback")) return "fallbacks";
+  // Before effort: an endpoint refusing `stream_options` might also mention reasoning.
+  if (m.includes("stream_options") || m.includes("include_usage")) return "streamUsage";
+  if (m.includes("prompt_cache_key")) return "cacheKey";
   if (m.includes("effort") || m.includes("output_config")) return "effort";
   return null;
 }

@@ -6,11 +6,21 @@ import { z } from "zod";
 export const EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const;
 const Effort = z.enum(EFFORT_LEVELS);
 
-/** Where a provider without `base_url` is reached: Anthropic's API. */
-export const DEFAULT_BASE_URL = "https://api.anthropic.com";
+/**
+ * The protocols Ivy speaks (DESIGN.md §5.2.1): `anthropic`, the Messages API; `openai`,
+ * Chat Completions. Adding one also needs a ModelClient (see createModelClient).
+ */
+export const PROVIDER_TYPES = ["anthropic", "openai"] as const;
+export type ProviderType = (typeof PROVIDER_TYPES)[number];
 
-/** API kinds Ivy can talk to. Adding one also needs a ModelClient (see createModelClient). */
-export const PROVIDER_TYPES = ["anthropic"] as const;
+/**
+ * Where a provider without `base_url` is reached: its vendor's own API. OpenAI's clients take
+ * the URL with its `/v1`, Anthropic's without.
+ */
+export const DEFAULT_BASE_URLS: Record<ProviderType, string> = {
+  anthropic: "https://api.anthropic.com",
+  openai: "https://api.openai.com/v1",
+};
 
 /** One way to reach a model API. Several can be configured; models name theirs (`agent.model`). */
 const ProviderSchema = z.strictObject({
@@ -23,7 +33,8 @@ const ProviderSchema = z.strictObject({
     .default("anthropic"),
   /** Required to call the API. Environment variables are intentionally not used. */
   api_key: z.string().optional(),
-  base_url: z.url().default(DEFAULT_BASE_URL),
+  /** Unset: the vendor's own API for `type` (DEFAULT_BASE_URLS). */
+  base_url: z.url().optional(),
   /**
    * Models /model offers on this provider (by id, without the provider prefix). Unset or
    * empty: no limit, /model offers whatever the endpoint lists.
@@ -73,7 +84,10 @@ const ConfigSchema = z.strictObject({
   plugins: z.record(z.string(), z.record(z.string(), z.unknown())).default({}),
 });
 
-export type ProviderConfig = z.infer<typeof ProviderSchema> & { name: string };
+export type ProviderConfig = Omit<z.infer<typeof ProviderSchema>, "base_url"> & {
+  name: string;
+  base_url: string;
+};
 
 /**
  * A model reference, "<provider>/<model id>", resolved: the part before the first "/" names
@@ -142,7 +156,12 @@ export function loadConfig(paths: Paths): Config {
         `Invalid ${paths.config}: [providers."${name}"]: a provider name can't contain '/'`,
       );
     }
-    providers[name] = { ...p, name, models: [...new Set(p.models)] };
+    providers[name] = {
+      ...p,
+      name,
+      base_url: p.base_url ?? DEFAULT_BASE_URLS[p.type],
+      models: [...new Set(p.models)],
+    };
   }
   try {
     const ref = parsed.data.agent.model;

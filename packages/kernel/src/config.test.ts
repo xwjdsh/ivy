@@ -108,8 +108,8 @@ test("a provider without `models` offers what its endpoint lists", () => {
 });
 
 test("only supported provider types are accepted", () => {
-  expect(() => loadConfig(configWith(`${MINIMAL}type = "openai"\n`))).toThrow(
-    'unsupported provider type "openai"; supported: "anthropic"',
+  expect(() => loadConfig(configWith(`${MINIMAL}type = "gemini"\n`))).toThrow(
+    'unsupported provider type "gemini"; supported: "anthropic", "openai"',
   );
 });
 

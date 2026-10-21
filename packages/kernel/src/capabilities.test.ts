@@ -21,6 +21,8 @@ test("official API: newer Claude models get the Anthropic-only features, by defa
       effort: "xhigh",
       fallbacks: true,
       systemMessages: true,
+      streamUsage: true,
+      cacheKey: true,
     });
   }
 });
@@ -37,11 +39,13 @@ test("older models known to lack them don't get them", () => {
   expect(caps().for(on("claude-haiku-4-5")).effort).toBeUndefined();
 });
 
-test("compatible endpoints get only the basics (compatibility first)", () => {
+test("compatible endpoints get what they may ignore or refuse, not what is Anthropic's alone", () => {
   expect(caps().for(on("claude-opus-5-5", proxy))).toEqual({
     effort: "xhigh",
     fallbacks: false,
     systemMessages: false,
+    streamUsage: true,
+    cacheKey: true,
   });
   expect(caps().for(on("vendor/model-a", proxy))).toMatchObject({
     fallbacks: false,

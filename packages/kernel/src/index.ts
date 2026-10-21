@@ -5,7 +5,7 @@ import { Agent } from "./agent.ts";
 import { Capabilities } from "./capabilities.ts";
 import {
   type Config,
-  DEFAULT_BASE_URL,
+  DEFAULT_BASE_URLS,
   loadConfig,
   modelChoices,
   type Paths,
@@ -16,6 +16,7 @@ import { saveAllowRule } from "./config-edit.ts";
 import { SystemPrompt } from "./context.ts";
 import { defaultKeyStore, type KeyStore } from "./keychain.ts";
 import { AnthropicModelClient, type ModelClient } from "./model.ts";
+import { OpenAIChatClient } from "./openai-model.ts";
 import { Permissions } from "./permissions.ts";
 import { PluginHost } from "./plugins.ts";
 import { sessionHistory } from "./session.ts";
@@ -32,6 +33,7 @@ import { errorMessage } from "./log.ts";
 
 export { createLogger, errorMessage, type LogLevel, setLogLevel, setLogSink } from "./log.ts";
 export * from "./model.ts";
+export * from "./openai-model.ts";
 export * from "./permissions.ts";
 export * from "./plugins.ts";
 export * from "./session.ts";
@@ -188,10 +190,11 @@ export async function createIvy(opts: IvyOptions): Promise<Ivy> {
     },
     reloadProviders,
     async listModelsAt({ type, base_url, key }) {
+      const kind = type as ProviderConfig["type"];
       const endpoint: ProviderConfig = {
         name: "test",
-        type: type as ProviderConfig["type"],
-        base_url: base_url || DEFAULT_BASE_URL,
+        type: kind,
+        base_url: base_url || DEFAULT_BASE_URLS[kind],
         models: [],
         refusal_fallback: true,
       };
@@ -226,6 +229,8 @@ function createModelClient(p: ProviderConfig, key: string | undefined, paths: Pa
   switch (p.type) {
     case "anthropic":
       return new AnthropicModelClient({ apiKey: key, baseURL: p.base_url });
+    case "openai":
+      return new OpenAIChatClient({ apiKey: key, baseURL: p.base_url });
     default: {
       // Compile error here when a type is added to PROVIDER_TYPES without a client.
       const unsupported: never = p.type;

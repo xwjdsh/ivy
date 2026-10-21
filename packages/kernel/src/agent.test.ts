@@ -9,7 +9,7 @@ import { Agent, type AgentEvent, type ToolCallRequest } from "./agent.ts";
 import { Capabilities } from "./capabilities.ts";
 import { loadConfig, type ProviderConfig, resolvePaths } from "./config.ts";
 import { saveAllowRule } from "./config-edit.ts";
-import type { ModelClient, ModelMessage, ModelRequest } from "./model.ts";
+import type { ModelClient, ModelMessage, ModelRequest, RequestExtras } from "./model.ts";
 import { type PermissionChoice, Permissions } from "./permissions.ts";
 import { PluginHost } from "./plugins.ts";
 import { Session } from "./session.ts";
@@ -36,10 +36,17 @@ const toolUse = (id: string, name: string, input: unknown = {}) =>
 /** Returns scripted responses in order and records every request it saw. */
 class FakeModel implements ModelClient {
   readonly requests: ModelRequest[] = [];
+  readonly extras: Array<RequestExtras | undefined> = [];
   constructor(private readonly script: Array<ModelMessage | (() => never)>) {}
 
-  async stream(request: ModelRequest, handlers: { onText?(d: string): void }) {
+  async stream(
+    request: ModelRequest,
+    handlers: { onText?(d: string): void },
+    _signal?: AbortSignal,
+    extras?: RequestExtras,
+  ) {
     this.requests.push(request);
+    this.extras.push(extras);
     const next = this.script.shift();
     if (!next) throw new Error("script exhausted");
     if (typeof next === "function") next();
@@ -401,6 +408,39 @@ describe("Agent.runTurn", () => {
 
     expect(() => agent.setModel("nope/x")).toThrow("no [providers.nope] section");
     expect(agent.model).toBe("magpie/codex/gpt-6-luna");
+  });
+
+  test("a reply's thinking goes back only to the model that wrote it, at that endpoint", async () => {
+    const thought = { type: "thinking", thinking: "hmm", signature: "sig" } as const;
+    const official = new FakeModel([
+      reply("end_turn", [thought, text("a")]),
+      reply("end_turn", [text("c")]),
+    ]);
+    const proxy = new FakeModel([reply("end_turn", [text("b")])]);
+    const agent = await makeAgent(
+      { anthropic: official, magpie: proxy },
+      "read",
+      undefined,
+      "sys",
+      [],
+      `${OPUS}[providers.magpie]\nbase_url = "http://127.0.0.1:3425"\n`,
+    );
+    await run(agent, "one");
+    const thinkingOf = (r: ModelRequest | undefined) =>
+      r?.messages.flatMap((m) =>
+        typeof m.content === "string" ? [] : m.content.filter((b) => b.type === "thinking"),
+      );
+    // Another model, even behind one proxy, gets the reply without it...
+    agent.setModel("magpie/deepseek-v4.1-flash");
+    await run(agent, "two");
+    expect(thinkingOf(proxy.requests[0])).toEqual([]);
+    expect(proxy.requests[0]?.messages[1]).toEqual({ role: "assistant", content: [text("a")] });
+    // ...the model that wrote it gets it back.
+    agent.setModel("anthropic/claude-opus-5-5");
+    await run(agent, "three");
+    expect(thinkingOf(official.requests[1])).toEqual([thought]);
+    // The session is the prompt cache key, wherever it is sent.
+    expect(proxy.extras[0]).toEqual({ streamUsage: true, cacheKey: session.id });
   });
 
   const clock = definePlugin({

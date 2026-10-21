@@ -1,5 +1,6 @@
-# Copy to .ivy/config.toml (dev) or ~/.ivy/config.toml.
-# Only this file is used; ANTHROPIC_* environment variables are ignored.
+# Copy to ~/.ivy/config.toml.
+# Only this file (and, on macOS, the Keychain for API keys) is used; ANTHROPIC_* and
+# OPENAI_* environment variables are ignored.
 # Unknown keys are an error, so typos don't go unnoticed.
 
 [agent]
@@ -7,9 +8,9 @@ model = "anthropic/claude-opus-5-5"  # required: "<provider>/<model id>", split 
 max_steps = 25                    # model calls per turn
 
 [providers.anthropic]
-type = "anthropic"                # API kind; only "anthropic" for now
-api_key = ""                      # required
-base_url = "https://api.anthropic.com"
+type = "anthropic"                # the protocol: "anthropic" (Messages API) or "openai" (Chat Completions)
+api_key = ""                      # or leave it out and set the key in Ivy's settings (Keychain)
+# base_url = "https://api.anthropic.com"  # optional, default: the vendor's own API for `type`
 # models = ["claude-opus-5-5", "claude-sonnet-5-5"]  # optional: limit what /model offers;
                                   # left out, /model offers everything the endpoint lists
 # refusal_fallback = false        # optional, default true: if the model declines, retry on a fallback model
@@ -20,6 +21,12 @@ base_url = "https://api.anthropic.com"
 # api_key = "..."
 # base_url = "https://my-proxy.example.com"
 # models = ["vendor/model-a"]   # optional, as above
+
+# An endpoint that speaks OpenAI's Chat Completions: OpenAI, a proxy, a local server.
+# [providers.openai]
+# type = "openai"
+# api_key = "..."
+# base_url = "http://localhost:11434/v1"  # e.g. Ollama; default https://api.openai.com/v1
 
 [generation]
 effort = "medium"                 # low | medium | high | xhigh | max

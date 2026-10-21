@@ -7,14 +7,30 @@ export interface StreamHandlers {
   onText?(delta: string): void;
 }
 
-/** The only seam between the agent loop and the API, so the loop can be tested with a fake. */
+/**
+ * What a request may carry besides the Messages API's own fields, for a client that speaks
+ * another protocol (DESIGN.md §5.2.1); the Anthropic client has no use for it.
+ */
+export interface RequestExtras {
+  /** Ask for usage at the end of the stream (Chat Completions' `stream_options`). */
+  streamUsage?: boolean;
+  /** A key the endpoint may route the prompt cache by (the session's id). */
+  cacheKey?: string;
+}
+
+/**
+ * The only seam between the agent loop and an API, so the loop can be tested with a fake.
+ * Requests and replies are in Ivy's own format, the Messages API's; a client for another
+ * protocol translates at its edge.
+ */
 export interface ModelClient {
   stream(
     request: ModelRequest,
     handlers: StreamHandlers,
     signal: AbortSignal,
+    extras?: RequestExtras,
   ): Promise<ModelMessage>;
-  /** The endpoint's model catalogue with capabilities (Anthropic's Models API). */
+  /** The endpoint's models (with capabilities on Anthropic's Models API). */
   listModels?(): Promise<Anthropic.Models.ModelInfo[]>;
 }
 
@@ -47,14 +63,25 @@ export class AnthropicModelClient implements ModelClient {
   }
 }
 
-/** Anthropic's own API. Compatible endpoints (proxies) may not support its newest features. */
-export function isOfficialAnthropicApi(baseUrl: string): boolean {
+const OFFICIAL_HOSTS = { anthropic: "api.anthropic.com", openai: "api.openai.com" } as const;
+
+/**
+ * The vendor's own API for a protocol, told by `base_url` alone: what is the vendor's alone
+ * goes there only (DESIGN.md §5.2.1). A proxy in front of it counts as any other endpoint.
+ */
+export function isOfficialApi(type: keyof typeof OFFICIAL_HOSTS, baseUrl: string): boolean {
   try {
-    return new URL(baseUrl).hostname === "api.anthropic.com";
+    return new URL(baseUrl).hostname === OFFICIAL_HOSTS[type];
   } catch {
     return false;
   }
 }
+
+/** Anthropic's own API. Compatible endpoints (proxies) may not support its newest features. */
+export const isOfficialAnthropicApi = (baseUrl: string) => isOfficialApi("anthropic", baseUrl);
+
+/** An endpoint as replies record where they came from: its URL without a trailing slash. */
+export const endpointKey = (baseUrl: string) => baseUrl.replace(/\/+$/, "");
 
 // USD per million tokens. Cache writes use the 5-minute TTL rate (1.25x input).
 const PRICING: Record<string, { input: number; output: number; cacheRead: number }> = {
