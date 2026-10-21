@@ -29,6 +29,8 @@ export interface ResolvedCapabilities {
   streamUsage: boolean;
   /** A prompt cache key on Chat Completions. */
   cacheKey: boolean;
+  /** Images the user sent; refused, each is a line saying it was left out. */
+  images: boolean;
 }
 
 /** Optional request features that can be learned to be unsupported. */
@@ -37,7 +39,8 @@ export type OptionalFeature =
   | "fallbacks"
   | "systemMessages"
   | "streamUsage"
-  | "cacheKey";
+  | "cacheKey"
+  | "images";
 
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -128,6 +131,7 @@ export class Capabilities {
       // Harmless if ignored, and a 400 if refused: tried everywhere (DESIGN.md §5.2.1).
       streamUsage: !off.has("streamUsage"),
       cacheKey: !off.has("cacheKey"),
+      images: !off.has("images"),
     };
   }
 
@@ -247,6 +251,15 @@ export function rejectedFeature(message: string): OptionalFeature | null {
   // Before effort: an endpoint refusing `stream_options` might also mention reasoning.
   if (m.includes("stream_options") || m.includes("include_usage")) return "streamUsage";
   if (m.includes("prompt_cache_key")) return "cacheKey";
+  // A model that takes no images, not an image too large (the page keeps them within limits).
+  if (
+    m.includes("image_url") ||
+    m.includes("multimodal") ||
+    /\bvision\b/.test(m) ||
+    (m.includes("image") && /not support|unsupported|only supported|does not accept/.test(m))
+  ) {
+    return "images";
+  }
   if (m.includes("effort") || m.includes("output_config")) return "effort";
   return null;
 }

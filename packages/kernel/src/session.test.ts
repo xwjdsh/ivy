@@ -2,7 +2,10 @@ import { expect, test } from "bun:test";
 import { appendFileSync, existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type Anthropic from "@anthropic-ai/sdk";
+import { claimUploads, saveUpload } from "./images.ts";
 import { Session, sessionHistory, trashSession } from "./session.ts";
+import { PNG } from "./testing.ts";
 
 test("sessions persist, reload and list newest first", async () => {
   const dir = mkdtempSync(join(tmpdir(), "ivy-sessions-"));
@@ -132,4 +135,41 @@ test("a trashed session leaves the list but its file is kept", () => {
   expect(existsSync(join(dir, "trash", `${s.id}.jsonl`))).toBe(true);
   expect(trashSession(dir, s.id)).toBe(false);
   expect(trashSession(dir, "../config")).toBe(false);
+});
+
+test("images are kept as files: the session file names them, and they read back on load", () => {
+  const dir = mkdtempSync(join(tmpdir(), "ivy-sessions-"));
+  const session = Session.create(dir, "m");
+  const name = saveUpload(join(dir, "uploads"), PNG, "image/png");
+  claimUploads(join(dir, "uploads"), session.imagesDir, [name]);
+  session.appendPrompt("what is this?", "", [name]);
+
+  const line = readFileSync(session.file, "utf8").trim().split("\n").at(-1) ?? "";
+  expect(line).not.toContain(Buffer.from(PNG).toString("base64"));
+  expect(JSON.parse(line).message.content[0]).toEqual({ type: "image", file: name });
+
+  const loaded = Session.load(dir, session.id);
+  expect(loaded.messages).toEqual(session.messages);
+  const [image, text] = (loaded.messages[0]?.content ??
+    []) as Anthropic.Beta.BetaContentBlockParam[];
+  if (!image) throw new Error("no image");
+  expect(image).toMatchObject({
+    type: "image",
+    source: { type: "base64", media_type: "image/png" },
+  });
+  expect(text).toEqual({ type: "text", text: "what is this?" });
+  expect(loaded.imageOf(image)).toBe(name);
+  expect(Session.list(dir)[0]).toMatchObject({ turns: 1, preview: "what is this?" });
+
+  // Trashed, its images go with it; gone from disk, one reads as a line saying so.
+  expect(trashSession(dir, session.id)).toBe(true);
+  expect(existsSync(join(dir, "trash", session.id, name))).toBe(true);
+  appendFileSync(
+    join(dir, `${session.id}.jsonl`),
+    readFileSync(join(dir, "trash", `${session.id}.jsonl`)),
+  );
+  expect(Session.load(dir, session.id).messages[0]?.content).toContainEqual({
+    type: "text",
+    text: "[An image that is no longer on disk]",
+  });
 });

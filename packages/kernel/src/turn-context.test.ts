@@ -82,3 +82,19 @@ test("promptText: typed text only; tool results are not prompts", () => {
   ).toBeNull();
   expect(promptText(assistant("a"))).toBeNull();
 });
+
+test("a prompt with images: the context goes first in block mode, and images alone typed nothing", () => {
+  const image = {
+    type: "image",
+    source: { type: "base64", media_type: "image/png", data: "AAA" },
+  } as const;
+  const prompt: M = { role: "user", content: [image, { type: "text", text: "what is it?" }] };
+  const [out] = renderMessages([prompt], () => "<context>now</context>", "block");
+  expect(out?.content).toEqual([
+    { type: "text", text: "<context>now</context>" },
+    image,
+    { type: "text", text: "what is it?" },
+  ]);
+  expect(promptText(prompt)).toBe("what is it?");
+  expect(promptText({ role: "user", content: [image] })).toBe("");
+});

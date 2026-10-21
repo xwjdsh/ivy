@@ -27,6 +27,7 @@ export * from "./capabilities.ts";
 export * from "./config.ts";
 export * from "./config-edit.ts";
 export { type PromptPart, SystemPrompt } from "./context.ts";
+export * from "./images.ts";
 export * from "./keychain.ts";
 
 import { errorMessage } from "./log.ts";

@@ -50,12 +50,14 @@ export function renderMessages(
       // The context block goes first in the prompt it belongs to, before what the user typed.
       const ctx = isPrompt ? turnContext : undefined;
       out.push(
-        ctx && typeof m.content === "string"
+        ctx
           ? {
               ...m,
               content: [
                 { type: "text", text: ctx },
-                { type: "text", text: m.content },
+                ...(typeof m.content === "string"
+                  ? [{ type: "text" as const, text: m.content }]
+                  : m.content),
               ],
             }
           : m,
@@ -76,7 +78,7 @@ export function renderMessages(
 
 /**
  * What the user typed in a user message, without the context block, or null for
- * messages that aren't prompts (tool results).
+ * messages that aren't prompts (tool results). A prompt of images alone typed "".
  */
 export function promptText(message: MessageParam): string | null {
   if (message.role !== "user") return null;
@@ -85,5 +87,6 @@ export function promptText(message: MessageParam): string | null {
   const texts = message.content.flatMap((b) =>
     b.type === "text" && !isContextBlock(b.text) ? [b.text] : [],
   );
-  return texts.length > 0 ? texts.join("\n") : null;
+  if (texts.length > 0) return texts.join("\n");
+  return message.content.some((b) => b.type === "image") ? "" : null;
 }

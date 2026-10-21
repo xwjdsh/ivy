@@ -9,10 +9,12 @@ import { Agent, type AgentEvent, type ToolCallRequest } from "./agent.ts";
 import { Capabilities } from "./capabilities.ts";
 import { loadConfig, type ProviderConfig, resolvePaths } from "./config.ts";
 import { saveAllowRule } from "./config-edit.ts";
+import { claimUploads, saveUpload } from "./images.ts";
 import type { ModelClient, ModelMessage, ModelRequest, RequestExtras } from "./model.ts";
 import { type PermissionChoice, Permissions } from "./permissions.ts";
 import { PluginHost } from "./plugins.ts";
 import { Session } from "./session.ts";
+import { PNG } from "./testing.ts";
 
 type Block = ModelMessage["content"][number];
 
@@ -535,6 +537,41 @@ describe("Agent.runTurn", () => {
     const fresh = await makeAgent(model, "read", undefined, "sys", [clock]);
     await run(fresh, "and now?");
     expect(model.requests[2]?.messages.some((m) => m.role === "system")).toBe(false);
+  });
+
+  test("a model that refuses images: a line in place of each from then on, the session keeping them", async () => {
+    const name = saveUpload(join(dir, "uploads"), PNG, "image/png");
+    claimUploads(join(dir, "uploads"), session.imagesDir, [name]);
+    const model = new FakeModel([
+      badRequest("messages.0.content.0: image_url is not supported by this model"),
+      reply("end_turn", [text("a text-only answer")]),
+      reply("end_turn", [text("still none")]),
+    ]);
+    const agent = await makeAgent(model);
+    await agent.runTurn(
+      session,
+      { text: "what is this?", images: [name] },
+      {
+        signal: new AbortController().signal,
+        onEvent: (e) => events.push(e),
+        confirm: async () => "once",
+      },
+    );
+    const blocks = (r: ModelRequest | undefined) =>
+      r?.messages.flatMap((m) => (typeof m.content === "string" ? [] : m.content)) ?? [];
+    expect(blocks(model.requests[0]).some((b) => b.type === "image")).toBe(true);
+    expect(blocks(model.requests[1]).some((b) => b.type === "image")).toBe(false);
+    expect(blocks(model.requests[1])).toContainEqual({
+      type: "text",
+      text: "[An image was left out: this model takes none]",
+    });
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: "notice", text: expect.stringContaining("images") }),
+    );
+    // The session keeps the image; the next turn leaves it out too, without asking again.
+    expect(session.messages[0]?.content).toContainEqual(expect.objectContaining({ type: "image" }));
+    await run(agent, "and now?");
+    expect(blocks(model.requests[2]).some((b) => b.type === "image")).toBe(false);
   });
 
   test("a 400 about fallbacks or effort drops just that parameter", async () => {

@@ -119,6 +119,8 @@ export interface Paths {
   data: string;
   /** Model capabilities: Models API facts and features learned unsupported. */
   modelsCache: string;
+  /** Images attached to a message not sent yet (see images.ts). */
+  uploads: string;
   /** The daemon's socket: local clients (the TUI, the app) talk to it here. */
   daemonSocket: string;
   /** The daemon's own state (e.g. which reminders it announced), apart from plugin data. */
@@ -135,6 +137,7 @@ export function resolvePaths(home = process.env.IVY_HOME ?? join(homedir(), ".iv
     traces: join(home, "traces"),
     data: join(home, "data"),
     modelsCache: join(home, "cache", "models.json"),
+    uploads: join(home, "cache", "uploads"),
     daemonSocket: join(home, "daemon.sock"), // also in app/paths.go
     daemonState: join(home, "daemon"),
   };

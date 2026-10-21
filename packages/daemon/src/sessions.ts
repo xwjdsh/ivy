@@ -7,10 +7,14 @@
 // while, so a daemon that runs for weeks doesn't keep every session it ever opened.
 
 import { existsSync } from "node:fs";
+import { join } from "node:path";
 import {
   type AgentEvent,
+  claimUploads,
   errorMessage,
   type Ivy,
+  isImageName,
+  isSessionId,
   type PermissionChoice,
   promptText,
   Session,
@@ -82,6 +86,8 @@ interface PendingAsk {
 }
 
 export class SessionNotFoundError extends Error {}
+/** A message that can't be taken as it is (an image no longer there). */
+export class PromptError extends Error {}
 
 export class Sessions {
   private readonly live = new Map<string, Live>();
@@ -134,7 +140,7 @@ export class Sessions {
     const last = turn.at(-1);
     const streaming = live.running?.open && last?.kind === "assistant" ? last.markdown : undefined;
     if (streaming !== undefined) turn.pop();
-    const entries = [...this.entries(messages), ...turn];
+    const entries = [...this.entries(live.session, messages), ...turn];
     const permission = [...this.asks.values()].find((p) => p.ask.sessionId === id)?.ask;
     return {
       id,
@@ -147,11 +153,19 @@ export class Sessions {
     };
   }
 
-  /** Take a message for a session: it runs now, or after the turns before it. */
-  send(id: string, text: string): Prompt {
+  /**
+   * Take a message for a session: it runs now, or after the turns before it. Its images,
+   * uploaded as they were attached, move to the session's folder now (DESIGN.md §5.4).
+   */
+  send(id: string, text: string, images: string[] = []): Prompt {
     if (this.closed) throw new Error("The daemon is stopping");
     const live = this.get(id);
-    const prompt = { id: crypto.randomUUID(), text };
+    try {
+      claimUploads(this.ivy.paths.uploads, live.session.imagesDir, images);
+    } catch (err) {
+      throw new PromptError(errorMessage(err));
+    }
+    const prompt: Prompt = { id: crypto.randomUUID(), text, ...(images.length && { images }) };
     live.queue.push(prompt);
     this.publish({ sessionId: id, type: "prompt", prompt });
     // Started a step later, so `pumping` is set before the drain can clear it.
@@ -240,6 +254,13 @@ export class Sessions {
     return true;
   }
 
+  /** An image sent in a session, or undefined if there is none by that name. */
+  imageFile(id: string, name: string): string | undefined {
+    if (!isSessionId(id) || !isImageName(name)) return undefined;
+    const file = join(this.ivy.paths.sessions, id, name);
+    return existsSync(file) ? file : undefined;
+  }
+
   /** A session's file, for /status (it exists once the first message is written). */
   fileOf(id: string): string {
     return this.get(id).session.file;
@@ -325,7 +346,13 @@ export class Sessions {
       prompt,
       controller: new AbortController(),
       before: live.session.messages.length,
-      entries: [{ kind: "user", text: prompt.text } as Entry],
+      entries: [
+        {
+          kind: "user",
+          text: prompt.text,
+          ...(prompt.images && { images: prompt.images }),
+        } as Entry,
+      ],
       open: false,
     };
     live.running = running;
@@ -333,7 +360,7 @@ export class Sessions {
 
     let end: TurnEnd;
     try {
-      end = await this.ivy.agent.runTurn(live.session, prompt.text, {
+      end = await this.ivy.agent.runTurn(live.session, prompt, {
         signal: running.controller.signal,
         tracer: live.tracer,
         confirm: (call) => this.confirm(id, call),
@@ -409,7 +436,7 @@ export class Sessions {
   }
 
   /** A stored transcript as clients show it: what was said, and tool calls with their results. */
-  private entries(messages: Session["messages"]): Entry[] {
+  private entries(session: Session, messages: Session["messages"]): Entry[] {
     const results = new Map<string, { content: string; isError: boolean }>();
     for (const m of messages) {
       if (m.role !== "user" || typeof m.content === "string") continue;
@@ -426,7 +453,11 @@ export class Sessions {
     for (const m of messages) {
       if (m.role === "user") {
         const text = promptText(m); // what the user typed: no context block, no tool results
-        if (text?.trim()) entries.push({ kind: "user", text });
+        const images =
+          typeof m.content === "string" ? [] : m.content.flatMap((b) => session.imageOf(b) ?? []);
+        if (text?.trim() || images.length) {
+          entries.push({ kind: "user", text: text ?? "", ...(images.length && { images }) });
+        }
       } else if (typeof m.content === "string") {
         if (m.content.trim()) entries.push({ kind: "assistant", markdown: m.content });
       } else {

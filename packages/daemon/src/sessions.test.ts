@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MemoryKeyStore, resolvePaths } from "@ivy/kernel";
-import { ScriptedModel, type Step, text, toolUse } from "@ivy/kernel/testing";
+import { PNG, ScriptedModel, type Step, text, toolUse } from "@ivy/kernel/testing";
 import { definePlugin, defineTool } from "@ivy/plugin-api";
 import type { SessionEvent, SessionSummary, SessionView } from "@ivy/protocol";
 import { z } from "zod";
@@ -136,6 +136,43 @@ test("a prompt runs as a turn, streamed to the client, and the session shows it"
   expect(view.tokens).toEqual({ in: 10, cached: 0, out: 5 });
   const list = (await call("GET", "/sessions")).body as SessionSummary[];
   expect(list).toMatchObject([{ id: created.id, turns: 1, preview: "hi", busy: false }]);
+  await client.close();
+});
+
+test("images: uploaded as attached, named by a prompt, kept with the session and shown", async () => {
+  const { call, socket, model } = await start([{ content: [text("A small picture.")] }]);
+  const upload = (bytes: Uint8Array, type: string) =>
+    fetch("http://ivy/images", {
+      method: "POST",
+      unix: socket,
+      body: bytes,
+      headers: { "content-type": type },
+    });
+  const uploaded = await upload(PNG, "image/png");
+  expect(uploaded.status).toBe(201);
+  const { name } = (await uploaded.json()) as { name: string };
+  expect((await upload(PNG, "image/heic")).status).toBe(400);
+
+  const { body: created } = await call("POST", "/sessions", {});
+  const client = await follow(socket);
+  expect(
+    (await call("POST", `/sessions/${created.id}/prompts`, { images: [`${"0".repeat(64)}.png`] }))
+      .status,
+  ).toBe(400);
+  expect((await call("POST", `/sessions/${created.id}/prompts`, {})).status).toBe(400);
+  const sent = await call("POST", `/sessions/${created.id}/prompts`, { images: [name] });
+  expect(sent.body).toMatchObject({ text: "", images: [name] });
+  await client.until((e) => e.type === "turn_end");
+  expect(model.requests[0]?.messages[0]?.content).toContainEqual(
+    expect.objectContaining({ type: "image" }),
+  );
+
+  const view = (await call("GET", `/sessions/${created.id}`)).body as SessionView;
+  expect(view.entries[0]).toEqual({ kind: "user", text: "", images: [name] });
+  const image = await fetch(`http://ivy/sessions/${created.id}/images/${name}`, { unix: socket });
+  expect(image.headers.get("content-type")).toBe("image/png");
+  expect(new Uint8Array(await image.arrayBuffer())).toEqual(PNG);
+  expect((await call("GET", `/sessions/${created.id}/images/..%2Fx.png`)).status).toBe(404);
   await client.close();
 });
 

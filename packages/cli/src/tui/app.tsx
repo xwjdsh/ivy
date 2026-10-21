@@ -25,7 +25,7 @@ import type { InputHistory } from "../history.ts";
 import { renderMarkdown, splitFinished } from "../markdown.ts";
 import { formatCall } from "../verbose-format.ts";
 import { Input } from "./input.tsx";
-import { historyItems, type Item, itemId } from "./items.ts";
+import { historyItems, type Item, itemId, sentText } from "./items.ts";
 import { Picker, pickerHeight } from "./picker.tsx";
 import { SessionPicker } from "./session-picker.tsx";
 import {
@@ -213,7 +213,7 @@ export function App({
         turnRef.current += 1;
         turnStarted.current = Date.now();
         setExpandedTurn(null);
-        push({ id: itemId(), kind: "user", text: e.prompt.text });
+        push({ id: itemId(), kind: "user", text: sentText(e.prompt.text, e.prompt.images) });
         setPhase({ label: "Thinking", startedAt: Date.now() });
         break;
       case "text":

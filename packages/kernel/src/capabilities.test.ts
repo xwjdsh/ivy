@@ -23,6 +23,7 @@ test("official API: newer Claude models get the Anthropic-only features, by defa
       systemMessages: true,
       streamUsage: true,
       cacheKey: true,
+      images: true,
     });
   }
 });
@@ -46,6 +47,7 @@ test("compatible endpoints get what they may ignore or refuse, not what is Anthr
     systemMessages: false,
     streamUsage: true,
     cacheKey: true,
+    images: true,
   });
   expect(caps().for(on("vendor/model-a", proxy))).toMatchObject({
     fallbacks: false,

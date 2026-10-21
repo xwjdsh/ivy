@@ -10,9 +10,20 @@ import {
 import { dirname, join } from "node:path";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { ConversationHistory, PastMessage } from "@ivy/plugin-api";
+import { imageTypeOf, isImageName } from "./images.ts";
 import { promptText } from "./turn-context.ts";
 
 type MessageParam = Anthropic.Beta.BetaMessageParam;
+type ContentBlock = Exclude<MessageParam["content"], string>[number];
+
+/**
+ * An image as the session file holds it: its file in the session's image folder, not its
+ * bytes (DESIGN.md §5.4). Read back into an image block when the session loads.
+ */
+interface StoredImage {
+  type: "image";
+  file: string;
+}
 
 /**
  * Where a reply came from: the endpoint (its `base_url`, see endpointKey) and the model. Its
@@ -55,6 +66,10 @@ export class Session {
   private readonly contexts = new Map<MessageParam, string>();
   /** Where each reply came from, keyed by message object. */
   private readonly origins = new Map<MessageParam, Origin>();
+  /** The file of each image the user sent, keyed by block object. */
+  private readonly images = new Map<ContentBlock, string>();
+  /** The images sent in this session: a folder beside its file, of its name. */
+  readonly imagesDir: string;
 
   /** Meta record not yet written: the file is created lazily on the first append. */
   private pendingMeta: SessionRecord | null = null;
@@ -64,7 +79,9 @@ export class Session {
   private constructor(
     readonly id: string,
     readonly file: string,
-  ) {}
+  ) {
+    this.imagesDir = join(dirname(file), id);
+  }
 
   static create(dir: string, model: string): Session {
     const now = new Date();
@@ -82,9 +99,10 @@ export class Session {
     session.needsNewline = content.length > 0 && !content.endsWith("\n");
     const messages = parseRecords(content).flatMap((r) => {
       if (r.type !== "message") return [];
-      if (r.context) session.contexts.set(r.message, r.context);
-      if (r.origin) session.origins.set(r.message, r.origin);
-      return [r.message];
+      const message = session.fromDisk(r.message);
+      if (r.context) session.contexts.set(message, r.context);
+      if (r.origin) session.origins.set(message, r.origin);
+      return [message];
     });
     session.messages.push(...withoutDanglingToolUse(messages));
     return session;
@@ -118,9 +136,20 @@ export class Session {
       .slice(0, limit);
   }
 
-  /** Append what the user typed, with this turn's plugin context (if any) stored alongside. */
-  appendPrompt(text: string, context: string): void {
-    const message: MessageParam = { role: "user", content: text };
+  /**
+   * Append what the user typed, and the images sent with it (already in `imagesDir`), with
+   * this turn's plugin context (if any) stored alongside.
+   */
+  appendPrompt(text: string, context: string, images: string[] = []): void {
+    const message: MessageParam = {
+      role: "user",
+      content: images.length
+        ? [
+            ...images.map((f) => this.imageBlock(f)),
+            ...(text ? [{ type: "text" as const, text }] : []),
+          ]
+        : text,
+    };
     this.messages.push(message);
     if (context) this.contexts.set(message, context);
     this.write({
@@ -137,6 +166,11 @@ export class Session {
 
   originOf(message: MessageParam): Origin | undefined {
     return this.origins.get(message);
+  }
+
+  /** The file of an image the user sent, in `imagesDir`. */
+  imageOf(block: ContentBlock): string | undefined {
+    return this.images.get(block);
   }
 
   /** Messages passed together are written in one call, so a tool call and its results land together. */
@@ -168,7 +202,50 @@ export class Session {
     }
     const prefix = this.needsNewline ? "\n" : "";
     this.needsNewline = false;
-    appendFileSync(this.file, prefix + records.map((r) => `${JSON.stringify(r)}\n`).join(""));
+    const lines = records.map((r) =>
+      JSON.stringify(r.type === "message" ? { ...r, message: this.toDisk(r.message) } : r),
+    );
+    appendFileSync(this.file, prefix + lines.map((l) => `${l}\n`).join(""));
+  }
+
+  /** An image the user sent, as a block for the model, from its file. */
+  private imageBlock(file: string): ContentBlock {
+    const path = join(this.imagesDir, file);
+    if (!isImageName(file) || !existsSync(path)) {
+      return { type: "text", text: "[An image that is no longer on disk]" };
+    }
+    const block: ContentBlock = {
+      type: "image",
+      source: {
+        type: "base64",
+        media_type: imageTypeOf(file),
+        data: readFileSync(path).toString("base64"),
+      },
+    };
+    this.images.set(block, file);
+    return block;
+  }
+
+  /** A message as the file holds it: its images by file name. */
+  private toDisk(message: MessageParam): MessageParam {
+    if (typeof message.content === "string" || !message.content.some((b) => this.images.has(b))) {
+      return message;
+    }
+    const content = message.content.map((b) => {
+      const file = this.images.get(b);
+      return file ? ({ type: "image", file } satisfies StoredImage as unknown as ContentBlock) : b;
+    });
+    return { ...message, content };
+  }
+
+  /** A message from the file: its images read back. */
+  private fromDisk(message: MessageParam): MessageParam {
+    if (typeof message.content === "string") return message;
+    const stored = (b: unknown): b is StoredImage =>
+      (b as StoredImage).type === "image" && typeof (b as StoredImage).file === "string";
+    if (!message.content.some(stored)) return message;
+    const content = message.content.map((b) => (stored(b) ? this.imageBlock(b.file) : b));
+    return { ...message, content };
   }
 }
 
@@ -176,7 +253,7 @@ export class Session {
 const TRASH = "trash";
 
 /**
- * Move a session's file to the trash folder inside the sessions folder, out of every list
+ * Move a session's file (and its images) to the trash folder inside the sessions folder, out of every list
  * and out of plugins' history, but not gone: moving it back restores it. False if it has
  * no file (never written, or unknown).
  */
@@ -185,6 +262,8 @@ export function trashSession(dir: string, id: string): boolean {
   if (!isSessionId(id) || !existsSync(file)) return false;
   mkdirSync(join(dir, TRASH), { recursive: true });
   renameSync(file, join(dir, TRASH, `${id}.jsonl`));
+  // Its images go with it.
+  if (existsSync(join(dir, id))) renameSync(join(dir, id), join(dir, TRASH, id));
   return true;
 }
 

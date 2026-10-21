@@ -15,6 +15,7 @@ import {
   removeProvider,
   saveEffort,
   saveModel,
+  saveUpload,
   UnlistedModels,
   updateProvider,
 } from "@ivy/kernel";
@@ -38,11 +39,12 @@ import {
   type Switched,
   TestProvider,
   UpdateProvider,
+  type Uploaded,
 } from "@ivy/protocol";
 import type { z } from "zod";
 import { statusReport, usageReport } from "./reports.ts";
 import type { Routes } from "./server.ts";
-import { SessionNotFoundError, type Sessions } from "./sessions.ts";
+import { PromptError, SessionNotFoundError, type Sessions } from "./sessions.ts";
 import { codeVersion } from "./version.ts";
 
 class HttpError extends Error {
@@ -300,8 +302,25 @@ export function api(ivy: Ivy, sessions: Sessions): Routes {
         if (!sessions.delete(id)) fail(409, "Ivy is replying in this session; stop it first");
         return new Response(null, { status: 204 });
       case "POST /sessions/:/prompts": {
-        const { text } = await body(req, SendPrompt);
-        return Response.json(sessions.send(id, text), { status: 202 });
+        const { text, images } = await body(req, SendPrompt);
+        return Response.json(sessions.send(id, text, images), { status: 202 });
+      }
+      case "POST /images": {
+        // The image itself, not JSON: it is kept until a prompt names it (DESIGN.md §5.4).
+        const bytes = new Uint8Array(await req.arrayBuffer());
+        try {
+          const name = saveUpload(ivy.paths.uploads, bytes, req.headers.get("content-type") ?? "");
+          return Response.json({ name } satisfies Uploaded, { status: 201 });
+        } catch (err) {
+          return fail(400, errorMessage(err));
+        }
+      }
+      case "GET /sessions/:/images/:": {
+        const file = sessions.imageFile(id, sub) ?? fail(404, "No such image");
+        // Named by its content: it never changes.
+        return new Response(Bun.file(file), {
+          headers: { "cache-control": "private, max-age=31536000, immutable" },
+        });
       }
       case "DELETE /sessions/:/prompts/:":
         if (!sessions.withdraw(id, sub)) fail(409, "That message already ran, or isn't waiting");
@@ -329,6 +348,9 @@ export function api(ivy: Ivy, sessions: Sessions): Routes {
         return Response.json({ error: err.message }, { status: err.status });
       if (err instanceof SessionNotFoundError) {
         return Response.json({ error: err.message }, { status: 404 });
+      }
+      if (err instanceof PromptError) {
+        return Response.json({ error: err.message }, { status: 400 });
       }
       throw err;
     }

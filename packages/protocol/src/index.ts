@@ -46,7 +46,8 @@ export type Display = (typeof DISPLAYS)[number];
 
 /** One thing in a session's transcript, as clients show it. */
 export type Entry =
-  | { kind: "user"; text: string }
+  /** `images`: sent with it, by name (GET /sessions/:id/images/:name). */
+  | { kind: "user"; text: string; images?: string[] }
   | { kind: "assistant"; markdown: string }
   | {
       kind: "tool";
@@ -71,6 +72,8 @@ export interface ToolLabel {
 export interface Prompt {
   id: string;
   text: string;
+  /** Images sent with it, by name, as with an entry. */
+  images?: string[];
 }
 
 /** Tokens: input includes cache reads and writes, i.e. the whole prompt sent each call. */
@@ -367,8 +370,17 @@ export type Switched = DaemonState & { saved: boolean; error?: string };
 
 /** POST /sessions */
 export const CreateSession = z.object({ display: z.enum(DISPLAYS).default("markdown") });
-/** POST /sessions/:id/prompts */
-export const SendPrompt = z.object({ text: z.string().trim().min(1) });
+/** POST /sessions/:id/prompts: text, images (as POST /images named them), or both. */
+export const SendPrompt = z
+  .object({
+    text: z.string().trim().default(""),
+    images: z.array(z.string()).max(20).default([]),
+  })
+  .refine((p) => p.text || p.images.length, "A message needs text or an image");
+/** POST /images answers with the name a prompt gives it; the body is the image itself. */
+export interface Uploaded {
+  name: string;
+}
 /** POST /sessions/:id/interrupt: stops the running turn; `clearQueue` also drops the waiting ones. */
 export const Interrupt = z.object({ clearQueue: z.boolean().default(false) });
 /** POST /permissions/:id */

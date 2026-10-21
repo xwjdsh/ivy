@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import {
+  clearUploads,
   createIvy,
   createLogger,
   type Ivy,
@@ -52,6 +53,10 @@ export async function serve(opts: ServeOptions): Promise<Served> {
     model: opts.model,
     keys: opts.keys,
   });
+  // Images attached to a message never sent (DESIGN.md §5.4), now and every hour.
+  clearUploads(ivy.paths.uploads);
+  const clearing = setInterval(() => clearUploads(ivy.paths.uploads), 60 * 60 * 1000);
+  clearing.unref();
   let daemon: Daemon | undefined;
   const live = new Sessions({
     ivy,
@@ -69,6 +74,7 @@ export async function serve(opts: ServeOptions): Promise<Served> {
     sessions: live,
     daemon: started,
     async stop() {
+      clearInterval(clearing);
       await live.close(); // running turns stop and write what they have
       await started.stop();
       await ivy.plugins.teardown();

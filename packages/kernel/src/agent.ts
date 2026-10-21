@@ -88,6 +88,9 @@ export interface AgentOptions {
   permissions: Permissions;
 }
 
+/** What the user sent: text, or text with the images sent along (in the session's folder). */
+export type UserPrompt = string | { text: string; images?: string[] };
+
 export interface TurnOptions {
   signal: AbortSignal;
   onEvent(event: AgentEvent): void;
@@ -141,15 +144,16 @@ export class Agent {
    * together with its tool_result message, so the session is always a valid request,
    * even after an interruption.
    */
-  async runTurn(session: Session, userText: string, turn: TurnOptions): Promise<TurnResult> {
+  async runTurn(session: Session, prompt: UserPrompt, turn: TurnOptions): Promise<TurnResult> {
     const { config } = this.opts;
+    const { text: userText, images = [] } = typeof prompt === "string" ? { text: prompt } : prompt;
     const system = await this.opts.systemPrompt(session.id);
     const context = await this.opts.plugins.turnContext({
       sessionId: session.id,
       userText,
       now: new Date(),
     });
-    session.appendPrompt(userText, context);
+    session.appendPrompt(userText, context, images);
     if (context) turn.onEvent({ type: "context", text: context });
 
     let costUsd = 0;
@@ -283,7 +287,7 @@ export class Agent {
       tools: plugins.apiTools(),
       // System messages for context where the model and endpoint support them, else text blocks.
       messages: renderMessages(
-        session.messages.map((m) => forModel(m, session.originOf(m), target)),
+        session.messages.map((m) => forModel(m, session.originOf(m), target, caps.images)),
         (m) => session.contextOf(m),
         caps.systemMessages ? "system" : "block",
       ),
@@ -404,6 +408,7 @@ const FEATURE_NAMES: Record<OptionalFeature, string> = {
   systemMessages: "mid-conversation system messages",
   streamUsage: "usage in the stream",
   cacheKey: "a prompt cache key",
+  images: "images (each is left out, and kept in the conversation)",
 };
 
 /** The optional features a request carries. */
@@ -414,6 +419,9 @@ function optionalUsed(request: ModelRequest, extras: RequestExtras): OptionalFea
   if (request.messages.some((m) => m.role === "system")) used.push("systemMessages");
   if (extras.streamUsage) used.push("streamUsage");
   if (extras.cacheKey) used.push("cacheKey");
+  if (request.messages.some((m) => typeof m.content !== "string" && m.content.some(isImage))) {
+    used.push("images");
+  }
   return used;
 }
 
@@ -432,8 +440,15 @@ function downgradable(
  * A message as `target` may see it: a reply's thinking goes back only to the model that wrote
  * it, at the endpoint it came from (DESIGN.md §5.2.1); elsewhere it is dropped, as another
  * backend may reject what it can't verify. Replies from before origins were recorded keep it.
+ * A prompt's images go only to a model that takes them (`images`).
  */
-function forModel(m: MessageParam, origin: Origin | undefined, target: ModelRef): MessageParam {
+function forModel(
+  m: MessageParam,
+  origin: Origin | undefined,
+  target: ModelRef,
+  images: boolean,
+): MessageParam {
+  if (m.role === "user") return images ? m : withoutImages(m);
   if (m.role !== "assistant" || !origin || typeof m.content === "string") return m;
   if (origin.endpoint === endpointKey(target.provider.base_url) && origin.model === target.id) {
     return m;
@@ -442,6 +457,19 @@ function forModel(m: MessageParam, origin: Origin | undefined, target: ModelRef)
   if (content.length === m.content.length) return m;
   // A reply of thinking alone keeps its place, the turns staying in order.
   return { ...m, content: content.length ? content : [{ type: "text", text: "…" }] };
+}
+
+const isImage = (b: { type: string }) => b.type === "image";
+
+/** A prompt for a model that takes no images: a line in place of each (the session keeps them). */
+function withoutImages(m: MessageParam): MessageParam {
+  if (typeof m.content === "string" || !m.content.some(isImage)) return m;
+  const content = m.content.map((b) =>
+    isImage(b)
+      ? { type: "text" as const, text: "[An image was left out: this model takes none]" }
+      : b,
+  );
+  return { ...m, content };
 }
 
 /**
