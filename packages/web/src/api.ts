@@ -10,6 +10,7 @@ import {
   type SessionEvent,
   type SessionSummary,
   type SessionView,
+  type Settings,
   type Switched,
 } from "@ivy/protocol";
 
@@ -47,6 +48,29 @@ export const api = {
   session: (id: string) => request<SessionView>("GET", `/sessions/${id}`),
   /** The session's file goes to the trash folder (DESIGN.md §5.7). */
   deleteSession: (id: string) => request<void>("DELETE", `/sessions/${id}`),
+  settings: () => request<Settings>("GET", "/settings"),
+  addProvider: (p: { name: string; base_url: string; key: string }) =>
+    request<Settings>("POST", "/providers", p),
+  updateProvider: (name: string, edit: { base_url?: string; models?: string[] }) =>
+    request<Settings>("PUT", `/providers/${encodeURIComponent(name)}`, edit),
+  removeProvider: (name: string) =>
+    request<Settings>("DELETE", `/providers/${encodeURIComponent(name)}`),
+  /** Without a key, the one in config.toml moves to the Keychain. */
+  setKey: (name: string, key?: string) =>
+    request<Settings>("PUT", `/providers/${encodeURIComponent(name)}/key`, key ? { key } : {}),
+  removeKey: (name: string) =>
+    request<Settings>("DELETE", `/providers/${encodeURIComponent(name)}/key`),
+  /** The models an endpoint lists with a key (or `name`'s own), nothing saved. */
+  testProvider: (t: { name?: string; base_url: string; key: string }) =>
+    request<{ models: string[] }>("POST", "/provider-test", t),
+  // The app's own settings, answered by the app (app/settings.go), not the daemon.
+  login: async () => (await request<{ enabled: boolean }>("GET", "/app/login")).enabled,
+  setLogin: async (enabled: boolean) =>
+    (await request<{ enabled: boolean }>("PUT", "/app/login", { enabled })).enabled,
+  command: () => request<{ installed: boolean; path: string }>("GET", "/app/command"),
+  installCommand: () => request<{ installed: boolean; path: string }>("POST", "/app/command"),
+  /** Open config.toml in the text editor, or Ivy's folder or logs in Finder. */
+  open: (what: "config" | "home" | "logs") => request<void>("POST", "/app/open", { what }),
   /** The app's own setting, answered by the app (app/appearance.go), not the daemon. */
   appearance: async () =>
     (await request<{ appearance: Appearance }>("GET", "/app/appearance")).appearance,

@@ -6,10 +6,12 @@
 
 import type { DaemonState, SessionEvent, SessionSummary } from "@ivy/protocol";
 import {
+  ChevronLeft,
   CircleAlert,
   CornerDownRight,
   LoaderCircle,
   Search as SearchIcon,
+  Settings as SettingsIcon,
   SquarePen,
   X,
 } from "lucide-react";
@@ -22,6 +24,7 @@ import { greeting, presence } from "./presence.ts";
 import { Card, Contact, Portrait } from "./profile.tsx";
 import { Search } from "./search.tsx";
 import { dayLabel, isRecent, timeLabel } from "./sessions.ts";
+import { SettingsPage } from "./settings.tsx";
 import { Timeline } from "./transcript.tsx";
 
 const sessionInHash = () => decodeURIComponent(location.hash.slice(1)) || undefined;
@@ -154,18 +157,44 @@ export function App() {
     open(id);
   };
 
-  // Her card, hanging from her at the top; the search for a past conversation (⌘K).
+  // Her card, hanging from her at the top; the search for a past conversation (⌘K); the
+  // settings (⌘,), over the conversation, which stays as it was under them.
   const [card, setCard] = useState(false);
   const [searching, setSearching] = useState(false);
+  const [settings, setSettings] = useState(false);
+  const openSettings = useCallback((open: boolean) => {
+    setCard(false);
+    setSearching(false);
+    setSettings(open);
+  }, []);
+  // The app's menu (Ivy → Settings…, ⌘,) asks for them: by an event, or, if it came before
+  // this page listened, by a flag left on the window (app/window.go).
+  useEffect(() => {
+    const wanted = () => {
+      const w = window as { ivyWantsSettings?: boolean };
+      if (!w.ivyWantsSettings) return;
+      w.ivyWantsSettings = false;
+      openSettings(true);
+    };
+    wanted();
+    addEventListener("ivy:settings", wanted);
+    return () => removeEventListener("ivy:settings", wanted);
+  }, [openSettings]);
   const closeCard = useCallback(() => setCard(false), []);
   const closeSearch = useCallback(() => setSearching(false), []);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const plain = e.metaKey && !e.shiftKey && !e.altKey && !e.ctrlKey;
       if (e.key === "Escape" && !e.defaultPrevented) {
-        // Her card closes first, then the past conversation open above.
+        // Her card closes first, then the settings, then the past conversation open above.
         if (card) setCard(false);
+        else if (settings) setSettings(false);
         else if (readingId.current) back();
+      }
+      // ⌘,: the settings, as in every Mac app.
+      else if (plain && e.key === ",") {
+        e.preventDefault();
+        openSettings(!settings);
       }
       // ⌘N: a new conversation, as the button at the top right.
       else if (plain && e.key === "n") {
@@ -181,7 +210,7 @@ export function App() {
     };
     addEventListener("keydown", onKey);
     return () => removeEventListener("keydown", onKey);
-  }, [card, back, open]);
+  }, [card, settings, openSettings, back, open]);
 
   /** Go to a past conversation found, open above to carry on. */
   const pick = (id: string) => {
@@ -249,6 +278,17 @@ export function App() {
       <main>
         <header className="topbar">
           <span className="side">
+            {settings && (
+              <button
+                type="button"
+                className="back"
+                title="Back to Ivy (Esc)"
+                onClick={() => openSettings(false)}
+              >
+                <ChevronLeft size={16} />
+                Settings
+              </button>
+            )}
             {!connected && (
               <span className="status">
                 <LoaderCircle size={13} className="spin" /> Reconnecting
@@ -262,23 +302,35 @@ export function App() {
             <span />
           )}
           <span className="side end">
-            <button
-              type="button"
-              className="icon find"
-              title="Search conversations (⌘K)"
-              aria-expanded={searching}
-              onClick={() => setSearching(!searching)}
-            >
-              <SearchIcon size={17} />
-            </button>
-            <button
-              type="button"
-              className="icon new"
-              title="New chat (⌘N)"
-              onClick={() => open(undefined)}
-            >
-              <SquarePen size={17} />
-            </button>
+            {!settings && (
+              <>
+                <button
+                  type="button"
+                  className="icon find"
+                  title="Search conversations (⌘K)"
+                  aria-expanded={searching}
+                  onClick={() => setSearching(!searching)}
+                >
+                  <SearchIcon size={17} />
+                </button>
+                <button
+                  type="button"
+                  className="icon new"
+                  title="New chat (⌘N)"
+                  onClick={() => open(undefined)}
+                >
+                  <SquarePen size={17} />
+                </button>
+                <button
+                  type="button"
+                  className="icon gear"
+                  title="Settings (⌘,)"
+                  onClick={() => openSettings(true)}
+                >
+                  <SettingsIcon size={17} />
+                </button>
+              </>
+            )}
           </span>
         </header>
         {card && (
@@ -293,6 +345,7 @@ export function App() {
             onClose={closeCard}
           />
         )}
+        {settings && <SettingsPage state={state} onState={setState} onError={failed} />}
         {searching && (
           <Search
             sessions={sessions.filter((s) => s.id !== chat?.id)}

@@ -81,8 +81,7 @@ export function Card(props: {
         <span className={`doing ${presence.tone}`}>{presence.text}</span>
       </div>
       <Hood>
-        {state && <Settings state={state} onState={props.onState} onError={onError} />}
-        {inApp && <Appearances onError={onError} />}
+        {state && <ModelSettings state={state} onState={props.onState} onError={onError} />}
         <dl className="facts">
           {state && (
             <div>
@@ -147,7 +146,7 @@ const EFFORTS: Record<string, string> = {
 };
 
 /** The model and the effort, both the daemon's: a change applies to every session. */
-function Settings(props: {
+export function ModelSettings(props: {
   state: DaemonState;
   onState(state: DaemonState): void;
   onError(err: unknown): void;
@@ -222,7 +221,7 @@ function sources(models: string[]): Map<string, string> {
  * Only the app has an appearance to set; in a browser the page follows the system's. MyGo
  * sets up `window.mygo` before the page's scripts run.
  */
-const inApp = "mygo" in window;
+export const inApp = "mygo" in window;
 
 const APPEARANCES: { value: Appearance; label: string; icon: ReactNode }[] = [
   { value: "system", label: "System", icon: <Monitor size={13} /> },
@@ -231,7 +230,7 @@ const APPEARANCES: { value: Appearance; label: string; icon: ReactNode }[] = [
 ];
 
 /** Light, dark or the system's, for the whole app: the title bar and menus follow too. */
-function Appearances({ onError }: { onError(err: unknown): void }) {
+export function Appearances({ onError }: { onError(err: unknown): void }) {
   const [value, setValue] = useState<Appearance | undefined>();
   useEffect(() => {
     api.appearance().then(setValue, onError);
