@@ -274,12 +274,21 @@ export function Composer(props: {
       >
         <ImagePlus size={18} />
       </button>
+      {/* Two buttons, not one changing: the web view kept the stop button's look on the send
+          button it became, drawing it enabled while it was disabled. */}
       {stop ? (
-        <button type="button" className="send stop" title="Stop (Esc)" onClick={props.onStop}>
+        <button
+          key="stop"
+          type="button"
+          className="send stop"
+          title="Stop (Esc)"
+          onClick={props.onStop}
+        >
           <Square size={12} fill="currentColor" />
         </button>
       ) : (
         <button
+          key="send"
           type="button"
           className="send"
           title="Send (Enter)"
