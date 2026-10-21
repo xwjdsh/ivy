@@ -116,7 +116,8 @@ export async function createIvy(opts: IvyOptions): Promise<Ivy> {
     }
     return client;
   };
-  clientFor(config.model.provider); // a missing API key fails at startup, not on the first turn
+  // A missing API key fails at startup, not on the first turn.
+  if (config.model) clientFor(config.model.provider);
 
   const permissions = new Permissions(
     config.permissions,
@@ -170,7 +171,7 @@ export async function createIvy(opts: IvyOptions): Promise<Ivy> {
     clients.clear();
     upstream.clear();
     // The model in use now points at its provider as it is now.
-    agent.setModel(agent.model);
+    if (agent.model) agent.setModel(agent.model);
   };
 
   const tracer = (sessionId: string) =>

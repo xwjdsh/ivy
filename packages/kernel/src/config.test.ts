@@ -1,8 +1,9 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { canSwitchModel, loadConfig, modelChoices, resolvePaths } from "./config.ts";
+import { addProvider, saveModel } from "./config-edit.ts";
 
 const tempPaths = () => resolvePaths(mkdtempSync(join(tmpdir(), "ivy-cfg-")));
 
@@ -18,23 +19,43 @@ const MINIMAL = '[agent]\nmodel = "anthropic/claude-opus-5-5"\n\n[providers.anth
 test("minimal config: a model on a provider; everything else defaulted", () => {
   const config = loadConfig(configWith(MINIMAL));
   expect(config.agent).toEqual({ model: "anthropic/claude-opus-5-5", max_steps: 25 });
-  expect(config.model.ref).toBe("anthropic/claude-opus-5-5");
-  expect(config.model.id).toBe("claude-opus-5-5");
-  expect(config.model.provider).toMatchObject({
+  expect(config.model?.ref).toBe("anthropic/claude-opus-5-5");
+  expect(config.model?.id).toBe("claude-opus-5-5");
+  expect(config.model?.provider).toMatchObject({
     name: "anthropic",
     type: "anthropic",
     base_url: "https://api.anthropic.com",
     models: [],
     refusal_fallback: true,
   });
-  expect(config.model.provider.api_key).toBeUndefined();
+  expect(config.model?.provider.api_key).toBeUndefined();
   expect(config.generation).toEqual({ effort: "medium", max_tokens: 64000 });
 });
 
-test("agent.model is required", () => {
-  expect(() => loadConfig(tempPaths())).toThrow(
-    'agent.model: required, e.g. model = "anthropic/claude-opus-5-5" under [agent]',
-  );
+test("a new install: no file, no model yet; the settings' first edits write the file", () => {
+  const paths = tempPaths();
+  const fresh = loadConfig(paths);
+  expect(fresh.model).toBeUndefined();
+  expect(fresh.providers).toEqual({});
+  expect(canSwitchModel(fresh)).toBe(false);
+
+  addProvider(paths, "proxy", {
+    type: "anthropic",
+    base_url: "http://127.0.0.1:9",
+    models: ["m1"],
+  });
+  const added = loadConfig(paths);
+  expect(added.model).toBeUndefined();
+  // The one model there is can be chosen, none being chosen yet.
+  expect(canSwitchModel(added)).toBe(true);
+  expect(modelChoices(added)).toEqual(["proxy/m1"]);
+  expect(saveModel(paths, "proxy/m1").model?.ref).toBe("proxy/m1");
+  expect(existsSync(paths.config)).toBe(true);
+
+  // An edit that fails leaves no file behind where there was none.
+  const other = tempPaths();
+  expect(() => saveModel(other, "nowhere/m")).toThrow();
+  expect(existsSync(other.config)).toBe(false);
 });
 
 test("agent.model splits at the first slash: the provider, then the model id as is", () => {
@@ -54,8 +75,8 @@ refusal_fallback = false
 effort = "high"
 `),
   );
-  expect(config.model.id).toBe("codex/gpt-6-luna");
-  expect(config.model.provider).toMatchObject({
+  expect(config.model?.id).toBe("codex/gpt-6-luna");
+  expect(config.model?.provider).toMatchObject({
     name: "proxy",
     api_key: "sk-proxy",
     base_url: "https://proxy.example.com",

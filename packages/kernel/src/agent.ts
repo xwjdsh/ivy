@@ -107,22 +107,26 @@ export interface TurnResult {
 }
 
 const MAX_PARSE_RETRIES = 2;
+
+/** What a turn says before any model is chosen (a new install). */
+export const NO_MODEL =
+  "Ivy has no model yet: add a provider in Settings and choose a model, or set [agent] model in config.toml.";
 const log = createLogger("agent");
 
 export class Agent {
-  /** Current model; starts as `agent.model` and can be switched at runtime. */
-  private current: ModelRef;
+  /** Current model; starts as `agent.model` and can be switched at runtime. None before one is chosen. */
+  private current: ModelRef | undefined;
 
   constructor(private readonly opts: AgentOptions) {
     this.current = opts.config.model;
   }
 
-  /** The current model as "<provider>/<model id>". */
+  /** The current model as "<provider>/<model id>"; "" before one is chosen. */
   get model(): string {
-    return this.current.ref;
+    return this.current?.ref ?? "";
   }
 
-  get modelRef(): ModelRef {
+  get modelRef(): ModelRef | undefined {
     return this.current;
   }
 
@@ -146,6 +150,10 @@ export class Agent {
    */
   async runTurn(session: Session, prompt: UserPrompt, turn: TurnOptions): Promise<TurnResult> {
     const { config } = this.opts;
+    // One model for the whole turn; a switch applies from the next one. None yet: nothing
+    // is written, so the message isn't left without a reply.
+    const target = this.current;
+    if (!target) throw new Error(NO_MODEL);
     const { text: userText, images = [] } = typeof prompt === "string" ? { text: prompt } : prompt;
     const system = await this.opts.systemPrompt(session.id);
     const context = await this.opts.plugins.turnContext({
@@ -159,8 +167,6 @@ export class Agent {
     let costUsd = 0;
     let parseRetries = 0;
 
-    // One model for the whole turn; a switch applies from the next one.
-    const target = this.current;
     const client = this.opts.clientFor(target.provider);
     const origin: Origin = { endpoint: endpointKey(target.provider.base_url), model: target.id };
     for (let step = 1; step <= config.agent.max_steps; step++) {

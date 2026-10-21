@@ -1,4 +1,5 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { type Config, type Effort, loadConfig, type Paths } from "./config.ts";
 import { errorMessage } from "./log.ts";
 
@@ -13,7 +14,7 @@ export function saveModel(paths: Paths, model: string): Config {
   return saveEdit(
     paths,
     (toml) => withValue(toml, ["agent"], "model", model, { createSection: true }),
-    (c) => c.model.ref === model,
+    (c) => c.model?.ref === model,
     "the model",
   );
 }
@@ -124,14 +125,18 @@ function saveEdit(
   applied: (config: Config) => boolean,
   what: string,
 ): Config {
-  const original = readFileSync(paths.config, "utf8");
+  // A new install has no file yet: the first edit writes it.
+  const existed = existsSync(paths.config);
+  const original = existed ? readFileSync(paths.config, "utf8") : "";
+  mkdirSync(dirname(paths.config), { recursive: true });
   writeFileSync(paths.config, edit(original));
   try {
     const config = loadConfig(paths);
     if (!applied(config)) throw new Error("the edit did not take effect");
     return config;
   } catch (err) {
-    writeFileSync(paths.config, original);
+    if (existed) writeFileSync(paths.config, original);
+    else rmSync(paths.config, { force: true });
     throw new Error(`Could not save ${what}: ${errorMessage(err)}`);
   }
 }

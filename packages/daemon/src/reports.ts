@@ -53,9 +53,13 @@ export function statusReport(
   });
   const lines = [
     "Status",
-    `  model: ${ivy.agent.model}`,
-    `  provider: ${ref.provider.name} · ${ref.provider.base_url}`,
-    ...ivy.capabilities.explain(ref).map((l) => `    ${l}`),
+    ...(ref
+      ? [
+          `  model: ${ref.ref}`,
+          `  provider: ${ref.provider.name} · ${ref.provider.base_url}`,
+          ...ivy.capabilities.explain(ref).map((l) => `    ${l}`),
+        ]
+      : ["  model: none yet"]),
     `  system prompt: ${prompt.map((part) => `${part.name} ${part.text.length}`).join(" · ")} · total ${total} chars`,
     `  tools: ${
       ivy.plugins

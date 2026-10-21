@@ -77,7 +77,7 @@ export function api(ivy: Ivy, sessions: Sessions): Routes {
   const state = (): DaemonState => ({
     model: ivy.agent.model,
     effort: ivy.capabilities.effort,
-    effortUsed: ivy.capabilities.for(ivy.agent.modelRef).effort,
+    effortUsed: ivy.agent.modelRef && ivy.capabilities.for(ivy.agent.modelRef).effort,
     canSwitchModel: canSwitchModel(ivy.config),
     efforts: [...EFFORT_LEVELS],
     plugins: ivy.plugins.list().length,
@@ -95,7 +95,7 @@ export function api(ivy: Ivy, sessions: Sessions): Routes {
   };
 
   const settings = (): Settings => {
-    const inUse = ivy.agent.modelRef.provider.name;
+    const inUse = ivy.agent.modelRef?.provider.name;
     return {
       providers: Object.values(ivy.config.providers)
         .sort((a, b) => a.name.localeCompare(b.name))
@@ -177,7 +177,8 @@ export function api(ivy: Ivy, sessions: Sessions): Routes {
       case "PUT /model": {
         const { model: name } = await body(req, SetModel);
         const { models } = await ivy.modelChoices();
-        if (models.length < 2) return fail(400, onlyOneModel(ivy.agent.model));
+        // With none chosen yet, the only one there is can be.
+        if (models.length < 2 && ivy.agent.model) return fail(400, onlyOneModel(ivy.agent.model));
         // The provider can be left out when only one provider has a model by that id.
         const byId = models.filter((m) => m.slice(m.indexOf("/") + 1) === name);
         const model = models.includes(name) ? name : byId.length === 1 ? byId[0] : undefined;
@@ -220,7 +221,7 @@ export function api(ivy: Ivy, sessions: Sessions): Routes {
       }
       case "DELETE /providers/:": {
         provider(id);
-        if (ivy.agent.modelRef.provider.name === id) {
+        if (ivy.agent.modelRef?.provider.name === id) {
           return fail(409, `The model in use is one of ${id}'s: switch models first`);
         }
         return changeProviders(() => {
@@ -241,7 +242,7 @@ export function api(ivy: Ivy, sessions: Sessions): Routes {
       }
       case "DELETE /providers/:/key": {
         provider(id);
-        if (ivy.agent.modelRef.provider.name === id) {
+        if (ivy.agent.modelRef?.provider.name === id) {
           return fail(409, `The model in use needs ${id}'s key: switch models first`);
         }
         return changeProviders(() => {

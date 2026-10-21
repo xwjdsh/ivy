@@ -4,7 +4,7 @@
 # Unknown keys are an error, so typos don't go unnoticed.
 
 [agent]
-model = "anthropic/claude-opus-5-5"  # required: "<provider>/<model id>", split at the first "/"
+model = "anthropic/claude-opus-5-5"  # "<provider>/<model id>", split at the first "/"; without one, Ivy asks for it
 max_steps = 25                    # model calls per turn
 
 [providers.anthropic]

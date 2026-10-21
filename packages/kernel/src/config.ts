@@ -59,7 +59,7 @@ const ConfigSchema = z.strictObject({
     .prefault({}),
   agent: z
     .strictObject({
-      /** The model to use, as "<provider>/<model id>" (see resolveModel). Required. */
+      /** The model to use, as "<provider>/<model id>" (see resolveModel). None until one is chosen. */
       model: z.string().min(1).optional(),
       /** Max model calls per user turn before the loop stops. */
       max_steps: z.number().int().positive().default(25),
@@ -104,8 +104,8 @@ export interface ModelRef {
 
 export type Config = Omit<z.infer<typeof ConfigSchema>, "providers"> & {
   providers: Record<string, ProviderConfig>;
-  /** `agent.model`, resolved. */
-  model: ModelRef;
+  /** `agent.model`, resolved; none before one is chosen (a new install). */
+  model?: ModelRef;
 };
 export type Effort = z.infer<typeof Effort>;
 
@@ -166,11 +166,10 @@ export function loadConfig(paths: Paths): Config {
       models: [...new Set(p.models)],
     };
   }
+  const ref = parsed.data.agent.model;
+  if (!ref) return { ...parsed.data, providers };
   try {
-    const ref = parsed.data.agent.model;
-    if (!ref) throw new Error('required, e.g. model = "anthropic/claude-opus-5-5" under [agent]');
-    const model = resolveModel(providers, ref);
-    return { ...parsed.data, providers, model };
+    return { ...parsed.data, providers, model: resolveModel(providers, ref) };
   } catch (err) {
     throw new Error(`Invalid ${paths.config}: agent.model: ${(err as Error).message}`);
   }
@@ -199,18 +198,22 @@ export function resolveModel(providers: Record<string, ProviderConfig>, ref: str
  */
 export function modelChoices(
   config: Config,
-  current = config.model.ref,
+  current = config.model?.ref,
   upstream: Record<string, string[]> = {},
 ): string[] {
   const listed = Object.values(config.providers).flatMap((p) =>
     (p.models.length ? p.models : (upstream[p.name] ?? [])).map((id) => `${p.name}/${id}`),
   );
   const unique = [...new Set(listed)];
-  return unique.includes(current) ? unique : [current, ...unique];
+  return !current || unique.includes(current) ? unique : [current, ...unique];
 }
 
-/** Whether /model has anything to offer: a provider without a limit, or two models listed. */
+/**
+ * Whether /model has anything to offer: a provider without a limit, or two models listed,
+ * or, with none chosen yet, any.
+ */
 export function canSwitchModel(config: Config): boolean {
   const providers = Object.values(config.providers);
-  return providers.some((p) => p.models.length === 0) || modelChoices(config).length > 1;
+  const listed = modelChoices(config).length;
+  return providers.some((p) => p.models.length === 0) || listed > (config.model ? 1 : 0);
 }
