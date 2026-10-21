@@ -47,3 +47,21 @@ export function byDay(sessions: SessionSummary[], now = new Date()): Day[] {
   }
   return days;
 }
+
+/** Without a query, the latest few: most often the one just left. */
+const LATEST = 8;
+/** At most this many matches; more words narrow them. */
+const MATCHES = 30;
+
+/** Sessions, newest first, matching a query by how they began or their day. */
+export function matching(sessions: SessionSummary[], query: string, now = new Date()) {
+  const q = query.trim().toLowerCase();
+  if (!q) return sessions.slice(0, LATEST);
+  return sessions
+    .filter(
+      (s) =>
+        (s.preview || "Untitled").toLowerCase().includes(q) ||
+        dayLabel(new Date(s.updatedAt), now).toLowerCase().includes(q),
+    )
+    .slice(0, MATCHES);
+}

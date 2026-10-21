@@ -1,25 +1,30 @@
 // The chat window: one long conversation with Ivy, the past ones above the one going on now,
-// her at the top, and her pane beside it when she is clicked. Like the TUI it is a client of
+// her at the top, and her card hanging from her when she is clicked. Like the TUI it is a client of
 // the daemon, which runs the sessions; this page only shows them and sends what the user types.
 // The session going on is in the URL's hash, so a reload keeps it. While a past one is open,
 // what is written goes to it, and it becomes the one going on.
 
 import type { DaemonState, SessionEvent, SessionSummary } from "@ivy/protocol";
-import { CircleAlert, CornerDownRight, LoaderCircle, SquarePen, X } from "lucide-react";
+import {
+  CircleAlert,
+  CornerDownRight,
+  LoaderCircle,
+  Search as SearchIcon,
+  SquarePen,
+  X,
+} from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, follow } from "./api.ts";
 import { apply, type Chat, chatOf, emptyChat } from "./chat.ts";
 import { Composer, Permission, Queue } from "./composer.tsx";
 import { History } from "./history.tsx";
 import { greeting, presence } from "./presence.ts";
-import { Contact, Portrait, Profile } from "./profile.tsx";
+import { Card, Contact, Portrait } from "./profile.tsx";
+import { Search } from "./search.tsx";
 import { dayLabel, isRecent, timeLabel } from "./sessions.ts";
 import { Timeline } from "./transcript.tsx";
 
 const sessionInHash = () => decodeURIComponent(location.hash.slice(1)) || undefined;
-
-/** A window this narrow has her pane over the conversation (styles.css). */
-const NARROW = "(max-width: 760px)";
 
 /** Session events that change the list: a session started, ran, or finished a turn. */
 const LISTED = new Set<SessionEvent["type"]>(["prompt", "turn_start", "turn_end"]);
@@ -149,30 +154,39 @@ export function App() {
     open(id);
   };
 
-  // Her pane, beside the conversation.
-  const [pane, setPane] = useState(false);
+  // Her card, hanging from her at the top; the search for a past conversation (⌘K).
+  const [card, setCard] = useState(false);
+  const [searching, setSearching] = useState(false);
+  const closeCard = useCallback(() => setCard(false), []);
+  const closeSearch = useCallback(() => setSearching(false), []);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      const plain = e.metaKey && !e.shiftKey && !e.altKey && !e.ctrlKey;
       if (e.key === "Escape" && !e.defaultPrevented) {
-        // The pane closes first, then the past conversation open above.
-        if (pane) setPane(false);
+        // Her card closes first, then the past conversation open above.
+        if (card) setCard(false);
         else if (readingId.current) back();
       }
       // ⌘N: a new conversation, as the button at the top right.
-      else if (e.metaKey && !e.shiftKey && !e.altKey && e.key === "n") {
+      else if (plain && e.key === "n") {
         e.preventDefault();
         open(undefined);
+      }
+      // ⌘K: find a past conversation, as the button beside it.
+      else if (plain && e.key === "k") {
+        e.preventDefault();
+        setCard(false);
+        setSearching((v) => !v);
       }
     };
     addEventListener("keydown", onKey);
     return () => removeEventListener("keydown", onKey);
-  }, [pane, back, open]);
+  }, [card, back, open]);
 
-  /** Go to a past conversation from her pane, open to carry on; a narrow window's pane closes. */
+  /** Go to a past conversation found, open above to carry on. */
   const pick = (id: string) => {
     if (readingId.current !== id) read(id);
     setJump({});
-    if (matchMedia(NARROW).matches) setPane(false);
   };
 
   const send = async (text: string) => {
@@ -242,12 +256,21 @@ export function App() {
             )}
           </span>
           {/* Before a conversation starts, she is in the middle of the page instead. */}
-          {chat || pane ? (
-            <Contact presence={now} open={pane} onToggle={() => setPane(!pane)} />
+          {chat || card ? (
+            <Contact presence={now} open={card} onToggle={() => setCard(!card)} />
           ) : (
             <span />
           )}
           <span className="side end">
+            <button
+              type="button"
+              className="icon find"
+              title="Search conversations (⌘K)"
+              aria-expanded={searching}
+              onClick={() => setSearching(!searching)}
+            >
+              <SearchIcon size={17} />
+            </button>
             <button
               type="button"
               className="icon new"
@@ -258,6 +281,25 @@ export function App() {
             </button>
           </span>
         </header>
+        {card && (
+          <Card
+            presence={now}
+            facts={{
+              tokens: chat && chat.tokens.in + chat.tokens.out > 0 ? chat.tokens : undefined,
+            }}
+            state={state}
+            onState={setState}
+            onError={failed}
+            onClose={closeCard}
+          />
+        )}
+        {searching && (
+          <Search
+            sessions={sessions.filter((s) => s.id !== chat?.id)}
+            onPick={pick}
+            onClose={closeSearch}
+          />
+        )}
         <Timeline
           key={chat?.id ?? ""}
           chat={chat}
@@ -279,7 +321,7 @@ export function App() {
                 type="button"
                 className="face"
                 title="About Ivy"
-                onClick={() => setPane(true)}
+                onClick={() => setCard(true)}
               >
                 <Portrait size={72} presence={now} />
               </button>
@@ -324,21 +366,6 @@ export function App() {
           {composer}
         </div>
       </main>
-      {pane && (
-        <Profile
-          presence={now}
-          facts={{
-            sessions,
-            current: chat?.id,
-            tokens: chat && chat.tokens.in + chat.tokens.out > 0 ? chat.tokens : undefined,
-          }}
-          state={state}
-          onState={setState}
-          onPick={pick}
-          onError={failed}
-          onClose={() => setPane(false)}
-        />
-      )}
     </div>
   );
 }

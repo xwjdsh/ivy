@@ -1,22 +1,14 @@
 // Ivy herself, at the top of the conversation: her face, her name and what she is doing.
-// Clicking her opens her pane beside it: a page of all the conversations had with her, to
-// find one and go to it, and, folded at its foot, what runs her (the model and the effort),
-// out of the way of the conversation.
+// Clicking her shows her card, hanging from her: the same, larger, and, folded at its foot,
+// what runs her (the model and the effort), out of the way of the conversation.
 
-import {
-  compact,
-  type DaemonState,
-  formatTokens,
-  type SessionSummary,
-  type Tokens,
-} from "@ivy/protocol";
-import { ChevronLeft, ChevronRight, Monitor, Moon, Search, Sun, X } from "lucide-react";
-import { type PointerEvent, type ReactNode, useEffect, useState } from "react";
+import { compact, type DaemonState, formatTokens, type Tokens } from "@ivy/protocol";
+import { ChevronRight, Monitor, Moon, Sun } from "lucide-react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { type Appearance, api } from "./api.ts";
 import ivy from "./ivy.png"; // the app's icon (app/resources/icon.png), smaller
 import { Bars, Pick } from "./menu.tsx";
 import type { Presence } from "./presence.ts";
-import { byDay, timeLabel } from "./sessions.ts";
 
 /** Her face, cut round from the app's icon. */
 export function Portrait({ size, presence }: { size: number; presence?: Presence }) {
@@ -32,13 +24,9 @@ export function Portrait({ size, presence }: { size: number; presence?: Presence
   );
 }
 
-/** What her pane tells about her, besides what the plugins have. */
+/** What her card tells about the conversation going on. */
 export interface Facts {
-  /** Every conversation had with her, newest first, as the daemon lists them. */
-  sessions: SessionSummary[];
-  /** The conversation going on, if one is. */
-  current: string | undefined;
-  /** What the conversation going on has used, if it has. */
+  /** What it has used, if anything yet. */
   tokens: Tokens | undefined;
 }
 
@@ -63,221 +51,65 @@ export function Contact(props: { presence: Presence; open: boolean; onToggle(): 
 }
 
 /**
- * Her pane, beside the conversation: who she is, the conversations had with her and, folded
- * at its foot, what runs her.
+ * Her card, hanging from her at the top: who she is and what she is doing, and, folded at its
+ * foot, what runs her. A click outside it or Esc puts it away.
  */
-export function Profile(props: {
+export function Card(props: {
   presence: Presence;
   facts: Facts;
   state: DaemonState | undefined;
   onState(state: DaemonState): void;
-  /** Go to a past conversation, open to carry on. */
-  onPick(id: string): void;
   onError(err: unknown): void;
   onClose(): void;
 }) {
-  const { presence, facts, state, onError } = props;
-  // Her card, or the page of conversations opened from it.
-  const [page, setPage] = useState<"card" | "conversations">("card");
-  const [width, setWidth] = useState(savedWidth);
-  // Esc goes back to her card before it closes the pane.
+  const { presence, facts, state, onError, onClose } = props;
+  const card = useRef<HTMLElement>(null);
   useEffect(() => {
-    if (page === "card") return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !e.defaultPrevented) {
-        e.preventDefault();
-        setPage("card");
-      }
+    const away = (e: PointerEvent) => {
+      const t = e.target as Element;
+      // Her at the top toggles the card herself.
+      if (!card.current?.contains(t) && !t.closest(".presence")) onClose();
     };
-    // Before the window's own Esc, which closes the pane.
-    addEventListener("keydown", onKey, { capture: true });
-    return () => removeEventListener("keydown", onKey, { capture: true });
-  }, [page]);
+    addEventListener("pointerdown", away);
+    return () => removeEventListener("pointerdown", away);
+  }, [onClose]);
   return (
-    <aside className="pane" aria-label="Ivy" style={{ width }}>
-      <Edge width={width} onResize={setWidth} />
-      <div className="pane-top">
-        <button type="button" className="icon" title="Close" onClick={props.onClose}>
-          <X size={16} />
-        </button>
+    <aside className="card" aria-label="Ivy" ref={card}>
+      <div className="profile">
+        <Portrait size={72} presence={presence} />
+        <span className="name">Ivy</span>
+        <span className={`doing ${presence.tone}`}>{presence.text}</span>
       </div>
-      {page === "conversations" ? (
-        <Conversations
-          sessions={facts.sessions.filter((s) => s.id !== facts.current)}
-          onBack={() => setPage("card")}
-          onPick={props.onPick}
-        />
-      ) : (
-        <div className="pane-body">
-          <div className="profile">
-            <Portrait size={88} presence={presence} />
-            <span className="name">Ivy</span>
-            <span className={`doing ${presence.tone}`}>{presence.text}</span>
-          </div>
-          <button type="button" className="go" onClick={() => setPage("conversations")}>
-            <span className="key">Conversations</span>
-            <span className="value">{facts.sessions.length}</span>
-            <ChevronRight size={14} className="next" />
-          </button>
-          <Hood>
-            {state && <Settings state={state} onState={props.onState} onError={onError} />}
-            {inApp && <Appearances onError={onError} />}
-            <dl className="facts">
-              {state && (
-                <div>
-                  <dt>Tools</dt>
-                  <dd>
-                    {state.tools} from {state.plugins} plugins
-                  </dd>
-                </div>
-              )}
-              {facts.tokens && (
-                <div>
-                  <dt>This chat</dt>
-                  <dd title={formatTokens(facts.tokens)}>
-                    {compact(facts.tokens.in)} in · {compact(facts.tokens.out)} out
-                  </dd>
-                </div>
-              )}
-            </dl>
-          </Hood>
-        </div>
-      )}
+      <Hood>
+        {state && <Settings state={state} onState={props.onState} onError={onError} />}
+        {inApp && <Appearances onError={onError} />}
+        <dl className="facts">
+          {state && (
+            <div>
+              <dt>Tools</dt>
+              <dd>
+                {state.tools} from {state.plugins} plugins
+              </dd>
+            </div>
+          )}
+          {facts.tokens && (
+            <div>
+              <dt>This chat</dt>
+              <dd title={formatTokens(facts.tokens)}>
+                {compact(facts.tokens.in)} in · {compact(facts.tokens.out)} out
+              </dd>
+            </div>
+          )}
+        </dl>
+      </Hood>
     </aside>
-  );
-}
-
-/** All the past conversations, newest first, to find one by how it began or its day. */
-function Conversations(props: {
-  sessions: SessionSummary[];
-  onBack(): void;
-  onPick(id: string): void;
-}) {
-  const [query, setQuery] = useState("");
-  const q = query.trim().toLowerCase();
-  const days = byDay(props.sessions)
-    .reverse()
-    .map((d) => ({
-      label: d.label,
-      sessions: [...d.sessions]
-        .reverse()
-        .filter(
-          (s) =>
-            !q ||
-            d.label.toLowerCase().includes(q) ||
-            (s.preview || "Untitled").toLowerCase().includes(q),
-        ),
-    }))
-    .filter((d) => d.sessions.length > 0);
-  return (
-    <div className="pane-page">
-      <div className="page-head">
-        <button type="button" className="back" onClick={props.onBack}>
-          <ChevronLeft size={16} />
-          Ivy
-        </button>
-      </div>
-      <label className="find">
-        <Search size={14} />
-        <input
-          // biome-ignore lint/a11y/noAutofocus: the page is opened to search it
-          autoFocus
-          value={query}
-          placeholder="Search conversations"
-          onChange={(e) => setQuery(e.target.value)}
-        />
-      </label>
-      <div className="pane-body">
-        {days.length === 0 && (
-          <p className="none">{q ? "No conversation matches" : "No other conversations yet"}</p>
-        )}
-        {days.map((d) => (
-          <section key={d.label} className="convs">
-            <h3 className="when">{d.label}</h3>
-            {d.sessions.map((s) => (
-              <button key={s.id} type="button" className="conv" onClick={() => props.onPick(s.id)}>
-                <span className="time">{timeLabel(new Date(s.updatedAt))}</span>
-                <span className="preview">{s.preview || "Untitled"}</span>
-                {s.busy && <span className="busy" title="Replying" />}
-              </button>
-            ))}
-          </section>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-const WIDTH_KEY = "ivy.pane-width";
-const WIDTH = { usual: 300, min: 260, max: 480 };
-/** The conversation keeps at least this much of the window beside her pane. */
-const CONVERSATION_MIN = 400;
-
-/** A width her pane can take in this window. */
-const clampWidth = (w: number) =>
-  Math.round(Math.max(WIDTH.min, Math.min(w, WIDTH.max, window.innerWidth - CONVERSATION_MIN)));
-
-/** The width the pane was given last, remembered here, in this browser. */
-function savedWidth(): number {
-  try {
-    const w = Number(localStorage.getItem(WIDTH_KEY));
-    return w ? clampWidth(w) : WIDTH.usual;
-  } catch {
-    return WIDTH.usual;
-  }
-}
-
-/**
- * The pane's left edge, dragged to make it wider or narrower; a double click gives it its
- * usual width back. Not in a narrow window, where the pane lies over the conversation.
- */
-function Edge({ width, onResize }: { width: number; onResize(width: number): void }) {
-  const save = (w: number) => {
-    try {
-      if (w === WIDTH.usual) localStorage.removeItem(WIDTH_KEY);
-      else localStorage.setItem(WIDTH_KEY, String(w));
-    } catch {}
-  };
-  const start = (e: PointerEvent<HTMLDivElement>) => {
-    if (e.button !== 0) return;
-    e.preventDefault();
-    const edge = e.currentTarget;
-    edge.setPointerCapture(e.pointerId);
-    const from = e.clientX;
-    let next = width;
-    document.documentElement.classList.add("resizing");
-    const move = (m: globalThis.PointerEvent) => {
-      next = clampWidth(width + from - m.clientX);
-      onResize(next);
-    };
-    const end = () => {
-      edge.removeEventListener("pointermove", move);
-      edge.removeEventListener("pointerup", end);
-      edge.removeEventListener("pointercancel", end);
-      document.documentElement.classList.remove("resizing");
-      save(next);
-    };
-    edge.addEventListener("pointermove", move);
-    edge.addEventListener("pointerup", end);
-    edge.addEventListener("pointercancel", end);
-  };
-  return (
-    // biome-ignore lint/a11y/noStaticElementInteractions: a pointer affordance; the width has a sensible default
-    <div
-      className="pane-edge"
-      onPointerDown={start}
-      onDoubleClick={() => {
-        onResize(WIDTH.usual);
-        save(WIDTH.usual);
-      }}
-    />
   );
 }
 
 const HOOD_KEY = "ivy.hood";
 
 /**
- * What runs her, folded away at the foot of her pane: the model, the effort, what she has to work
+ * What runs her, folded away at the foot of her card: the model, the effort, what she has to work
  * with. Whether it is open is remembered here, in this browser.
  */
 function Hood({ children }: { children: ReactNode }) {
