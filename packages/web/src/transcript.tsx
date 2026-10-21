@@ -20,9 +20,11 @@ import {
   useRef,
   useState,
 } from "react";
+import { imageUrl } from "./api.ts";
 import type { Chat, Item } from "./chat.ts";
 import { useHighlight } from "./highlight.ts";
-import { renderMarkdown } from "./markdown.ts";
+import { renderMarkdown, showImage } from "./markdown.ts";
+import { viewImage } from "./viewer.tsx";
 
 /** What the past above can ask of the timeline it is in. */
 export interface Place {
@@ -129,7 +131,7 @@ export function Timeline(props: {
                 // Items are only appended (a tool's result fills its own), so the index is
                 // stable.
                 // biome-ignore lint/suspicious/noArrayIndexKey: see above
-                <ItemView key={i} item={item} fresh={i >= opened} />
+                <ItemView key={i} item={item} sessionId={chat.id} fresh={i >= opened} />
               ))
             : props.empty}
           {chat?.streaming && (
@@ -149,11 +151,38 @@ export function Timeline(props: {
   );
 }
 
-export function ItemView({ item, fresh }: { item: Item; fresh: boolean }) {
+export function ItemView({
+  item,
+  sessionId,
+  fresh,
+}: {
+  item: Item;
+  /** Whose transcript it is: where its images are. */
+  sessionId: string;
+  fresh: boolean;
+}) {
   const f = fresh ? " fresh" : "";
   switch (item.kind) {
     case "user":
-      return <div className={`user${f}`}>{item.text}</div>;
+      return (
+        <>
+          {item.images && (
+            <div className={`sent-images${f}`}>
+              {item.images.map((name) => (
+                <button
+                  key={name}
+                  type="button"
+                  title="View"
+                  onClick={() => viewImage(imageUrl(sessionId, name))}
+                >
+                  <img src={imageUrl(sessionId, name)} alt="" />
+                </button>
+              ))}
+            </div>
+          )}
+          {item.text && <div className={`user${f}`}>{item.text}</div>}
+        </>
+      );
     case "assistant":
       return <Markdown className={`assistant${f}`} text={item.markdown} />;
     case "tool":
@@ -170,9 +199,22 @@ export function ItemView({ item, fresh }: { item: Item; fresh: boolean }) {
 
 function Markdown({ text, className }: { text: string; className: string }) {
   const highlighted = useHighlight();
-  // biome-ignore lint/correctness/useExhaustiveDependencies: rendered again once highlighting loads
-  const html = useMemo(() => renderMarkdown(text), [text, highlighted]);
+  // Bumped when an image is shown, to render it in.
+  const [shown, setShown] = useState(0);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: rendered again once highlighting loads or an image is shown
+  const html = useMemo(() => renderMarkdown(text), [text, highlighted, shown]);
   const onClick = (e: MouseEvent<HTMLDivElement>) => {
+    const shownImage = (e.target as Element).closest<HTMLImageElement>(".reply-image");
+    if (shownImage) {
+      viewImage(shownImage.src);
+      return;
+    }
+    const image = (e.target as Element).closest<HTMLElement>(".show-image");
+    if (image?.dataset.src) {
+      showImage(image.dataset.src);
+      setShown((n) => n + 1);
+      return;
+    }
     const copy = (e.target as Element).closest(".copy");
     const code = copy?.closest(".code")?.querySelector("pre")?.textContent;
     if (!copy || code == null) return;
@@ -182,7 +224,8 @@ function Markdown({ text, className }: { text: string; className: string }) {
     });
   };
   return (
-    // The copy buttons are real buttons inside; the div only delegates their clicks.
+    // The copy and show-image buttons are real buttons inside; the div only delegates their
+    // clicks.
     // biome-ignore lint/a11y/noStaticElementInteractions lint/a11y/useKeyWithClickEvents: see above
     <div
       className={className}

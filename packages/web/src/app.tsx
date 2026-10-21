@@ -26,6 +26,7 @@ import { Search } from "./search.tsx";
 import { dayLabel, isRecent, timeLabel } from "./sessions.ts";
 import { SettingsPage } from "./settings.tsx";
 import { Timeline } from "./transcript.tsx";
+import { ImageViewer } from "./viewer.tsx";
 
 const sessionInHash = () => decodeURIComponent(location.hash.slice(1)) || undefined;
 
@@ -218,13 +219,13 @@ export function App() {
     setJump({});
   };
 
-  const send = async (text: string) => {
+  const send = async (text: string, images: string[]) => {
     setError(undefined);
     try {
       if (reading) {
         const id = reading.id;
         carryOn(id);
-        await api.send(id, text);
+        await api.send(id, text, images);
         return;
       }
       let id = chat?.id;
@@ -234,7 +235,7 @@ export function App() {
         setChat(emptyChat(id));
         history.replaceState(null, "", `#${encodeURIComponent(id)}`);
       }
-      await api.send(id, text);
+      await api.send(id, text, images);
     } catch (err) {
       failed(err);
       throw err; // the composer keeps the text
@@ -347,6 +348,7 @@ export function App() {
           />
         )}
         {settings && <SettingsPage state={state} onState={setState} onError={failed} />}
+        <ImageViewer />
         {searching && (
           <Search
             sessions={sessions.filter((s) => s.id !== chat?.id)}

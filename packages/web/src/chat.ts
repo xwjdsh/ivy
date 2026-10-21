@@ -71,7 +71,14 @@ export function apply(chat: Chat, e: SessionChange): Chat {
       return {
         ...chat,
         queue: chat.queue.filter((p) => p.id !== e.prompt.id),
-        items: [...chat.items, { kind: "user", text: e.prompt.text }],
+        items: [
+          ...chat.items,
+          {
+            kind: "user",
+            text: e.prompt.text,
+            ...(e.prompt.images && { images: e.prompt.images }),
+          },
+        ],
         streaming: "",
         running: e.prompt,
       };

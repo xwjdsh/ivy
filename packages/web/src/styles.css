@@ -632,10 +632,113 @@ main {
   margin-top: 0;
 }
 
+/* Images the user sent, above what they wrote; a fixed height, so nothing moves as they load. */
+.sent-images {
+  align-self: flex-end;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  max-width: 78%;
+  margin-top: 10px;
+}
+
+.sent-images + .user {
+  margin-top: 6px;
+}
+
+.now > .sent-images:first-child {
+  margin-top: 0;
+}
+
+.transcript .sent-images img {
+  cursor: zoom-in;
+  height: 160px;
+  max-width: 100%;
+  border-radius: 14px;
+  object-fit: cover;
+  background: var(--bubble);
+}
+
+/* A sent image is a button: it opens the image whole. */
+.sent-images button {
+  padding: 0;
+  border: none;
+  border-radius: 14px;
+  background: none;
+}
+
+/* An image shown whole over the window; a click anywhere puts it away. */
+.viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 32px;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(8px);
+  cursor: zoom-out;
+  animation: viewer-in 0.16s ease-out;
+}
+
+.viewer .whole {
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 12px;
+  box-shadow: var(--menu-shadow);
+}
+
+@keyframes viewer-in {
+  from {
+    opacity: 0;
+  }
+}
+
 .assistant {
   font-size: 15px;
   line-height: 1.7;
   overflow-wrap: anywhere;
+}
+
+/* An image a reply names, not loaded until shown: what it is and where it comes from. */
+.assistant .show-image {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 100%;
+  margin: 2px 0;
+  padding: 6px 12px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 10px;
+  background: none;
+  color: var(--muted);
+  font-size: 13px;
+  vertical-align: middle;
+  transition:
+    border-color 0.12s,
+    color 0.12s;
+}
+
+.assistant .show-image:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.assistant .show-image .from {
+  overflow: hidden;
+  color: var(--faint);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.assistant .reply-image {
+  cursor: zoom-in;
+  display: block;
+  max-width: 100%;
+  max-height: 360px;
+  margin: 6px 0;
+  border-radius: 12px;
 }
 
 .assistant > :first-child {
@@ -1053,6 +1156,7 @@ main {
 
 .composer {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-end;
   gap: 10px;
   padding: 8px 8px 8px 18px;
@@ -1071,6 +1175,96 @@ main {
   box-shadow:
     var(--shadow),
     0 0 0 3px var(--accent-soft);
+}
+
+/* The images going with the message, above the text. */
+.composer .attached {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 6px;
+}
+
+.composer .attach-problem {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--error);
+  font-size: 12.5px;
+}
+
+.composer .thumb {
+  position: relative;
+  width: 56px;
+  height: 56px;
+}
+
+.composer .thumb img {
+  width: 100%;
+  height: 100%;
+  border-radius: 10px;
+  object-fit: cover;
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.composer .thumb.problem img {
+  opacity: 0.4;
+  outline: 2px solid var(--error);
+  outline-offset: -2px;
+}
+
+.composer .thumb .uploading {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg) 55%, transparent);
+  color: var(--muted);
+}
+
+.composer .thumb .detach {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 2px solid var(--bg);
+  border-radius: 50%;
+  background: var(--text);
+  color: var(--bg);
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+.composer .thumb:hover .detach,
+.composer .thumb.problem .detach,
+.composer .thumb .detach:focus-visible {
+  opacity: 1;
+}
+
+.composer .attach {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: none;
+  color: var(--faint);
+  transition:
+    background 0.12s,
+    color 0.12s;
+}
+
+.composer .attach:hover {
+  background: var(--hover);
+  color: var(--text);
 }
 
 .composer textarea {

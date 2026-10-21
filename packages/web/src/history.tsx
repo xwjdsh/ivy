@@ -140,7 +140,7 @@ function Past(props: {
             chat.items.map((item, i) => (
               // A past conversation is read once, whole; the index is stable.
               // biome-ignore lint/suspicious/noArrayIndexKey: see above
-              <ItemView key={i} item={item} fresh={false} />
+              <ItemView key={i} item={item} sessionId={chat.id} fresh={false} />
             ))
           ) : (
             <LoaderCircle size={16} className="spin loading" />
