@@ -31,3 +31,22 @@ func TestDaemonProxy(t *testing.T) {
 		t.Fatalf("request without a daemon: %d %s", code, body)
 	}
 }
+
+func TestAppearance(t *testing.T) {
+	serve := func(method, body string) (int, string) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(method, daemonScheme+"://localhost"+appearancePath, strings.NewReader(body))
+		// Answered by the app, never forwarded: there is no daemon here.
+		schemeHandler("/nonexistent.sock").ServeHTTP(rec, req)
+		return rec.Code, strings.TrimSpace(rec.Body.String())
+	}
+	if code, body := serve(http.MethodGet, ""); code != http.StatusOK || body != `{"appearance":"system"}` {
+		t.Fatalf("GET: %d %s", code, body)
+	}
+	if code, _ := serve(http.MethodPut, `{"appearance":"sepia"}`); code != http.StatusBadRequest {
+		t.Fatalf("PUT of an unknown appearance: %d", code)
+	}
+	if code, _ := serve(http.MethodDelete, ""); code != http.StatusMethodNotAllowed {
+		t.Fatalf("DELETE: %d", code)
+	}
+}

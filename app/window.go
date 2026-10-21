@@ -14,10 +14,22 @@ import (
 
 // The chat window shows the app's web page (packages/web, the app's frontend, embedded by
 // `mygo build`), so the interface is TypeScript like the rest of Ivy (DESIGN.md §5.7). The
-// page talks to the daemon through ivy://, a scheme of the app's own whose every request
-// this app forwards to the daemon's socket: the daemon listens on no TCP port, and nothing
-// else can reach it this way.
+// page talks to the daemon through ivy://, a scheme of the app's own whose requests this
+// app forwards to the daemon's socket: the daemon listens on no TCP port, and nothing else
+// can reach it this way. The app answers its own settings there itself (appearancePath).
 const daemonScheme = "ivy"
+
+// schemeHandler serves ivy://: the app's own settings, and the daemon for the rest.
+func schemeHandler(socket string) http.Handler {
+	daemon := daemonProxy(socket)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == appearancePath {
+			appearanceHandler(w, r)
+			return
+		}
+		daemon.ServeHTTP(w, r)
+	})
+}
 
 // daemonProxy forwards a request of the page to the daemon, streaming the response as it
 // comes (the event stream stays open).

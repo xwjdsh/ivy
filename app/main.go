@@ -30,13 +30,24 @@ func main() {
 	if !mygo.App.RequestSingleInstanceLock() {
 		return // already running
 	}
+	// `mygo build` runs the app with MYGO_GENERATE set to write the frontend's client, which
+	// binds nothing here: the app needs nothing set up then, and finding its folders would
+	// make new ones named after that run (Logs/Ivy-<pid>).
+	if os.Getenv("MYGO_GENERATE") != "" {
+		if err := mygo.App.Run(); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	logs, _ := mygo.App.Path(mygo.PathLogs)
 	if f, err := os.OpenFile(filepath.Join(logs, "app.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600); err == nil {
 		log.SetOutput(f)
 	}
 
-	// Before any window: the chat window's requests go to the daemon.
-	if err := mygo.Protocol.Handle(daemonScheme, daemonProxy(socketPath())); err != nil {
+	// Before any window: the chat window's requests go to the daemon, and it opens in the
+	// appearance picked last.
+	loadAppearance()
+	if err := mygo.Protocol.Handle(daemonScheme, schemeHandler(socketPath())); err != nil {
 		log.Fatal(err)
 	}
 

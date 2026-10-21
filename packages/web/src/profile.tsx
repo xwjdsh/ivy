@@ -11,9 +11,9 @@ import {
   type SessionSummary,
   type Tokens,
 } from "@ivy/protocol";
-import { ChevronLeft, ChevronRight, Search, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Monitor, Moon, Search, Sun, X } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
-import { api } from "./api.ts";
+import { type Appearance, api } from "./api.ts";
 import ivy from "./ivy.png"; // the app's icon (app/resources/icon.png), smaller
 import { Bars, Pick } from "./menu.tsx";
 import type { Presence } from "./presence.ts";
@@ -140,6 +140,7 @@ export function Profile(props: {
           </button>
           <Hood>
             {state && <Settings state={state} onState={props.onState} onError={onError} />}
+            {inApp && <Appearances onError={onError} />}
             <dl className="facts">
               {state && (
                 <div>
@@ -365,6 +366,53 @@ function sources(models: string[]): Map<string, string> {
     shared++;
   }
   return new Map(models.map((m, i) => [m, paths[i]?.slice(shared).join("/") ?? ""]));
+}
+
+/**
+ * Only the app has an appearance to set; in a browser the page follows the system's. MyGo
+ * sets up `window.mygo` before the page's scripts run.
+ */
+const inApp = "mygo" in window;
+
+const APPEARANCES: { value: Appearance; label: string; icon: ReactNode }[] = [
+  { value: "system", label: "System", icon: <Monitor size={13} /> },
+  { value: "light", label: "Light", icon: <Sun size={13} /> },
+  { value: "dark", label: "Dark", icon: <Moon size={13} /> },
+];
+
+/** Light, dark or the system's, for the whole app: the title bar and menus follow too. */
+function Appearances({ onError }: { onError(err: unknown): void }) {
+  const [value, setValue] = useState<Appearance | undefined>();
+  useEffect(() => {
+    api.appearance().then(setValue, onError);
+  }, [onError]);
+  const pick = (next: Appearance) => {
+    setValue(next);
+    api.setAppearance(next).then(setValue, onError);
+  };
+  return (
+    <div className="settings">
+      <div className="row">
+        <span className="key">Appearance</span>
+        <div className="segments">
+          {APPEARANCES.map((a) => (
+            <button
+              key={a.value}
+              type="button"
+              aria-pressed={value === a.value}
+              aria-label={a.label}
+              title={a.label}
+              onClick={() => pick(a.value)}
+            >
+              {a.icon}
+              {/* Only the chosen one is named, so the three fit beside the label. */}
+              {value === a.value && <span>{a.label}</span>}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);

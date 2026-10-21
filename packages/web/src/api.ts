@@ -49,6 +49,12 @@ export const api = {
   /** The session's file goes to the trash folder (DESIGN.md §5.7). */
   deleteSession: (id: string) => request<void>("DELETE", `/sessions/${id}`),
   about: () => request<AboutSection[]>("GET", "/about"),
+  /** The app's own setting, answered by the app (app/appearance.go), not the daemon. */
+  appearance: async () =>
+    (await request<{ appearance: Appearance }>("GET", "/app/appearance")).appearance,
+  setAppearance: async (appearance: Appearance) =>
+    (await request<{ appearance: Appearance }>("PUT", "/app/appearance", { appearance }))
+      .appearance,
   send: (id: string, text: string) => request<Prompt>("POST", `/sessions/${id}/prompts`, { text }),
   withdraw: (id: string, promptId: string) =>
     request<void>("DELETE", `/sessions/${id}/prompts/${promptId}`),
@@ -57,6 +63,9 @@ export const api = {
   answer: (askId: string, choice: PermissionAnswer) =>
     request<void>("POST", `/permissions/${askId}`, { choice }),
 };
+
+/** Light or dark, or the system's; the page follows it through prefers-color-scheme. */
+export type Appearance = "system" | "light" | "dark";
 
 const RETRY_MS = 1000;
 
