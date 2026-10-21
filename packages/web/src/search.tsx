@@ -39,9 +39,16 @@ export function Search(props: {
   }, [lit]);
 
   const onKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    // ↑↓, or Ctrl-P / Ctrl-N as in Emacs and the terminal.
+    const ctrl = e.ctrlKey && !e.metaKey && !e.altKey;
+    const step =
+      e.key === "ArrowDown" || (ctrl && e.key === "n")
+        ? 1
+        : e.key === "ArrowUp" || (ctrl && e.key === "p")
+          ? -1
+          : 0;
+    if (step) {
       e.preventDefault();
-      const step = e.key === "ArrowDown" ? 1 : -1;
       setLit((i) => Math.min(Math.max(i + step, 0), Math.max(shown.length - 1, 0)));
     } else if (e.key === "Enter" && !e.nativeEvent.isComposing) {
       e.preventDefault();

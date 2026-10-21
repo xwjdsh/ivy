@@ -115,18 +115,25 @@ function Menu(props: {
   }, [lit, query]);
   const onKeyDown = (e: KeyboardEvent) => {
     if (e.nativeEvent.isComposing) return;
+    // ↑↓, or Ctrl-P / Ctrl-N as in Emacs and the terminal.
+    const ctrl = e.ctrlKey && !e.metaKey && !e.altKey;
+    const move =
+      e.key === "ArrowDown" || (ctrl && e.key === "n")
+        ? 1
+        : e.key === "ArrowUp" || (ctrl && e.key === "p")
+          ? -1
+          : 0;
     if (e.key === "Escape") {
       e.stopPropagation(); // not the composer's Escape, which stops a reply
       if (query) {
         setQuery("");
         setLit(props.value);
       } else props.onClose();
-    } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    } else if (move) {
       e.preventDefault();
       if (shown.length === 0) return;
-      const step = e.key === "ArrowDown" ? 1 : -1;
-      const at = litAt < 0 ? (step > 0 ? -1 : 0) : litAt;
-      setLit(shown[(at + step + shown.length) % shown.length]?.value);
+      const at = litAt < 0 ? (move > 0 ? -1 : 0) : litAt;
+      setLit(shown[(at + move + shown.length) % shown.length]?.value);
     } else if (e.key === "Enter") {
       e.preventDefault();
       const pick = shown[litAt] ?? shown[0];
