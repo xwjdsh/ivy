@@ -17,15 +17,15 @@ import (
 // `mygo build`), so the interface is TypeScript like the rest of Ivy (DESIGN.md §5.7). The
 // page talks to the daemon through ivy://, a scheme of the app's own whose requests this
 // app forwards to the daemon's socket: the daemon listens on no TCP port, and nothing else
-// can reach it this way. The app answers its own settings there itself (appearancePath).
+// can reach it this way. The app answers its own settings there itself (appRoutes).
 const daemonScheme = "ivy"
 
 // schemeHandler serves ivy://: the app's own settings, and the daemon for the rest.
 func schemeHandler(socket string, why func() string) http.Handler {
 	daemon := daemonProxy(socket, why)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == appearancePath {
-			appearanceHandler(w, r)
+		if handle, ok := appRoutes[r.URL.Path]; ok {
+			handle(w, r)
 			return
 		}
 		daemon.ServeHTTP(w, r)
@@ -75,6 +75,28 @@ var chatWindow *mygo.Window
 // quitting is set once the app is quitting, so the chat window closes for good then.
 var quitting bool
 
+// settingsWanted is set when the settings are asked for before the page is there to show them.
+var settingsWanted bool
+
+// openSettings shows the chat window with its settings page (DESIGN.md §5.7). The page opens
+// it on the "ivy:settings" event, or, if that came before it listened, on the flag it finds.
+func openSettings() {
+	if w := chatWindow; w != nil {
+		openChat()
+		showSettings(w)
+		return
+	}
+	settingsWanted = true
+	openChat()
+}
+
+func showSettings(w *mygo.Window) {
+	const js = `window.ivyWantsSettings = true; window.dispatchEvent(new Event("ivy:settings"))`
+	if _, err := w.Page().Eval(js); err != nil {
+		log.Printf("settings: %v", err)
+	}
+}
+
 // openChat shows the chat window, opening it the first time. Closing it only hides it, as Mac
 // chat apps do, and a click on the Dock icon shows it again as it was.
 func openChat() {
@@ -100,6 +122,10 @@ func openChat() {
 	w.OnReadyToShow(func() {
 		w.Show()
 		mygo.App.Focus()
+		if settingsWanted {
+			settingsWanted = false
+			showSettings(w)
+		}
 	})
 	// Links in replies open in the browser, not in place of the chat.
 	w.Page().OnWillNavigate(func(e *mygo.NavigateEvent) {

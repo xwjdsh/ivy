@@ -46,6 +46,7 @@ func main() {
 	if err := mygo.Protocol.Handle(daemonScheme, schemeHandler(socketPath(), status.why)); err != nil {
 		log.Fatal(err)
 	}
+	mygo.App.SetMenu(appMenu())
 	mygo.App.Dock.SetMenu(dockMenu())
 
 	var sup *supervisor
@@ -111,6 +112,28 @@ func ivyBinary() (string, error) {
 		return "", fmt.Errorf("the ivy binary is missing from the app (%s)", bin)
 	}
 	return bin, nil
+}
+
+// appMenu is the menu bar's: the app menu as every Mac app has it, with Settings… (⌘,) in its
+// usual place, and the Edit and Window menus, which copy, paste and ⌘W need.
+func appMenu() *mygo.Menu {
+	return mygo.NewMenu([]*mygo.MenuItem{
+		{Label: "Ivy", Submenu: []*mygo.MenuItem{
+			{Role: mygo.RoleAbout},
+			mygo.Separator(),
+			{Label: "Settings…", Accelerator: "CmdOrCtrl+,", Click: func(*mygo.MenuItem, *mygo.Window) { openSettings() }},
+			mygo.Separator(),
+			{Role: mygo.RoleServices},
+			mygo.Separator(),
+			{Role: mygo.RoleHide},
+			{Role: mygo.RoleHideOthers},
+			{Role: mygo.RoleUnhide},
+			mygo.Separator(),
+			{Role: mygo.RoleQuit},
+		}},
+		{Role: mygo.RoleEditMenu},
+		{Role: mygo.RoleWindowMenu},
+	})
 }
 
 // dockMenu adds to the Dock icon's menu what is set once and rarely again.
@@ -196,38 +219,53 @@ func notify(r reminder) {
 // so the terminal and the app run the same version.
 const commandLink = "/usr/local/bin/ivy"
 
-// installCommand links commandLink to the app's binary, asking for an administrator's
-// password when /usr/local/bin isn't writable, as editors install their commands.
+// installCommand links the command from the Dock icon's menu, and tells how it went.
 func installCommand() {
-	bin, err := ivyBinary()
-	if err == nil {
-		err = os.MkdirAll(filepath.Dir(commandLink), 0o755)
-		if err == nil {
-			_ = os.Remove(commandLink)
-			err = os.Symlink(bin, commandLink)
-		}
-		if err != nil {
-			script := fmt.Sprintf(
-				`do shell script "mkdir -p %s && ln -sf %s %s" with administrator privileges`,
-				shellQuote(filepath.Dir(commandLink)), shellQuote(bin), shellQuote(commandLink),
-			)
-			if out, aerr := exec.Command("osascript", "-e", script).CombinedOutput(); aerr != nil {
-				err = fmt.Errorf("%v: %s", aerr, strings.TrimSpace(string(out)))
-			} else {
-				err = nil
-			}
-		}
-	}
-	body := "Type ivy in a terminal to talk to Ivy."
+	err := linkCommand()
+	title, body := "The ivy command is installed", "Type ivy in a terminal to talk to Ivy."
 	if err != nil {
-		body = err.Error()
 		log.Printf("install command: %v", err)
-	}
-	title := "The ivy command is installed"
-	if err != nil {
-		title = "Couldn't install the ivy command"
+		title, body = "Couldn't install the ivy command", err.Error()
 	}
 	_ = mygo.NewNotification(mygo.NotificationOptions{Title: title, Body: body}).Show()
+}
+
+// linkCommand links commandLink to the app's binary, asking for an administrator's password
+// when /usr/local/bin isn't writable, as editors install their commands.
+func linkCommand() error {
+	bin, err := ivyBinary()
+	if err != nil {
+		return err
+	}
+	if err = os.MkdirAll(filepath.Dir(commandLink), 0o755); err == nil {
+		_ = os.Remove(commandLink)
+		err = os.Symlink(bin, commandLink)
+	}
+	if err == nil {
+		return nil
+	}
+	script := fmt.Sprintf(
+		`do shell script "mkdir -p %s && ln -sf %s %s" with administrator privileges`,
+		shellQuote(filepath.Dir(commandLink)), shellQuote(bin), shellQuote(commandLink),
+	)
+	if out, err := exec.Command("osascript", "-e", script).CombinedOutput(); err != nil {
+		return fmt.Errorf("%v: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// commandInstalled tells whether commandLink leads to the app's binary.
+func commandInstalled() bool {
+	bin, err := ivyBinary()
+	if err != nil {
+		return false
+	}
+	target, err := filepath.EvalSymlinks(commandLink)
+	if err != nil {
+		return false
+	}
+	want, err := filepath.EvalSymlinks(bin)
+	return err == nil && target == want
 }
 
 // shellQuote quotes a path for `do shell script`, inside AppleScript's double quotes.

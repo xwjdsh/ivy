@@ -58,3 +58,19 @@ func TestAppearance(t *testing.T) {
 		t.Fatalf("DELETE: %d", code)
 	}
 }
+
+func TestOpenNamesOnly(t *testing.T) {
+	post := func(body string) int {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, daemonScheme+"://localhost/app/open", strings.NewReader(body))
+		schemeHandler("/nonexistent.sock", noProblem).ServeHTTP(rec, req)
+		return rec.Code
+	}
+	// A path from the page is never opened: only the names the app knows.
+	if code := post(`{"what":"/etc/passwd"}`); code != http.StatusBadRequest {
+		t.Fatalf("open of a path: %d", code)
+	}
+	if code := post(`not json`); code != http.StatusBadRequest {
+		t.Fatalf("open without JSON: %d", code)
+	}
+}
