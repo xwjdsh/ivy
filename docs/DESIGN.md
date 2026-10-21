@@ -3,6 +3,13 @@
 > Status: **Draft v0.1** · M0 and M1 done; M2 built (daemon, reminders, the app and its chat window), its acceptance check next · Last updated: 2026-10-21
 > This is a living document. Every milestone starts by updating it and ends by recording what changed in the [Decision Log](#13-decision-log).
 
+**Before changing this document**, check every sentence added against this list.
+
+- **It belongs here** if it is a goal or principle, how the parts fit together, a contract between them (the daemon's protocol, the plugin API, the files on disk), or a decision with its reason and the alternative it beat. For a milestone not built yet, only its principles and key trade-offs.
+- **It stays in the code** if it is how a screen looks or behaves (layout, where a button or entry is, shortcuts, labels, colors), a workaround for a library's or the system's quirk (a comment where it is worked around), a step of an implementation, or a number that is only tuning.
+- **It stays in git** if it is how the design got here: what was tried and dropped, what a section said before. The Decision Log keeps forks still in effect; one overturned is edited, not stacked.
+- **Each thing is said once**, in the section it belongs to, and pointed to with § elsewhere.
+
 ---
 
 ## 1. Overview
@@ -98,7 +105,7 @@ The kernel runs in the daemon (`ivy daemon`), which owns sessions and runs the s
 - A **manual tool-use loop** that we own (not the SDK's beta Tool Runner). The loop is small, and owning it gives us permission checks, plugin hooks, interruption (Ctrl-C), and step limits in one place.
 - Streaming by default; text and tool progress go to the clients as they arrive.
 - Parallel tool calls run concurrently; all `tool_result` blocks return in **one** user message. Failed tools return `is_error: true` instead of throwing.
-- Limits: `maxSteps` per turn (default 25); a task budget (tokens per turn) is planned.
+- Limits: `maxSteps` per turn; a task budget (tokens per turn) is planned.
 - **Planned (M3):** a loop guard for models that repeat the same call (answering in full, then less with a warning, then not at all, pointing to a better way, as context-mode does); tools that can't run in parallel run alone; steering: the user can speak while a turn runs instead of interrupting it (§5.9).
 - Before running any tool, check `stop_reason` (`max_tokens`, `refusal`) and validate the tool input against its schema.
 
@@ -109,17 +116,17 @@ The kernel runs in the daemon (`ivy daemon`), which owns sessions and runs the s
 - Server-side refusal fallback (`fallbacks: "default"`) is on where supported (decided by `Capabilities`), as Anthropic recommends: if the model declines, Anthropic re-runs the request on a fallback model within the same call, and a notice names both models, so a swap is never silent.
 - **Compatible endpoints vary.** Effort, adaptive thinking, prompt caching, refusal fallback, `clear_at` system messages, compaction and server tools are Anthropic API features; a compatible endpoint or a non-Claude model may ignore or reject them.
 - **Capabilities** decide per request which optional features a model gets on its provider's endpoint, from three sources:
-  1. **Models API** (official endpoint only): `client.models.list()` reports effort support and levels, `max_tokens`, context window, thinking types, server tools and more. Fetched in the background, cached for a day. New models need no code change. It does *not* report mid-conversation system messages or refusal fallback.
+  1. **Models API** (official endpoint only): `client.models.list()` reports effort support and levels, `max_tokens`, context window, thinking types, server tools and more. Fetched in the background and cached. New models need no code change. It does *not* report mid-conversation system messages or refusal fallback.
   2. **Learned:** when the endpoint answers a request with a 400 naming an optional feature it used (system messages, fallbacks, effort), the agent turns that feature off for that model, tells the user with a notice, and resends the step.
   3. **Defaults:** on the official API, Claude models get the optional features, except a fixed pattern of *older* models known to lack them (this list only covers the past, so it never grows). Compatible endpoints get only the basics plus `effort` (dropped on a 400).
 - The official endpoint is recognised by `base_url` (`api.anthropic.com`), not by `type`: `type` names the protocol, which official and compatible endpoints share.
 - **Prompt caching:** tools and system prompt are kept byte-stable (plugins sorted by id, no timestamps), with a cache breakpoint after them. Volatile context (the time, todos due today) goes with the new user message, as a `clear_at` system message or a `<context>` block (§5.3), never into the system prompt, so the cached prefix stays intact.
 - **Helper model (planned, with the first side task):** side work (summaries, background memory review, a pending-entry checker) runs on an optional `[agent] helper_model`, named like the main model (`provider/model`, on any provider); unset, it is the main model at `low` effort, which is the first thing to measure (one model also keeps one prompt cache).
-- **Switching models:** `/model` offers each provider's `models` list, or without one what its endpoint lists (`GET /v1/models`), and switches across providers; `/model <provider/model>` switches directly. `/effort` works the same way. Both save the choice by editing one line of `config.toml` in place, comments and layout kept. Requests carry only params the model accepts (`Capabilities`): Haiku gets no `effort` and no refusal fallback, and an unsupported effort level is lowered to the nearest one the model has. A switch costs one prompt-cache miss (the cache is per model, and the top-level effort is part of the cached request).
+- **Switching models:** `/model` offers each provider's `models` list, or without one what its endpoint lists (`GET /v1/models`), and switches across providers; `/model <provider/model>` switches directly. `/effort` works the same way. Both save the choice in `config.toml` (§7). Requests carry only params the model accepts (`Capabilities`): Haiku gets no `effort` and no refusal fallback, and an unsupported effort level is lowered to the nearest one the model has. A switch costs one prompt-cache miss (the cache is per model, and the top-level effort is part of the cached request).
 - **Long sessions — compaction (planned):** client-side, so it works on every endpoint; Anthropic's server-side compaction only as an enhancement. Cheap relief first (shorten or spill oversized old tool results, no model call), then a summary of older history; before summarizing, one call saves what is worth keeping to memory (summaries lose details). The originals stay in the session file. What is in progress survives as state, not prose (context-mode, §10.1): the session already records events (files changed, tasks, errors, the user's corrections), and compaction puts a small guide to them, most important first, ahead of the summary, the rest found by search when needed; a summary alone tends to lose a correction.
 - **Oversized tool output (planned, M3):** kept out of the context when the tool returns, not only at compaction: a result over a size limit is stored whole for the session, and the model gets its start, its size and a handle to search or read parts of it (by keywords or by what it is looking for). The kernel does this for every tool, as it owns the loop; files, shell output, web pages and emails are where it matters.
 - **Providers and models:** `config.toml` can define several `[providers.<name>]` (each with `type`, `api_key`, `base_url`, optional `models` to limit what `/model` offers, and optional `refusal_fallback`, default true). A model is named by one string, `"<provider>/<model id>"`, split at the first `/` (the id may contain more: `magpie/codex/gpt-6-luna`), as in OpenCode and LiteLLM; `[agent] model` is the main one, and every other place that picks a model (helper model, later jobs and subagents) uses the same form. Only `type = "anthropic"` exists today; another API kind would add a value here plus a `ModelClient`. Generation settings (`effort`, `max_tokens`) live in `[generation]`, independent of the provider.
-- Credentials and endpoint come only from `config.toml`. `ANTHROPIC_*` environment variables and `ant` profiles are deliberately ignored, so there is one source of truth. Config is strict: unknown keys are errors.
+- Endpoints come only from `config.toml`; an API key from `config.toml` or, on macOS, the Keychain (a provider without `api_key` looks there, under its name). `ANTHROPIC_*` environment variables and `ant` profiles are deliberately ignored, so there is one place to look. Config is strict: unknown keys are errors.
 
 #### Provider coupling
 
@@ -135,7 +142,7 @@ Ivy speaks only the Anthropic Messages API (see Non-Goals): Claude directly, or 
 | Price table | Recorded cost is unknown (cost is never shown in the UI) |
 | Planned: server-side compaction, server tools (web search) | Not available elsewhere (client-side compaction is the baseline) |
 
-Other models, on any configured provider, only need `/model` or a different `[agent] model` (note: Claude Haiku supports neither `effort` nor fallbacks).
+Other models, on any configured provider, only need `/model` or a different `[agent] model`.
 
 Plan if another API kind (e.g. OpenAI's) is ever needed:
 1. **Anthropic-compatible endpoint first.** Many providers expose one; add it as another `[providers.*]` entry with its `base_url`. Add a config switch for each Anthropic-only request param (effort, fallbacks, caching, eager streaming) so they can be turned off. Small change.
@@ -191,7 +198,6 @@ Todos due (mention them to the user once in this conversation, briefly, whatever
 - Crash-tolerant: unparseable lines (a write cut off mid-line) are skipped, the next write starts on a fresh line, and an assistant tool call whose results were never written is dropped on load so the history stays a valid request. A tool call and its results are written in a single append.
 - **Side effects survive crashes honestly** (DSH, §10.1; needed before M4): before running an `external` or `dangerous` tool, record that it started; if the session reloads without its result, the model is told the outcome is *unknown* (it may already have happened) instead of the call being dropped and possibly repeated, e.g. an email sent twice.
 - **System prompt snapshot (planned):** record the system prompt in the session when a session starts, so a request can be rebuilt from the session file alone (traces can be off or pruned).
-- `ivy -c` continues the last session, `/resume` (`ivy -r`) picks one, `/new` starts one.
 - Usage (tokens, cache hits, and a cost estimate that is recorded but not shown) is written per model call; `/usage` reports tokens.
 
 ### 5.5 Permission Gate
@@ -218,8 +224,8 @@ deny  = ["shell__*"]
 
 - **Precedence:** `deny` > `ask` > dangerous tools always ask > allow (`allow` rules, learned "Always" rules, plugin defaults, "for this session") > the risk level's default (`read` runs, everything else asks). A denied call is rejected without asking, and the model is told it was blocked by a rule.
 - **Risk levels are declared by plugins and not verified.** A plugin could label a risky tool `read`. The gate protects against the *model* misusing tools, not against a malicious plugin (§6.3). `ask` rules let the user force a confirmation for any tool, and `/status` lists every tool with its declared risk.
-- **Sources:** all rules live in `config.toml`, so reading the config shows everything that runs without asking. *Always* adds the tool to `[permissions] allow` in place, layout and comments kept. Ivy never rewrites `config.toml` as a whole; its in-place edits are *Always*, `/model` and `/effort` (§5.2), later the app's settings (§5.7).
-- **Dialog:** *Yes* / *Yes, for this session* / *Always (adds an allow rule to config.toml)* / *No*, with the reason it asks (`write tool`, `ask rule`, ...) and the input (in full for `dangerous` tools). Where remembering would have no effect (`dangerous` tools, `ask` rules) only *Yes* / *No* are offered, enforced in the kernel.
+- **Sources:** all rules live in `config.toml`, so reading the config shows everything that runs without asking. *Always* adds the tool to `[permissions] allow` (§7).
+- **A prompt** says why it asks (a `write` tool, an `ask` rule, ...) and shows the input, in full for `dangerous` tools. Remembering the answer (*for this session*, *Always*) is offered only where it takes effect, not for `dangerous` tools or `ask` rules, and the kernel holds to that whatever a client sends.
 - **Plugin defaults:** a tool may set `defaultAllow: true` (low-impact tools such as memory saves; not allowed on `dangerous` tools); user `deny` and `ask` rules still win.
 - "For this session" choices belong to their session: a new session starts with none, and they last while the process that holds them runs (they aren't saved).
 - A prompt no one answers is refused after a while, and the model is told no one answered rather than that the user said no.
@@ -241,7 +247,7 @@ Loads, configures and runs plugins; see §6 for the plugin contract. Responsibil
 
 An interface turns user I/O into requests to the daemon. All interfaces speak the same protocol, so adding one does not touch plugins.
 
-- **M0 — TUI** (`ivy`, built with Ink): who said what is clear at a glance; replies stream as Markdown; one line per tool call from the tool's own summary, never raw JSON outside the verbose view; the permission dialog (§5.5); a status bar with the model, effort and tokens, never money. A message sent while Ivy replies waits and runs next; Esc interrupts and drops what waits.
+- **M0 — TUI** (`ivy`, built with Ink): replies stream as Markdown; a tool call reads as the tool's own one-line summary, its raw input only in the verbose view; the permission prompt (§5.5); tokens, never money.
   - One-shot mode (`ivy "question"`) stays plain text for scripts and pipes: the reply on stdout; tool calls (one line each, with the daemon's labels) and notices on stderr.
 - **M2 — Daemon** (`ivy daemon`): runs the kernel for every interface, and the scheduler.
   - **It owns sessions; interfaces are clients** over one local protocol (OpenClaw's gateway is the reference, §10.1), so adding an interface never touches plugins. The protocol is a handful of requests and one event stream (HTTP with Server-Sent Events), typed in `@ivy/protocol`, on a Unix socket (`~/.ivy/daemon.sock`, the user's alone) rather than a TCP port: other users and web pages can't reach it. A browser elsewhere, the phone for one, would need a TCP port of its own behind a token.
@@ -250,15 +256,16 @@ An interface turns user I/O into requests to the daemon. All interfaces speak th
   - **`ivy` starts the daemon when none answers**, in the background, as Hermes' CLI does (§10.1); it exits when idle. The app's daemon runs as long as the app. A daemon running other code than the `ivy` that started it is replaced, so an edit or an update takes effect without stopping anything by hand.
   - **Reminders are announced only while the app is connected**, as only the app shows them: until then the scheduler (§5.6) holds them, and they come, marked late, once it connects.
   - **A macOS app of its own** (`Ivy.app`), shipping the `ivy` binary and supervising it as the daemon. Only an app gets notifications of its own (macOS shows those of packaged apps only), a login item, a Dock icon and, later, the grants macOS gives the responsible app (screen recording, accessibility, automation), which from a terminal would go to the terminal. It installs the `ivy` command as a link to its binary, so both run the same version.
-  - **A window and a Dock icon, no menu-bar item:** Ivy is a regular app, as Mac chat apps are. Started by hand it opens the window; started at login it waits in the Dock. Closing the window only hides it (the icon shows it again as it was), and reminders keep coming. What is set once (start at login, installing the `ivy` command) is in the Dock icon's menu; why the daemon isn't running, when it isn't, shows in the window. Quit stops the daemon too, as one left alone would hold reminders back unseen. A daemon without the app, on a server or Linux, would be a service (`ivy daemon install`, later).
+  - **A window and a Dock icon, no menu-bar item:** Ivy is a regular app, as Mac chat apps are. Started by hand it opens the window; started at login it waits in the Dock. Closing the window only hides it (the icon shows it again as it was), and reminders keep coming. Why the daemon isn't running, when it isn't, shows in the window. Quit stops the daemon too, as one left alone would hold reminders back unseen. A daemon without the app, on a server or Linux, would be a service (`ivy daemon install`, later).
   - **The shell stays thin:** notifications, login item, supervising the daemon, the window. All logic stays in the TypeScript daemon. A window shows a web page (`packages/web`, React) in the system webview, embedded in the app; it reaches the daemon through `ivy://`, a scheme the app forwards to the socket, so the daemon serves no pages and listens on no port. The app answers its own settings there itself (the light or dark appearance), which the daemon never sees. What a reply says is untrusted, as the page can answer permission prompts: raw HTML shows as text, links open only in the browser, images don't load (a reply could leak what Ivy read through an image URL), and a strict Content-Security-Policy allows only the page's own scripts and requests.
   - **The chat window is a conversation with Ivy, not a list of chats**, as the window shows her as someone, with the settings a level further in:
     - She sits at the top as a contact does in a messaging app, with what she is doing ("Thinking", "Waiting for your OK").
-    - The conversation going on fills the view and the past ones are above it, by day, each folded to a line, so scrolling back reads like scrolling back through a long chat with someone. Opening the window carries on a conversation from the last few hours; after longer it starts a new one.
+    - The conversation going on fills the view and the past ones are above it, by day, so scrolling back reads like scrolling back through a long chat with someone. Opening the window carries on a conversation from the last few hours; after longer it starts a new one.
     - A past conversation opened is one to answer: writing in it carries it on.
-    - Clicking her shows her card, hanging from her: her face and what she is doing, with the model, effort and appearance folded at its foot. Nothing from the plugins is listed there: reminders and the conversation already bring up what she keeps track of, and her journal is hers (`/journal` in the terminal).
-    - Scrolling back is the way to browse the past; to find one without scrolling, a search (⌘K) narrows them by how they began or their day and goes to the one picked. No list of conversations beside the chat: it would show the same past twice.
-  - **Built with [MyGo](https://github.com/egoist/mygo)** (Go): its documented APIs cover the shell (the Dock, notifications, start at login, helper binaries, signing and notarization, updates). It was a month old when chosen, so the shell is kept small enough to move to Wails or Swift. Ivy's settings in it (the model, the effort, later more) edit `config.toml` in place, so files stay the truth; the app's own, such as the appearance, stay with the app.
+    - Her card says who she is and, out of the way, what runs her (the model, the effort). Nothing from the plugins is listed there: reminders and the conversation already bring up what she keeps track of, and her journal is hers (`/journal` in the terminal).
+    - Scrolling back is the way to browse the past; to find one without scrolling, a search narrows them by how they began or their day and goes to the one picked. No list of conversations beside the chat: it would show the same past twice.
+  - **Settings** are a page of the window, as in Hermes, not a window of their own. Providers are added, changed and removed there, each checked against its endpoint before it is saved; a key goes to the Keychain and is never shown back. Its edits to `config.toml` are made in place (§7); what it only shows is changed in the file.
+  - **Built with [MyGo](https://github.com/egoist/mygo)** (Go): its documented APIs cover the shell (the Dock, notifications, start at login, helper binaries, signing and notarization, updates). It was a month old when chosen, so the shell is kept small enough to move to Wails or Swift.
 - **M5 — Jobs** run as fresh agents under the unattended permission mode, from the daemon's scheduler, with results as notifications or files.
 - **Later (maybe)** — A chat-app bot for phone access, and the web interface opened from the phone. Both daemon clients.
 
@@ -266,7 +273,7 @@ An interface turns user I/O into requests to the daemon. All interfaces speak th
 
 Part of the kernel from M0, so problems can be debugged from day one.
 
-- Every API call is written to `~/.ivy/traces/<session>/<time>-<n>.json`: the exact request body, the raw response, latency, and `usage` (input, output, cache read/write tokens). Since each request holds the whole history, traces grow quickly: `[trace] retention_days` (default 7) prunes old session folders on startup, and `[trace] enabled = false` turns tracing off.
+- Every API call is written to `~/.ivy/traces/<session>/<time>-<n>.json`: the exact request body, the raw response, latency, and `usage` (input, output, cache read/write tokens). Since each request holds the whole history, traces grow quickly: `[trace] retention_days` prunes old session folders on startup, and `[trace] enabled = false` turns tracing off.
 - **Verbose view** (`-v`, `/verbose`) adds per-call details to the transcript: one line per model call (tokens, cache, latency, the serving model if a fallback answered, the trace file), the turn's hidden `<context>` block, full tool input, and what plugin commands log. The daemon's own log is a file, at info level. Static state belongs in the status bar and `/status`.
 - **`/status`**: provider and endpoint, the current model's capabilities and why, system prompt parts with sizes, plugins, session, trace, config and cache paths. Not shown on purpose: the model's thinking (`thinking.display` changes the request; observing should not change what is observed).
 - *(Planned, M3)* `/trace` (the last request as the model saw it) and `ivy replay <trace>` (re-send it with another prompt or model); recorded requests could also feed the evals (§11).
@@ -380,12 +387,12 @@ Ivy reuses other agents' work through open standards, not their plugin formats:
 │   └── journal/         #   journal plugin: IVY.md, Ivy's own journal (§8.1)
 ├── plugins/             # user-installed plugins
 ├── traces/              # raw API requests/responses per session (see §5.8)
-└── input_history.jsonl  # what was typed in the TUI, for ↑/↓
+└── input_history.jsonl  # what was typed in the TUI
 ```
 
-**Who writes what:** the files at the top are the user's (`config.toml`, `SOUL.md`, `skills/`, `plugins/`); Ivy reads them and only edits `config.toml` in place (*Always*, `/model`, `/effort`) and `SOUL.md` through a proposal the user approves (§5.3). Everything under `data/` is maintained by plugins (the user may edit the memory files; `IVY.md` is Ivy's, the user only overseeing it), and `cache/`, `daemon/`, `sessions/`, `traces/` and the input history are Ivy's own records. `SOUL.md` is at the top, not with the memory files, because it is the user's and the kernel loads it whether or not the memory plugin is on.
+**Who writes what:** the files at the top are the user's (`config.toml`, `SOUL.md`, `skills/`, `plugins/`); Ivy reads them, and changes only `config.toml` (*Always*, `/model`, `/effort`, the settings page) and `SOUL.md`, through a proposal the user approves (§5.3). Its changes to `config.toml` are made in place, a line or a table at a time, never by rewriting the file (as Hermes does), so the user's comments and layout survive. Everything under `data/` is maintained by plugins (the user may edit the memory files; `IVY.md` is Ivy's, the user only overseeing it), and `cache/`, `daemon/`, `sessions/`, `traces/` and the input history are Ivy's own records. `SOUL.md` is at the top, not with the memory files, because it is the user's and the kernel loads it whether or not the memory plugin is on.
 
-The Anthropic API key may live in `config.toml` (plain text). Other secrets (OAuth tokens, plugin API keys) will go into the macOS Keychain once plugins need them. If `~/.ivy` is backed up with git, exclude `config.toml` or keep the key out of it.
+An API key set from the settings page lives in the macOS Keychain (service `Ivy`, account the provider's name); one written in `config.toml` still works, in plain text. Other secrets (OAuth tokens, plugin API keys) will go there too once plugins need them. If `~/.ivy` is backed up with git, keep keys out of `config.toml`.
 
 The data root is `$IVY_HOME`, default `~/.ivy`, in development too, so the terminal and the app share sessions and reminders; another folder starts fresh. The app keeps what is its own (the appearance, the window's place) in its own folder, `~/Library/Application Support/Ivy`, and its logs in `~/Library/Logs/Ivy`.
 
@@ -528,7 +535,7 @@ Used by `memory__search`, `/memory <query>` and `session_search`. Pure functions
 
 #### Commands
 
-- `/memory`: usage and size, e.g. `USER.md (1,240 / 2,000 chars) · MEMORY.md (5,310 / 8,000 chars) · ARCHIVE.md 42 entries`; open todos in `MEMORY.md` (long-overdue ones flagged); the files' folder; lines the safety scan left out or flagged.
+- `/memory`: how full each file is, the open todos (long-overdue ones flagged), where the files are, and the lines the safety scan left out or flagged.
 - `/memory <query>`: search, as `memory__search`.
 
 #### Recall of past conversations
@@ -626,7 +633,7 @@ ivy/
 | MCP | `@modelcontextprotocol/sdk` | MCP bridge plugin |
 | Chat window | React, with marked and Shiki, bundled by Bun | The page is TypeScript like the rest; Markdown and code read as in the TUI |
 | App | Go with [MyGo](https://github.com/egoist/mygo) | A thin native shell around the daemon (§5.7) |
-| TUI | Ink 8 + marked-terminal | Ink is mature (used by Claude Code, Gemini CLI); `<Static>` for scrollback. marked-terminal is unmaintained, so it runs patched (`patches/`) until a maintained renderer handles Chinese text as well |
+| TUI | Ink 8 + marked-terminal | Ink is mature (used by Claude Code, Gemini CLI). marked-terminal is unmaintained, kept until a maintained renderer handles Chinese text as well |
 | Config | TOML | Easy to hand-edit |
 | Tests | `bun test` | Built in |
 | Lint/format | Biome | One fast tool |
@@ -663,7 +670,7 @@ Each milestone ends with a few days of real use and an update to this doc.
 ### M1 — Memory
 - The plugin host (per-turn context, plugin commands, `[plugins.<id>]` config), the `core` plugin, permission rules (§5.5), the `memory` plugin (§8.1), and the `journal` plugin with a starter `SOUL.md` that gives Ivy a character of its own.
 - **Done when:** Ivy remembers facts and todos across sessions and uses them without being asked.
-- **Status: done (2026-10-19).** The checks in §8.1 pass with real models and run as evals (`bun run eval`). Real runs found what unit tests couldn't (a dropped time, a reminder never voiced, a claimed save that never happened); each became a rule or a tool change and an eval case. Models differ markedly on the same cases, so run the evals before switching models.
+- **Status: done (2026-10-19).** The checks in §8.1 pass with real models and run as evals (`bun run eval`); what real use catches and unit tests can't becomes a rule or a tool change, and an eval case. Models differ markedly on the same cases, so run the evals before switching models.
 
 ### M2 — Daemon & app
 Goal: Ivy runs in the background and can reach the user, so a reminder comes on time. Before the work helper, because its background tasks and subagents need a process that outlives the terminal, and the switch to a client is cheapest while there is little to move.
@@ -679,7 +686,6 @@ Goal: Ivy runs in the background and can reach the user, so a reminder comes on 
 - Evals: more cases (tools, work tasks) and replays of recorded sessions without an API key; the runner and the memory, journal and basics sets exist since M1.
 - Plugin API versioned; user plugins from `~/.ivy/plugins/`.
 - Oversized tool output kept out of the context as the tool returns, stored for the session with a handle to search or read it (§5.2).
-- Runs of read-only calls folded into one line in the transcript; writes stay one line each, so every change stays visible.
 - **Done when:** I use Ivy for at least one real work task per day.
 
 ### M4 — Email & Calendar
@@ -718,7 +724,7 @@ Real forks in the road only; the sections hold the details. Superseded decisions
 | 2026-10-16 | All capabilities are plugins; own tool-use loop, not the Agent SDK | Small kernel; full control over plugins, permissions and context |
 | 2026-10-16 | Project content in English; Claude writes the code, the user reviews | User's choice; small, reviewable changes |
 | 2026-10-16 | Scope is the Anthropic Messages API, not Claude; compatibility first, Anthropic features as enhancements, from per-model capabilities (§5.2) | The user runs non-Claude models through a proxy; new models and endpoints work without code changes |
-| 2026-10-16 | Credentials, endpoint and permission rules only in `config.toml`; strict keys | One source of truth that shows everything that runs without asking; typos fail loudly |
+| 2026-10-16 | Endpoints and permission rules only in `config.toml` (API keys there or in the Keychain); strict keys | One source of truth that shows everything that runs without asking; typos fail loudly |
 | 2026-10-16 | Built-in `rules.md` for operating and safety rules; `SOUL.md` written by the user only | A model-editable rule file would turn one injection into a permanent rule |
 | 2026-10-16 | Per-turn context kept out of the system prompt (`clear_at` system messages, `<context>` blocks elsewhere); the beta Messages API, with refusal fallback on and announced | The prompt cache holds; fallback is Anthropic's recommendation, and a swap is never silent |
 | 2026-10-16 | Tokens, never money; one effort level; a verbose view instead of a debug flag | Prices behind proxies are unknown; one knob; show what changes per call |
@@ -731,7 +737,7 @@ Real forks in the road only; the sections hold the details. Superseded decisions
 | 2026-10-18 | Memory history is kept: a changed fact archives the old one, under a strict bar for "changed" | Judging contradictions loosely retires true facts (§10.1) |
 | 2026-10-18 | Memory safety rests on provenance; a regex scan is the backstop | A model checking the attacker's text can be talked round |
 | 2026-10-18 | *For this session* / *Always* offered only where they take effect | Remembering an answer an `ask` rule overrides did nothing |
-| 2026-10-18 | For unbuilt milestones the doc records principles and key trade-offs; for built ones, what and why. How a screen behaves and workarounds for a library's quirks live in the code | Untested designs go stale; a doc that logs every change reads as a diary |
+| 2026-10-18 | What this document records, and what it leaves to the code and git: the list at its top | Untested designs go stale; a doc that logs every change reads as a diary |
 | 2026-10-18 | Shell asked every time in M3, sandboxed from M4 with escalation asked; edits by string replacement | Once outside content reaches Ivy, asking protects little and a sandbox bounds any command; replacement is the most robust edit form across models |
 | 2026-10-19 | Changes to memory during a session reach the model as added and removed lines in the turn's context | The cache holds and the model still sees current memory |
 | 2026-10-19 | A model is named `provider/model` everywhere | Every place that picks a model names it the same way, on any provider |
@@ -744,5 +750,6 @@ Real forks in the road only; the sections hold the details. Superseded decisions
 | 2026-10-20 | Data lives in `~/.ivy` in development too | The terminal and the app see the same sessions and reminders |
 | 2026-10-20 | The page is the app's frontend, reaching the daemon through `ivy://`; replies are rendered as untrusted | The daemon stays headless and keeps no TCP port, so no tokens or origin checks; a page that answers permission prompts must not run what a reply says |
 | 2026-10-20 | The chat window is one conversation with Ivy, past ones above it; a past conversation opened is carried on by writing in it | A list of sessions is a tool's view of her |
-| 2026-10-21 | Ivy's card lists nothing from the plugins (the `about` hook is dropped), and past conversations are found by a search (⌘K), not a list beside the chat | Reminders and the conversation already bring up what she keeps track of, and a plugin hook every plugin author must learn wasn't worth a glance at the same todos; the timeline already shows the past, so a list showed it twice |
-| 2026-10-21 | No menu-bar item: Ivy is a regular app with a Dock icon, start at login and the `ivy` command in the Dock icon's menu | With the Dock icon always there, the menu bar only repeated it; Ivy is someone to talk to, not a utility hidden in the menu bar |
+| 2026-10-21 | Ivy's card lists nothing from the plugins (the `about` hook is dropped), and past conversations are found by a search, not a list beside the chat | Reminders and the conversation already bring up what she keeps track of, and a plugin hook every plugin author must learn wasn't worth a glance at the same todos; the timeline already shows the past, so a list showed it twice |
+| 2026-10-21 | No menu-bar item: Ivy is a regular app with a Dock icon | With the Dock icon always there, the menu bar only repeated it; Ivy is someone to talk to, not a utility hidden in the menu bar |
+| 2026-10-21 | A settings page in the window; providers edited there in place; API keys in the macOS Keychain, `config.toml` still read | The app should be usable without a text editor; a key in a plain file leaks with backups and screen shares; edits in place keep the file the user's |
