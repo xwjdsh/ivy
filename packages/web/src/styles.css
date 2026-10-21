@@ -5,8 +5,9 @@
   color-scheme: light dark;
 
   --bg: #fcfaf8;
-  --side: #f5f1ed;
-  --side-hover: rgb(60 30 15 / 0.05);
+  /* Sunk into the page: a past conversation opened above. */
+  --well: #f5f1ed;
+  --hover: rgb(60 30 15 / 0.05);
   --text: #221d1a;
   --muted: #6f655e;
   --faint: #9d928a;
@@ -23,6 +24,7 @@
   --warn-soft: rgb(196 133 0 / 0.1);
   --error: #cf3046;
   --error-soft: rgb(207 48 70 / 0.08);
+  --error-text: #ffffff;
   --shadow: 0 1px 2px rgb(50 25 10 / 0.04), 0 6px 24px rgb(50 25 10 / 0.07);
   --code-bg: #f6f2ee;
   --menu: #ffffff;
@@ -44,8 +46,8 @@
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #1a1715;
-    --side: #201c1a;
-    --side-hover: rgb(255 235 225 / 0.05);
+    --well: #221d1a;
+    --hover: rgb(255 235 225 / 0.05);
     --text: #efe9e5;
     --muted: #a89e97;
     --faint: #7a706a;
@@ -61,6 +63,7 @@
     --warn-soft: rgb(224 174 74 / 0.12);
     --error: #ff6b7f;
     --error-soft: rgb(255 107 127 / 0.1);
+    --error-text: #2a0a10;
     --shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 8px 28px rgb(0 0 0 / 0.38);
     --code-bg: #201c1a;
     --menu: #282320;
@@ -152,7 +155,7 @@ button.icon {
 }
 
 button.icon:hover {
-  background: var(--side-hover);
+  background: var(--hover);
   color: var(--text);
 }
 
@@ -185,7 +188,7 @@ button.secondary {
 
 button.secondary:hover,
 button.ghost:hover {
-  background: var(--side-hover);
+  background: var(--hover);
 }
 
 button.ghost {
@@ -357,7 +360,7 @@ main {
 
 .presence:hover,
 .presence[aria-expanded="true"] {
-  background: var(--side-hover);
+  background: var(--hover);
 }
 
 .who {
@@ -482,7 +485,7 @@ main {
   gap: 2px;
   padding: 2px;
   border-radius: 8px;
-  background: var(--side-hover);
+  background: var(--hover);
 }
 
 .segments button {
@@ -789,7 +792,7 @@ main {
 }
 
 .code .copy:hover {
-  background: var(--side-hover);
+  background: var(--hover);
   color: var(--text);
 }
 
@@ -858,7 +861,7 @@ main {
 }
 
 .tool summary:hover {
-  background: var(--side-hover);
+  background: var(--hover);
   border-radius: 9px;
 }
 
@@ -1134,7 +1137,7 @@ main {
 
 .pick:hover:not(:disabled),
 .pick.open {
-  background: var(--side-hover);
+  background: var(--hover);
   color: var(--text);
 }
 
@@ -1538,7 +1541,7 @@ main {
 }
 
 .earlier:hover {
-  background: var(--side-hover);
+  background: var(--hover);
   color: var(--text);
 }
 
@@ -1581,7 +1584,7 @@ main {
 }
 
 .past-head:hover {
-  background: var(--side-hover);
+  background: var(--hover);
 }
 
 .past-row {
@@ -1632,7 +1635,7 @@ main {
 }
 
 .past.open {
-  background: var(--side);
+  background: var(--well);
 }
 
 .past.open .past-row {
@@ -1670,13 +1673,13 @@ main {
 }
 
 .past .delete:hover {
-  background: var(--side-hover);
+  background: var(--hover);
   color: var(--error);
 }
 
 .past .delete.confirm {
   background: var(--error);
-  color: #fff;
+  color: var(--error-text);
   font-size: 12px;
   font-weight: 500;
 }
