@@ -356,6 +356,12 @@ test("a session can be deleted, but not while Ivy replies in it", async () => {
   await client.close();
 });
 
+test("an endpoint that takes the key but lists nothing is told apart: its models are named instead", async () => {
+  const { call } = await start([]);
+  const tested = await call("POST", "/provider-test", { base_url: "http://127.0.0.1:9", key: "k" });
+  expect(tested).toMatchObject({ status: 200, body: { models: [], unlisted: expect.any(String) } });
+});
+
 test("settings: providers added, keyed, changed and removed; keys never shown", async () => {
   const { call, keys, paths } = await start([], undefined, ["m1", "m2"]);
   const settings = await call("GET", "/settings");

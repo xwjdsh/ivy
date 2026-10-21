@@ -15,6 +15,7 @@ import {
   removeProvider,
   saveEffort,
   saveModel,
+  UnlistedModels,
   updateProvider,
 } from "@ivy/kernel";
 import type { Logger } from "@ivy/plugin-api";
@@ -257,7 +258,10 @@ export function api(ivy: Ivy, sessions: Sessions): Routes {
           const models = await ivy.listModelsAt({ type: t.type, base_url: t.base_url, key });
           return Response.json({ models });
         } catch (err) {
-          return fail(400, `Couldn't list the models: ${errorMessage(err)}`);
+          const why = `Couldn't list the models: ${errorMessage(err)}`;
+          // Reached with the key, but no list: the models are named by hand instead.
+          if (err instanceof UnlistedModels) return Response.json({ models: [], unlisted: why });
+          return fail(400, why);
         }
       }
       case "GET /commands": {

@@ -199,11 +199,16 @@ export async function createIvy(opts: IvyOptions): Promise<Ivy> {
         refusal_fallback: true,
       };
       const client = opts.model ?? createModelClient(endpoint, key, paths);
-      if (!client.listModels) throw new Error("this endpoint can't list its models");
+      if (!client.listModels) throw new UnlistedModels("this endpoint can't list its models");
       try {
         return (await client.listModels()).map((m) => m.id);
       } catch (err) {
-        throw new Error(whyUnreachable(err));
+        const answered =
+          err instanceof Anthropic.APIError &&
+          err.status !== undefined &&
+          err.status !== 401 &&
+          err.status !== 403;
+        throw answered ? new UnlistedModels(whyUnreachable(err)) : new Error(whyUnreachable(err));
       }
     },
     tracer,
@@ -238,6 +243,9 @@ function createModelClient(p: ProviderConfig, key: string | undefined, paths: Pa
     }
   }
 }
+
+/** The endpoint answered and took the key, but listed no models: they can be named instead. */
+export class UnlistedModels extends Error {}
 
 /** Why an endpoint didn't answer, in a sentence: not the API's raw error body. */
 export function whyUnreachable(err: unknown): string {
