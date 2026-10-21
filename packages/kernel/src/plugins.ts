@@ -2,7 +2,6 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type Anthropic from "@anthropic-ai/sdk";
 import type {
-  AboutSection,
   CommandDef,
   ConversationHistory,
   IvyPlugin,
@@ -218,26 +217,6 @@ export class PluginHost {
       }),
     );
     return lists.flat();
-  }
-
-  /**
-   * The plugins' sections for Ivy's card, each with its plugin's id. Capped in time like the
-   * turn context; a failing or slow plugin is skipped and logged.
-   */
-  async about(now: Date): Promise<Array<AboutSection & { plugin: string }>> {
-    const sections = await Promise.all(
-      this.list().map(async (p) => {
-        if (!p.about) return [];
-        try {
-          const found = await withTimeout(Promise.resolve(p.about(now)), CONTEXT_TIMEOUT_MS);
-          return found.map((s) => ({ ...s, plugin: p.id }));
-        } catch (err) {
-          createLogger(p.id).warn("about skipped", errorMessage(err));
-          return [];
-        }
-      }),
-    );
-    return sections.flat();
   }
 
   /** Whether the owning plugin lets this tool run without asking (see ToolDef.defaultAllow). */

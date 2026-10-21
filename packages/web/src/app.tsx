@@ -333,7 +333,6 @@ export function App() {
             tokens: chat && chat.tokens.in + chat.tokens.out > 0 ? chat.tokens : undefined,
           }}
           state={state}
-          refresh={sessions}
           onState={setState}
           onPick={pick}
           onError={failed}

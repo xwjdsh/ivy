@@ -221,27 +221,6 @@ test("reminders from every plugin, ids prefixed; a failing plugin is skipped", a
   expect(await h.reminders(window)).toEqual([{ id: "mem:a", title: "A", plugin: "mem" }]);
 });
 
-test("Ivy's card: the plugins' sections, a failing plugin skipped", async () => {
-  const h = host();
-  await h.register(
-    plugin("mem", {
-      about: () => [{ title: "Keeping track of", items: [{ text: "Rent" }] }],
-    }),
-  );
-  await h.register(
-    plugin("bad", {
-      about: () => {
-        throw new Error("boom");
-      },
-    }),
-  );
-  setLogSink(() => {}); // the failure is logged
-  expect(await h.about(new Date())).toEqual([
-    { title: "Keeping track of", items: [{ text: "Rent" }], plugin: "mem" },
-  ]);
-  setLogSink(null);
-});
-
 test("releasing a session tells every plugin; one that throws doesn't stop the rest", async () => {
   const released: string[] = [];
   const h = host();

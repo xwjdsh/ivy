@@ -274,15 +274,6 @@ export interface DaemonState {
   tools: number;
 }
 
-/** GET /about (a list): what Ivy's card shows from a plugin (AboutSection in the plugin API). */
-export interface AboutSection {
-  plugin: string;
-  title: string;
-  items: Array<{ text: string; detail?: string }>;
-  /** Shown only when asked for. */
-  private?: boolean;
-}
-
 /** GET /commands: what plugins add to the command list (e.g. /journal). */
 export interface CommandInfo {
   name: string;

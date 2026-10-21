@@ -1,6 +1,6 @@
 # Ivy — Design Document
 
-> Status: **Draft v0.1** · M0 and M1 done; M2 built (daemon, reminders, the app and its chat window), its acceptance check next · Last updated: 2026-10-20
+> Status: **Draft v0.1** · M0 and M1 done; M2 built (daemon, reminders, the app and its chat window), its acceptance check next · Last updated: 2026-10-21
 > This is a living document. Every milestone starts by updating it and ends by recording what changed in the [Decision Log](#13-decision-log).
 
 ---
@@ -252,11 +252,11 @@ An interface turns user I/O into requests to the daemon. All interfaces speak th
   - **A macOS app of its own** (`Ivy.app`), shipping the `ivy` binary and supervising it as the daemon. Only an app gets notifications of its own (macOS shows those of packaged apps only), a login item, a menu-bar item and, later, the grants macOS gives the responsible app (screen recording, accessibility, automation), which from a terminal would go to the terminal. It installs the `ivy` command as a link to its binary, so both run the same version.
   - **A window and the menu bar:** closing the window leaves Ivy in the menu bar, reminders still coming; Quit stops the daemon too, as one left alone would hold reminders back unseen. A daemon without the app, on a server or Linux, would be a service (`ivy daemon install`, later).
   - **The shell stays thin:** tray, notifications, login item, supervising the daemon, windows. All logic stays in the TypeScript daemon. A window shows a web page (`packages/web`, React) in the system webview, embedded in the app; it reaches the daemon through `ivy://`, a scheme the app forwards to the socket, so the daemon serves no pages and listens on no port. The app answers its own settings there itself (the light or dark appearance), which the daemon never sees. What a reply says is untrusted, as the page can answer permission prompts: raw HTML shows as text, links open only in the browser, images don't load (a reply could leak what Ivy read through an image URL), and a strict Content-Security-Policy allows only the page's own scripts and requests.
-  - **The chat window is a conversation with Ivy, not a list of chats**, as the window shows her as someone, with her journal and the settings a level further in:
+  - **The chat window is a conversation with Ivy, not a list of chats**, as the window shows her as someone, with the settings a level further in:
     - She sits at the top as a contact does in a messaging app, with what she is doing ("Thinking", "Waiting for your OK").
     - The conversation going on fills the view and the past ones are above it, by day, each folded to a line, so scrolling back reads like scrolling back through a long chat with someone. Opening the window carries on a conversation from the last few hours; after longer it starts a new one.
     - A past conversation opened is one to answer: writing in it carries it on.
-    - Clicking her opens her pane: what the plugins say she is keeping track of (`about`, §6.1), her journal behind a click, the model and effort folded at its foot, and a page of all the conversations, searchable, to find one without scrolling. No list of abilities: what a plugin can do shows in what it keeps.
+    - Clicking her opens her pane: the model and effort folded at its foot, and a page of all the conversations, searchable, to find one without scrolling. Nothing from the plugins is listed there: reminders and the conversation already bring up what she keeps track of, and her journal is hers (`/journal` in the terminal).
   - **Built with [MyGo](https://github.com/egoist/mygo)** (Go): its documented APIs cover the shell (tray, notifications, start at login, helper binaries, signing and notarization, updates). It was a month old when chosen, so the shell is kept small enough to move to Wails or Swift. Ivy's settings in it (the model, the effort, later more) edit `config.toml` in place, so files stay the truth; the app's own, such as the appearance, stay with the app.
 - **M5 — Jobs** run as fresh agents under the unattended permission mode, from the daemon's scheduler, with results as notifications or files.
 - **Later (maybe)** — A chat-app bot for phone access, and the web interface opened from the phone. Both daemon clients.
@@ -291,7 +291,6 @@ Principles; details are decided when this is built.
 | `sessionReleased(session)` | The daemon let an idle session go: forget what is kept for it (`sessionPrompt` runs again if it comes back) | Memory drops its snapshot for change notices |
 | `contextFor(turn)` | Dynamic text added per turn | The current time; todos due today; memory changes since the session started |
 | `reminders(window)` | What came due since the daemon last asked, shown as notifications (M2) | Todos at their time |
-| `about(now)` | Sections for Ivy's pane in the chat window, from the plugin's own data, no model call; a section may be private, shown only when asked for (M2) | Open todos, soonest due first; recent journal entries (private) |
 | `commands` | Slash commands for the user | `/today`, `/memory [query]` |
 | `jobs` | Scheduled tasks (daemon) | Morning brief at 08:30 on weekdays |
 | `hooks` | Lifecycle callbacks (planned, added when a plugin needs one) | `onSessionStart`, `beforeToolCall` |
@@ -317,7 +316,6 @@ export interface IvyPlugin {
   sessionPrompt?(session: { id: string }): Promise<string | null> | string | null;  // frozen per session
   sessionReleased?(session: { id: string }): void;  // an idle session let go
   reminders?(window: { since: Date; now: Date }): Promise<Reminder[]> | Reminder[];  // due in the window
-  about?(now: Date): Promise<AboutSection[]> | AboutSection[];  // Ivy's pane: { title, items, private? }
   commands?: CommandDef[];
   // Planned: jobs (M5), lifecycle hooks: first "before compaction" (memory saves what
   // is worth keeping) and "session idle" (notifications), as OpenCode's plugins have
@@ -742,4 +740,5 @@ Real forks in the road only; the sections hold the details. Superseded decisions
 | 2026-10-20 | Reminders only while the app is connected; Quit stops the daemon; closing the window doesn't | Only the app shows them, and one sent to a terminal was never seen |
 | 2026-10-20 | Data lives in `~/.ivy` in development too | The terminal and the app see the same sessions and reminders |
 | 2026-10-20 | The page is the app's frontend, reaching the daemon through `ivy://`; replies are rendered as untrusted | The daemon stays headless and keeps no TCP port, so no tokens or origin checks; a page that answers permission prompts must not run what a reply says |
-| 2026-10-20 | The chat window is one conversation with Ivy, past ones above it, her pane fed by plugins' `about`; a past conversation opened is carried on by writing in it | A list of sessions is a tool's view of her; what she keeps track of shows memory at work |
+| 2026-10-20 | The chat window is one conversation with Ivy, past ones above it; a past conversation opened is carried on by writing in it | A list of sessions is a tool's view of her |
+| 2026-10-21 | Ivy's pane lists nothing from the plugins; the `about` hook is dropped | Reminders and the conversation already bring up what she keeps track of, and a plugin hook every plugin author must learn wasn't worth a glance at the same todos |

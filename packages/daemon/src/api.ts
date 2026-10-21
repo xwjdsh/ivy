@@ -14,7 +14,6 @@ import {
 } from "@ivy/kernel";
 import type { Logger } from "@ivy/plugin-api";
 import {
-  type AboutSection,
   AnswerPermission,
   type CommandInfo,
   type CommandResult,
@@ -146,10 +145,6 @@ export function api(ivy: Ivy, sessions: Sessions): Routes {
         }
         ivy.capabilities.setEffort(effort as Effort);
         return Response.json(switched(() => saveEffort(ivy.paths, effort as Effort)));
-      }
-      case "GET /about": {
-        const sections: AboutSection[] = await ivy.plugins.about(new Date());
-        return Response.json(sections);
       }
       case "GET /commands": {
         const commands: CommandInfo[] = ivy.plugins.commands().map(({ def }) => ({

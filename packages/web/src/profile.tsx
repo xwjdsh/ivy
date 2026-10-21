@@ -1,10 +1,9 @@
 // Ivy herself, at the top of the conversation: her face, her name and what she is doing.
-// Clicking her opens her pane beside it, which tells more about her and, folded at its foot,
-// holds what runs her (the model and the effort), out of the way of the conversation. From it,
-// a page of all the conversations had with her, to find one and go to it.
+// Clicking her opens her pane beside it: a page of all the conversations had with her, to
+// find one and go to it, and, folded at its foot, what runs her (the model and the effort),
+// out of the way of the conversation.
 
 import {
-  type AboutSection,
   compact,
   type DaemonState,
   formatTokens,
@@ -64,30 +63,23 @@ export function Contact(props: { presence: Presence; open: boolean; onToggle(): 
 }
 
 /**
- * Her pane, beside the conversation: who she is and what she is keeping track of; her journal
- * behind a click; and, folded at its foot, what runs her.
+ * Her pane, beside the conversation: who she is, the conversations had with her and, folded
+ * at its foot, what runs her.
  */
 export function Profile(props: {
   presence: Presence;
   facts: Facts;
   state: DaemonState | undefined;
-  /** Changes when what the plugins know may have: read it again. */
-  refresh: unknown;
   onState(state: DaemonState): void;
   /** Go to a past conversation, open to carry on. */
   onPick(id: string): void;
   onError(err: unknown): void;
   onClose(): void;
 }) {
-  const { presence, facts, state, onError, refresh } = props;
-  const [sections, setSections] = useState<AboutSection[]>([]);
+  const { presence, facts, state, onError } = props;
   // Her card, or the page of conversations opened from it.
   const [page, setPage] = useState<"card" | "conversations">("card");
   const [width, setWidth] = useState(savedWidth);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `refresh` is the reason to read
-  useEffect(() => {
-    api.about().then(setSections, onError);
-  }, [refresh, onError]);
   // Esc goes back to her card before it closes the pane.
   useEffect(() => {
     if (page === "card") return;
@@ -122,19 +114,6 @@ export function Profile(props: {
             <span className="name">Ivy</span>
             <span className={`doing ${presence.tone}`}>{presence.text}</span>
           </div>
-          {sections
-            .filter((s) => !s.private)
-            .map((s) => (
-              <section key={`${s.plugin}/${s.title}`} className="about">
-                <h3>{s.title}</h3>
-                <Items items={s.items} />
-              </section>
-            ))}
-          {sections
-            .filter((s) => s.private)
-            .map((s) => (
-              <Hidden key={`${s.plugin}/${s.title}`} section={s} />
-            ))}
           <button type="button" className="go" onClick={() => setPage("conversations")}>
             <span className="key">Conversations</span>
             <span className="value">{facts.sessions.length}</span>
@@ -226,35 +205,6 @@ function Conversations(props: {
         ))}
       </div>
     </div>
-  );
-}
-
-function Items({ items }: { items: AboutSection["items"] }) {
-  return (
-    <ul>
-      {items.map((item, i) => (
-        // A section is read whole each time; the index is stable within it.
-        // biome-ignore lint/suspicious/noArrayIndexKey: see above
-        <li key={i}>
-          <span className="text">{item.text}</span>
-          {item.detail && <span className="detail">{item.detail}</span>}
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-/** A section shown only when asked for (her journal); closed again each time she's opened. */
-function Hidden({ section }: { section: AboutSection }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <section className={`about hidden${open ? " open" : ""}`}>
-      <button type="button" className="reveal" aria-expanded={open} onClick={() => setOpen(!open)}>
-        <h3>{section.title}</h3>
-        <ChevronRight size={13} className="chev" />
-      </button>
-      {open && <Items items={section.items} />}
-    </section>
   );
 }
 

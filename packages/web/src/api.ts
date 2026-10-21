@@ -2,7 +2,6 @@
 // own; its requests go to ivy://, a scheme the app forwards to the daemon's socket.
 
 import {
-  type AboutSection,
   type DaemonState,
   type ErrorBody,
   type PermissionAnswer,
@@ -48,7 +47,6 @@ export const api = {
   session: (id: string) => request<SessionView>("GET", `/sessions/${id}`),
   /** The session's file goes to the trash folder (DESIGN.md §5.7). */
   deleteSession: (id: string) => request<void>("DELETE", `/sessions/${id}`),
-  about: () => request<AboutSection[]>("GET", "/about"),
   /** The app's own setting, answered by the app (app/appearance.go), not the daemon. */
   appearance: async () =>
     (await request<{ appearance: Appearance }>("GET", "/app/appearance")).appearance,

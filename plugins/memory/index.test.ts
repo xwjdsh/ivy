@@ -290,43 +290,6 @@ test("tool calls have short summaries for the transcript", () => {
   expect(summary("search", {})).toBe("list the newest entries");
 });
 
-test("Ivy's card: open todos, the soonest first, then those with no date", async () => {
-  await start();
-  writeFileSync(
-    join(dir, "MEMORY.md"),
-    [
-      "# Memory",
-      "",
-      "- [todo 2026-10-19] Learn the guitar",
-      "- [todo 2026-10-19 due:2027-01-04] Renew the passport",
-      "- [todo 2026-10-19 due:2026-10-21T15:00] Dentist",
-      "- [todo 2026-10-19 due:2026-10-20T09:00] Call Ken",
-      "- [todo 2026-10-19 due:2026-10-20T17:00] Pick up the parcel",
-      "- [todo 2026-10-19 due:2026-10-23] Pay the rent",
-      "- [todo 2026-10-19 due:2026-10-18 done:2026-10-18] Done already",
-      "- [fact 2026-10-19] Not a todo",
-      "",
-    ].join("\n"),
-  );
-  const [section] = (await plugin.about?.(new Date(2026, 9, 20, 12))) ?? [];
-  expect(section).toEqual({
-    title: "Keeping track of",
-    items: [
-      { text: "Call Ken", detail: "Overdue" },
-      { text: "Pick up the parcel", detail: "Due today 17:00" },
-      { text: "Dentist", detail: "Due tomorrow 15:00" },
-      { text: "Pay the rent", detail: "Due Fri, Oct 23" },
-      { text: "Renew the passport", detail: "Due Mon, Jan 4, 2027" },
-      { text: "Learn the guitar" },
-    ],
-  });
-});
-
-test("Ivy's card: nothing to keep track of, no section", async () => {
-  await start();
-  expect(await plugin.about?.(new Date())).toEqual([]);
-});
-
 test("reminders: open todos whose time falls in the window, dated ones at remind_at", async () => {
   await start({ remind_at: "08:30" });
   writeFileSync(
