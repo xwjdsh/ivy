@@ -18,7 +18,7 @@ Ivy is a **personal AI agent** for one user. It runs locally, talks through the 
 
 The core idea is a **small, stable kernel plus plugins**. The kernel only knows how to:
 
-1. hold a conversation with a model over the Anthropic Messages API,
+1. hold a conversation with a model over the Anthropic Messages API or OpenAI's Chat Completions,
 2. run tools in a loop, in the foreground or background (§5.9),
 3. load plugins and route their tools, commands, context and jobs,
 4. persist sessions and plugin data, and
@@ -36,13 +36,13 @@ Everything users care about (memory, email, calendar, coding help, news digests,
 - **G4 — Safe by default.** Reading is cheap; writing, sending, deleting and shell commands need explicit permission rules or a confirmation.
 - **G5 — Iterable.** Small milestones, each one shippable and used before the next one starts.
 - **G6 — Cheap to run.** Prompt caching, sensible effort levels, and no wasted tokens.
-- **G7 — Model freedom.** Switch models or providers at any time, mid-session included, without losing features that matter. Ivy works the same on Claude via Anthropic's API and on other models behind an Anthropic-compatible endpoint.
+- **G7 — Model freedom.** Switch models or providers at any time, mid-session included, without losing features that matter. Ivy works the same on Anthropic's and OpenAI's own APIs and on other models behind an endpoint compatible with either.
 - **G8 — Someone, not a tool.** Ivy has its own reactions, views and judgment, remembers what it went through with the user, and may disagree or say no, while the user stays in control of their machine (§8.1).
 
 ### Non-Goals (for now)
 
 - Multi-user, accounts, or hosting for others.
-- Speaking APIs other than the Anthropic Messages API, for now. Within it, any model works: Claude on Anthropic's API, or any model behind an Anthropic-compatible endpoint (e.g. a local proxy). An OpenAI-format adapter can be added in `ModelClient` when an endpoint needs it (§5.2).
+- Speaking APIs other than the Anthropic Messages API and OpenAI's Chat Completions (and later its Responses API). Between them nearly every model is reachable, on its vendor's API, a proxy or a local server (§5.2).
 - A native GUI written per platform. Ivy's windows show a web page in the system webview, so the interface stays TypeScript (§5.7).
 - A general-purpose agent framework for other people. Ivy is tuned for one person.
 
@@ -54,7 +54,7 @@ Everything users care about (memory, email, calendar, coding help, news digests,
 4. **Explicit over magic.** Ivy should be able to tell the user which plugin and tool produced an answer and what it remembered at the time (`/memory`, `/journal`, the session prompt in `/status`; which entry an answer used would need citations, §8.1 backlog).
 5. **Confirm before effects.** Any outward-facing or hard-to-reverse action is shown to the user before it runs, unless a permission rule says otherwise.
 6. **Dogfood every milestone.** A milestone is only done once it has been used in real life for a few days.
-7. **Compatibility first, enhance progressively.** Core features rely only on what every Anthropic-compatible endpoint offers: messages, tool calls, streaming, a system prompt. Anthropic-only features (prompt caching, effort, refusal fallback, `clear_at` system messages, compaction, server tools, ...) are enhancements: switched on per request where the provider and model support them, with a fallback everywhere else. No Ivy feature may *require* one. Capability decisions live in one place (§5.2).
+7. **Compatibility first, enhance progressively.** Core features rely only on what every endpoint of either protocol offers: messages, tool calls, streaming, a system prompt. A vendor's own features (Anthropic's prompt caching, effort, refusal fallback, `clear_at` system messages, compaction, server tools; OpenAI's reasoning effort, ...) are enhancements: switched on per request where the provider and model support them, with a fallback everywhere else. No Ivy feature may *require* one. Capability decisions live in one place (§5.2).
 8. **Everything is observable.** Every request, response, tool call, token count and cache hit can be inspected after the fact. If we can't see why Ivy did something, we can't fix it.
 
 ## 4. Architecture
@@ -76,12 +76,12 @@ Everything users care about (memory, email, calendar, coding help, news digests,
 │                             │                     │                  │        │
 │                     ┌───────▼────────┐   ┌────────┴──────────────────┴──────┐ │
 │                     │ Model Client   │   │           Plugin Host            │ │
-│                     │ (Anthropic SDK)│   │ registry · lifecycle · storage   │ │
+│                     │ (two protocols)│   │ registry · lifecycle · storage   │ │
 │                     └───────┬────────┘   │ reminders · MCP bridge           │ │
 │                             │            └────────┬─────────────────────────┘ │
 └─────────────────────────────┼─────────────────────┼───────────────────────────┘
                               │                     │
-                      Messages API        ┌─────────┴──────────┬──────────────┐
+                        model APIs        ┌─────────┴──────────┬──────────────┐
                                           │                    │              │
                                    Native plugins        MCP servers     Config &
                                    (TS modules)          (stdio/http)    data dirs
@@ -111,42 +111,33 @@ The kernel runs in the daemon (`ivy daemon`), which owns sessions and runs the s
 
 ### 5.2 Model Client
 
-- `@anthropic-ai/sdk`, wrapped in a thin module so the rest of the code never touches raw API shapes.
-- Speaks the Anthropic Messages API to the `[providers.*]` endpoint of the model in use. With Anthropic's own API the default model is **`claude-opus-5-5`**, with adaptive thinking and one `effort` level from `[generation]` (switch with `/effort`).
+- `@anthropic-ai/sdk` and `openai`, each wrapped in a thin module so the rest of the code never touches raw API shapes.
+- Speaks the protocol of the `[providers.*]` endpoint of the model in use (§5.2.1). With Anthropic's own API the default model is **`claude-opus-5-5`**, with adaptive thinking and one `effort` level from `[generation]` (switch with `/effort`).
 - Server-side refusal fallback (`fallbacks: "default"`) is on where supported (decided by `Capabilities`), as Anthropic recommends: if the model declines, Anthropic re-runs the request on a fallback model within the same call, and a notice names both models, so a swap is never silent.
 - **Compatible endpoints vary.** Effort, adaptive thinking, prompt caching, refusal fallback, `clear_at` system messages, compaction and server tools are Anthropic API features; a compatible endpoint or a non-Claude model may ignore or reject them.
 - **Capabilities** decide per request which optional features a model gets on its provider's endpoint, from three sources:
-  1. **Models API** (official endpoint only): `client.models.list()` reports effort support and levels, `max_tokens`, context window, thinking types, server tools and more. Fetched in the background and cached. New models need no code change. It does *not* report mid-conversation system messages or refusal fallback.
-  2. **Learned:** when the endpoint answers a request with a 400 naming an optional feature it used (system messages, fallbacks, effort), the agent turns that feature off for that model, tells the user with a notice, and resends the step.
-  3. **Defaults:** on the official API, Claude models get the optional features, except a fixed pattern of *older* models known to lack them (this list only covers the past, so it never grows). Compatible endpoints get only the basics plus `effort` (dropped on a 400).
-- The official endpoint is recognised by `base_url` (`api.anthropic.com`), not by `type`: `type` names the protocol, which official and compatible endpoints share.
+  1. **Models API** (Anthropic's own API only; OpenAI's lists models without what they support): `client.models.list()` reports effort support and levels, `max_tokens`, context window, thinking types, server tools and more. Fetched in the background and cached. New models need no code change. It does *not* report mid-conversation system messages or refusal fallback.
+  2. **Learned:** when the endpoint answers a request with a 400 naming an optional feature it used, the agent turns that feature off for that model, tells the user with a notice, and resends the step.
+  3. **Defaults:** on the official API, Claude models get the optional features, except a fixed pattern of *older* models known to lack them (this list only covers the past, so it never grows). Other endpoints get the basics plus what they may ignore or refuse (§5.2.1).
+- An official endpoint is recognised by `base_url` (`api.anthropic.com`, `api.openai.com`), not by `type`: `type` names the protocol, which official and compatible endpoints share.
 - **Prompt caching:** tools and system prompt are kept byte-stable (plugins sorted by id, no timestamps), with a cache breakpoint after them. Volatile context (the time, todos due today) goes with the new user message, as a `clear_at` system message or a `<context>` block (§5.3), never into the system prompt, so the cached prefix stays intact.
 - **Helper model (planned, with the first side task):** side work (summaries, background memory review, a pending-entry checker) runs on an optional `[agent] helper_model`, named like the main model (`provider/model`, on any provider); unset, it is the main model at `low` effort, which is the first thing to measure (one model also keeps one prompt cache).
 - **Switching models:** `/model` offers each provider's `models` list, or without one what its endpoint lists (`GET /v1/models`), and switches across providers; `/model <provider/model>` switches directly. `/effort` works the same way. Both save the choice in `config.toml` (§7). Requests carry only params the model accepts (`Capabilities`): Haiku gets no `effort` and no refusal fallback, and an unsupported effort level is lowered to the nearest one the model has. A switch costs one prompt-cache miss (the cache is per model, and the top-level effort is part of the cached request).
 - **Long sessions — compaction (planned):** client-side, so it works on every endpoint; Anthropic's server-side compaction only as an enhancement. Cheap relief first (shorten or spill oversized old tool results, no model call), then a summary of older history; before summarizing, one call saves what is worth keeping to memory (summaries lose details). The originals stay in the session file. What is in progress survives as state, not prose (context-mode, §10.1): the session already records events (files changed, tasks, errors, the user's corrections), and compaction puts a small guide to them, most important first, ahead of the summary, the rest found by search when needed; a summary alone tends to lose a correction.
 - **Oversized tool output (planned, M3):** kept out of the context when the tool returns, not only at compaction: a result over a size limit is stored whole for the session, and the model gets its start, its size and a handle to search or read parts of it (by keywords or by what it is looking for). The kernel does this for every tool, as it owns the loop; files, shell output, web pages and emails are where it matters.
-- **Providers and models:** `config.toml` can define several `[providers.<name>]` (each with `type`, `api_key`, `base_url`, optional `models` to limit what `/model` offers, and optional `refusal_fallback`, default true). A model is named by one string, `"<provider>/<model id>"`, split at the first `/` (the id may contain more: `magpie/codex/gpt-6-luna`), as in OpenCode and LiteLLM; `[agent] model` is the main one, and every other place that picks a model (helper model, later jobs and subagents) uses the same form. Only `type = "anthropic"` exists today; another API kind would add a value here plus a `ModelClient`. Generation settings (`effort`, `max_tokens`) live in `[generation]`, independent of the provider.
+- **Providers and models:** `config.toml` can define several `[providers.<name>]` (each with `type`, `api_key`, `base_url`, optional `models` to limit what `/model` offers, and optional `refusal_fallback`, default true). A model is named by one string, `"<provider>/<model id>"`, split at the first `/` (the id may contain more: `magpie/codex/gpt-6-luna`), as in OpenCode and LiteLLM; `[agent] model` is the main one, and every other place that picks a model (helper model, later jobs and subagents) uses the same form. `type` is `"anthropic"` or `"openai"` (§5.2.1); `base_url` left out is the vendor's own API for it. Generation settings (`effort`, `max_tokens`) live in `[generation]`, independent of the provider.
 - Endpoints come only from `config.toml`; an API key from `config.toml` or, on macOS, the Keychain (a provider without `api_key` looks there, under its name). `ANTHROPIC_*` environment variables and `ant` profiles are deliberately ignored, so there is one place to look. Config is strict: unknown keys are errors.
 
-#### Provider coupling
+#### 5.2.1 Two protocols
 
-Ivy speaks only the Anthropic Messages API (see Non-Goals): Claude directly, or any model behind an Anthropic-compatible endpoint. The coupling to that API is kept in known places, so adding another API kind later is a bounded job.
+`type = "anthropic"` speaks the Messages API, `type = "openai"` Chat Completions: between them nearly every model is reachable, on its vendor's API, a proxy or a local server.
 
-| Anthropic-specific | Impact on another provider |
-|---|---|
-| Message format (content blocks, `tool_use`/`tool_result`, thinking blocks), also in session files | Needs translation; old sessions stay in this format |
-| Refusal fallback (`fallbacks: "default"` + beta header) | Unknown param, likely 400 |
-| `output_config.effort` | Unknown or named differently |
-| Top-level `cache_control` | Ignored or rejected |
-| `eager_input_streaming` on tools | Ignored or rejected |
-| Price table | Recorded cost is unknown (cost is never shown in the UI) |
-| Planned: server-side compaction, server tools (web search) | Not available elsewhere (client-side compaction is the baseline) |
-
-Other models, on any configured provider, only need `/model` or a different `[agent] model`.
-
-Plan if another API kind (e.g. OpenAI's) is ever needed:
-1. **Anthropic-compatible endpoint first.** Many providers expose one; add it as another `[providers.*]` entry with its `base_url`. Add a config switch for each Anthropic-only request param (effort, fallbacks, caching, eager streaming) so they can be turned off. Small change.
-2. **Adapter otherwise.** Keep the Anthropic message format as Ivy's internal format and translate per provider inside the model client. The agent loop only depends on that interface, so the change stays in one module.
+- **Ivy's own format is Anthropic's**, in memory and in session files: the richest of the common ones (text, images, tool calls and results, thinking as blocks). The `openai` client translates at its edge, both ways, so the agent loop, sessions and traces stay as they are.
+- **`type` says the protocol, `base_url` only what is the vendor's alone.** An optional feature an endpoint can ignore harmlessly, or refuse with a 400, is sent to every endpoint and dropped for a model on a 400 (§5.2), so a vendor that copies Anthropic's or OpenAI's extensions gets them: effort and caching hints on the Messages API; `reasoning_effort`, usage in the stream and a prompt cache key on Chat Completions. What would be lost silently if ignored, or belongs to one vendor, goes to its own API alone, told by `base_url` (`api.anthropic.com`, `api.openai.com`): `clear_at` system messages (dropped, the turn's context would vanish unseen), refusal fallback and Models API facts; on OpenAI's, `max_completion_tokens` and the developer role (ignored elsewhere, a cap would vanish or a role turn into a user's). A proxy in front of a vendor's own API is treated as any other endpoint for these, a simple rule taken over a per-provider switch.
+- **OpenAI's Responses API, later, is a third `type`**: a protocol of its own, which carries a reasoning model's reasoning across tool calls; any endpoint that speaks it can use it.
+- **Switching models mid-session:** each reply records where it came from, the endpoint's `base_url` and the model, and its thinking (Anthropic's signed blocks, the reasoning text a Chat Completions endpoint sent) goes back only to that model at that endpoint. Elsewhere it is dropped: another backend may reject what it can't verify, even behind one proxy, and what matters stays in the reply's text. It costs nothing, as a model's thinking is needed only within its own turn and `/model` applies from the next one. Told by the endpoint, not the provider's name, which may be pointed elsewhere.
+- **Usage is counted as Anthropic counts it** (input without the cached tokens, cache reads apart), so tokens and cache hits read the same on either protocol.
+- **Why translate at the edge, not a shared library:** a multi-provider library (pi's, §10.1) brings its own message format, model catalog and capability rules, which would replace Ivy's session format and capabilities, for two protocols. Its notes on each endpoint's quirks guide the translation instead. A library becomes worth it if many native APIs (Gemini, Bedrock, ...) are wanted.
 
 ### 5.3 Context Builder
 
@@ -183,7 +174,7 @@ Todos due (mention them to the user once in this conversation, briefly, whatever
 - **Stored apart:** the session records the context next to the user's message (a `context` field on its record), not inside it. How it is shown to the model is decided per request.
 - **Two renderings**, chosen per request by provider and model:
   - **system** — when `Capabilities` says the model supports mid-conversation system messages (official API, a current Claude model, not learned otherwise): a `role: "system"` message with `clear_at: "next_user_message"`. Operator-level trust (can't be spoofed by user or tool text), and once the turn is over it costs no input tokens.
-  - **block** — everything else (proxies, other models): a `<context>` text block before the user's text in the same message. Works on every Anthropic-compatible endpoint; old blocks stay in history and keep costing (cached) tokens.
+  - **block** — everything else (proxies, other models): a `<context>` text block before the user's text in the same message. Works on every endpoint of either protocol; old blocks stay in history and keep costing (cached) tokens.
 - **Deterministic:** the same history and mode always render to the same bytes and grow append-only within a turn, so the prompt cache and thinking blocks stay valid. Switching models may switch modes; that already costs a cache miss, since caches are per model.
 - **Trust:** `rules.md` tells the model the block is supplied by Ivy as reference data, not written by the user.
 - **Limits:** each plugin's turn context and session section are capped in size and time (a session section is large enough for both memory files at their maximum). The cap is part of the plugin API, so a plugin fits within it instead of being cut off. A plugin that fails or times out is skipped and logged, so a turn never fails because of a plugin.
@@ -628,7 +619,7 @@ ivy/
 |---|---|---|
 | Runtime | Bun | Fast startup for a CLI, built-in TS, test runner, SQLite (`bun:sqlite`), can compile to a single binary |
 | Language | TypeScript (strict) | Types for the plugin contract |
-| LLM API | Anthropic Messages API via `@anthropic-ai/sdk`; default model Claude Opus 5.5 | One wire format; works with Claude and any Anthropic-compatible endpoint |
+| LLM API | Anthropic Messages API via `@anthropic-ai/sdk`, OpenAI Chat Completions via `openai`; default model Claude Opus 5.5 | The two protocols nearly every endpoint speaks; Anthropic's is Ivy's own format |
 | Schemas | Zod | Tool inputs, config validation, JSON Schema generation |
 | MCP | `@modelcontextprotocol/sdk` | MCP bridge plugin |
 | Chat window | React, with marked and Shiki, bundled by Bun | The page is TypeScript like the rest; Markdown and code read as in the TUI |
@@ -644,7 +635,7 @@ ivy/
 
 Compared on 2026-10-17/18. What each project is, what Ivy took, and what it left.
 
-- **[pi](https://github.com/earendil-works/pi)**: a deliberately minimal terminal coding agent (four tools, ~35 providers, no permission system). Took: client-side compaction, steering, deferred MCP tools. Left: no permissions (Ivy acts outside the machine), project-level context files, a multi-API layer for now.
+- **[pi](https://github.com/earendil-works/pi)**: a deliberately minimal terminal coding agent (four tools, ~35 providers, no permission system). Took: client-side compaction, steering, deferred MCP tools, and its notes on OpenAI-compatible endpoints' quirks. Left: no permissions (Ivy acts outside the machine), project-level context files, its multi-provider library (its own message format; Ivy translates at the edge, §5.2.1).
 - **[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)**: a large harness where everything, even the loop, is a plugin; OS sandbox for commands. Took: cheap compaction before summaries, "unknown outcome" for interrupted side effects, system prompt snapshots, a sandboxed shell. Left: a kernel-less design, approvals without rules.
 - **[Hermes Agent](https://github.com/nousresearch/hermes-agent)**: the closest to Ivy, a personal agent with SOUL.md/USER.md, capped memory injected whole and frozen per session, skills, cron jobs and chat gateways. Took: the capped, frozen hot files with over-cap errors that force consolidation; patches by unique substring (it dropped whole-entry replace after models wiped unrelated entries); the memory safety scan; session search with CJK bigrams; jobs as fresh agents; skills. Ivy adds the searchable archive, todos with due dates and tidying between hot and cold.
 - **[OpenClaw](https://github.com/openclaw/openclaw)**: a gateway daemon owning many chat apps and devices, with a plugin and skill registry. Took: memory flush before compaction, the gateway as the model for the M2 daemon, keeping outside content out of standing memory, `NO_REPLY` for jobs with nothing to report. Left: embeddings for memory, heartbeat turns inside the user's session, in-process third-party plugins from a registry (its registry hosted hundreds of malicious skills), and the agent rewriting its own `SOUL.md`; its author's [soul.md](https://soul.md/) essay shaped `IVY.md`, Ivy's own journal kept apart from the user's `SOUL.md` (§8.1).
@@ -723,7 +714,6 @@ Real forks in the road only; the sections hold the details. Superseded decisions
 | 2026-10-16 | TypeScript + Bun; a terminal CLI first (Ink TUI, plain text for one-shot) | Fast startup, built-in SQLite and tests; closest to the daily workflow |
 | 2026-10-16 | All capabilities are plugins; own tool-use loop, not the Agent SDK | Small kernel; full control over plugins, permissions and context |
 | 2026-10-16 | Project content in English; Claude writes the code, the user reviews | User's choice; small, reviewable changes |
-| 2026-10-16 | Scope is the Anthropic Messages API, not Claude; compatibility first, Anthropic features as enhancements, from per-model capabilities (§5.2) | The user runs non-Claude models through a proxy; new models and endpoints work without code changes |
 | 2026-10-16 | Endpoints and permission rules only in `config.toml` (API keys there or in the Keychain); strict keys | One source of truth that shows everything that runs without asking; typos fail loudly |
 | 2026-10-16 | Built-in `rules.md` for operating and safety rules; `SOUL.md` written by the user only | A model-editable rule file would turn one injection into a permanent rule |
 | 2026-10-16 | Per-turn context kept out of the system prompt (`clear_at` system messages, `<context>` blocks elsewhere); the beta Messages API, with refusal fallback on and announced | The prompt cache holds; fallback is Anthropic's recommendation, and a swap is never silent |
@@ -753,3 +743,4 @@ Real forks in the road only; the sections hold the details. Superseded decisions
 | 2026-10-21 | Ivy's card lists nothing from the plugins (the `about` hook is dropped), and past conversations are found by a search, not a list beside the chat | Reminders and the conversation already bring up what she keeps track of, and a plugin hook every plugin author must learn wasn't worth a glance at the same todos; the timeline already shows the past, so a list showed it twice |
 | 2026-10-21 | No menu-bar item: Ivy is a regular app with a Dock icon | With the Dock icon always there, the menu bar only repeated it; Ivy is someone to talk to, not a utility hidden in the menu bar |
 | 2026-10-21 | A settings page in the window; providers edited there in place; API keys in the macOS Keychain, `config.toml` still read | The app should be usable without a text editor; a key in a plain file leaks with backups and screen shares; edits in place keep the file the user's |
+| 2026-10-21 | OpenAI's Chat Completions beside the Messages API; Ivy's format stays Anthropic's, translated at the edge; `type` says the protocol, `base_url` only what is a vendor's alone (§5.2.1) | Between the two nearly every model is reachable; sessions and the loop stay as they are, where a multi-provider library would replace them |
