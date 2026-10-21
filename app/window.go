@@ -61,12 +61,16 @@ func daemonProxy(socket string) http.Handler {
 	})
 }
 
-// chatWindow is the one chat window, or nil while it is closed. It is only used on the
-// main thread, where menu clicks, notification clicks and window events run.
+// chatWindow is the one chat window, or nil before it is first opened. It is only used on
+// the main thread, where menu clicks, notification clicks and window events run.
 var chatWindow *mygo.Window
 
-// openChat shows the chat window, opening it if it is closed. While it is open Ivy has a
-// Dock icon, as a window of a regular app; closed, Ivy is back in the menu bar alone.
+// quitting is set once the app is quitting, so the chat window closes for good then.
+var quitting bool
+
+// openChat shows the chat window, opening it the first time. From then on Ivy has a Dock
+// icon, as a regular app: closing the window only hides it, as Mac chat apps do, and a
+// click on the icon shows it again as it was.
 func openChat() {
 	mygo.App.SetActivationPolicy(mygo.ActivationPolicyRegular)
 	if w := chatWindow; w != nil {
@@ -101,10 +105,15 @@ func openChat() {
 			}
 		}
 	})
+	w.OnClose(func(e *mygo.CloseEvent) {
+		if !quitting {
+			e.PreventDefault()
+			w.Hide()
+		}
+	})
 	w.OnClosed(func() {
 		if chatWindow == w {
 			chatWindow = nil
-			mygo.App.SetActivationPolicy(mygo.ActivationPolicyAccessory)
 		}
 	})
 }

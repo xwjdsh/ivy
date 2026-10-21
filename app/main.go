@@ -88,6 +88,8 @@ func main() {
 		}
 		go follow(status)
 	})
+	// Quitting closes the chat window for good, where closing it otherwise only hides it.
+	mygo.App.OnBeforeQuit(func(*mygo.QuitEvent) { quitting = true })
 	mygo.App.OnQuit(func() {
 		if sup != nil {
 			sup.stop()
