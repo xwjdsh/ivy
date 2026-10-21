@@ -2169,7 +2169,8 @@ input.st-switch:checked::after {
   font-size: 12px;
 }
 
-.st-provider .st-form label {
+.st-provider .st-form > label,
+.st-provider .st-form > .st-field {
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -2177,8 +2178,8 @@ input.st-switch:checked::after {
   font-size: 12px;
 }
 
-.st-provider .st-form input,
-.st-provider .st-form textarea {
+.st-provider .st-form > label > input,
+.st-provider .st-form > label > textarea {
   padding: 7px 10px;
   border: 1px solid var(--line-strong);
   border-radius: 8px;
@@ -2188,16 +2189,69 @@ input.st-switch:checked::after {
   font: 13px var(--sans);
 }
 
-.st-provider .st-form textarea {
+.st-provider .st-form > label > textarea {
   resize: vertical;
   font-family: var(--mono);
   font-size: 12px;
 }
 
-.st-provider .st-form input:focus,
-.st-provider .st-form textarea:focus {
+.st-provider .st-form > label > input:focus,
+.st-provider .st-form > label > textarea:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* The models to offer: a menu of what the endpoint lists, at the form's width. */
+.st-provider .st-models .st-caption {
+  display: flex;
+  justify-content: space-between;
+}
+
+.st-provider .st-models .st-link {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent);
+  font-size: 12px;
+}
+
+.st-provider .st-form .st-note {
+  color: var(--faint);
+  font-size: 12px;
+}
+
+.st-provider .st-models .st-listing {
+  padding: 7px 0;
+  color: var(--faint);
+  font-size: 13px;
+}
+
+.st-provider .st-models .pick {
+  width: 100%;
+  height: 33px;
+  justify-content: space-between;
+  padding: 0 9px 0 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.st-provider .st-models .pick:hover,
+.st-provider .st-models .pick.open {
+  background: var(--bg);
+  border-color: var(--accent);
+}
+
+.st-provider .st-models .pick-box {
+  display: block;
+}
+
+.st-provider .st-models .menu {
+  left: 0;
+  width: 100%;
 }
 
 .st-provider .st-form .st-hint {

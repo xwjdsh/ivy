@@ -199,13 +199,13 @@ export function ModelSettings(props: {
 }
 
 /** "magpie/auto/claude-opus-5-5" → "claude-opus-5-5" */
-const modelName = (model: string) => model.slice(model.lastIndexOf("/") + 1);
+export const modelName = (model: string) => model.slice(model.lastIndexOf("/") + 1);
 
 /**
  * Where each model comes from, without what they all share: "magpie/auto/x" and
  * "magpie/claude/y" → "auto" and "claude".
  */
-function sources(models: string[]): Map<string, string> {
+export function sources(models: string[]): Map<string, string> {
   const paths = models.map((m) => m.split("/").slice(0, -1));
   let shared = 0;
   while (

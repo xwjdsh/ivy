@@ -7,7 +7,8 @@ import type { DaemonState, ProviderInfo, Settings } from "@ivy/protocol";
 import { ExternalLink, KeyRound, Plus } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { api } from "./api.ts";
-import { Appearances, inApp, ModelSettings } from "./profile.tsx";
+import { PickMany } from "./menu.tsx";
+import { Appearances, inApp, ModelSettings, modelName, sources } from "./profile.tsx";
 
 const SECTIONS = ["General", "Models", "Permissions", "Plugins", "About"] as const;
 type Section = (typeof SECTIONS)[number];
@@ -157,7 +158,13 @@ function Models(props: {
     <section>
       {props.state && (
         <div className="st-current">
-          <ModelSettings state={props.state} onState={props.onState} onError={onError} />
+          <ModelSettings
+            // Asked again for the models when the providers change.
+            key={JSON.stringify(settings?.providers)}
+            state={props.state}
+            onState={props.onState}
+            onError={onError}
+          />
         </div>
       )}
       <h3>Providers</h3>
@@ -215,6 +222,11 @@ function Provider(props: {
   const [key, setKey] = useState("");
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | undefined>();
+  const listing = useListing(
+    editing
+      ? { name: p.name, type: p.type, base_url: p.official ? "" : p.base_url, key: "" }
+      : undefined,
+  );
 
   const run = async (action: () => Promise<Settings>, after?: () => void) => {
     setBusy(true);
@@ -255,17 +267,18 @@ function Provider(props: {
               onChange={(e) => setBaseUrl(e.target.value)}
             />
           </label>
-          <label>
-            Only these models
-            <textarea
-              rows={3}
-              value={models}
-              placeholder="One per line; empty for every one the endpoint lists"
-              onChange={(e) => setModels(e.target.value)}
-            />
-          </label>
+          <OnlyModels listing={listing} text={models} onText={setModels} />
           <div className="st-actions">
-            <button type="button" className="ghost" onClick={() => setEditing(false)}>
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => {
+                // What was changed and not saved goes.
+                setBaseUrl(p.official ? "" : p.base_url);
+                setModels(p.models.join("\n"));
+                setEditing(false);
+              }}
+            >
               Cancel
             </button>
             <button
@@ -379,6 +392,99 @@ function Provider(props: {
   );
 }
 
+/** What an endpoint lists; or, having taken the key, why it lists nothing (its models are named
+ * by hand); or why it can't be used. Undefined while it is asked. */
+type Listing = { models: string[] } | { unlisted: string } | { error: string } | undefined;
+
+/** The models an endpoint lists with a key (or a provider's own), asked again when what
+ * reaches it changes and has settled. */
+function useListing(
+  target: { name?: string; type: string; base_url: string; key: string } | undefined,
+): Listing {
+  const [listing, setListing] = useState<Listing>();
+  const asked = target && JSON.stringify(target);
+  useEffect(() => {
+    setListing(undefined);
+    if (!asked) return;
+    let current = true;
+    const timer = setTimeout(() => {
+      api.testProvider(JSON.parse(asked)).then(
+        (r) => current && setListing(r.unlisted ? { unlisted: r.unlisted } : { models: r.models }),
+        (err) => current && setListing({ error: err instanceof Error ? err.message : String(err) }),
+      );
+    }, 400);
+    return () => {
+      current = false;
+      clearTimeout(timer);
+    };
+  }, [asked]);
+  return listing;
+}
+
+/** The models a provider offers, chosen from what its endpoint lists, or named by hand when
+ * it lists none; none chosen, all of them. `text` holds one per line. */
+function OnlyModels(props: { listing: Listing; text: string; onText(text: string): void }) {
+  const { listing } = props;
+  const chosen = lines(props.text);
+  if (listing && "error" in listing) return <p className="st-problem">{listing.error}</p>;
+  if (listing && "unlisted" in listing) {
+    return (
+      <label>
+        Only these models
+        <textarea
+          rows={3}
+          value={props.text}
+          placeholder="One per line"
+          onChange={(e) => props.onText(e.target.value)}
+        />
+        <span className="st-note">
+          {listing.unlisted.replace(/\.$/, "")}. Name the models it offers.
+        </span>
+      </label>
+    );
+  }
+  const listed = listing?.models;
+  // A chosen model the endpoint no longer lists stays, to be let go of.
+  const all = [...(listed ?? []), ...chosen.filter((m) => !listed?.includes(m))];
+  const groups = sources(all);
+  return (
+    <div className="st-field st-models">
+      <span className="st-caption">
+        Only these models
+        {chosen.length > 0 && (
+          <button type="button" className="st-link" onClick={() => props.onText("")}>
+            Offer every one
+          </button>
+        )}
+      </span>
+      {listed === undefined ? (
+        <span className="st-listing">Listing the endpoint's models…</span>
+      ) : (
+        <PickMany
+          below
+          values={chosen}
+          title="The models to offer"
+          search="Search models"
+          shown={
+            chosen.length === 0
+              ? "Every model the endpoint lists"
+              : chosen.length === 1
+                ? chosen[0]
+                : `${chosen.length} models`
+          }
+          options={all.map((m) => ({
+            value: m,
+            label: modelName(m),
+            group: groups.get(m),
+            detail: listed.includes(m) ? undefined : "not listed",
+          }))}
+          onChange={(next) => props.onText(next.join("\n"))}
+        />
+      )}
+    </div>
+  );
+}
+
 /** A new provider, tested against its endpoint before it is saved. */
 function AddProvider(props: {
   keychain: boolean;
@@ -389,17 +495,27 @@ function AddProvider(props: {
   const [type, setType] = useState("anthropic");
   const [baseUrl, setBaseUrl] = useState("");
   const [key, setKey] = useState("");
+  const [models, setModels] = useState("");
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | undefined>();
+  const listing = useListing(key.trim() ? { type, base_url: baseUrl.trim(), key } : undefined);
+  // Only an endpoint that answers with this key is kept, or one whose models are named.
+  const reached =
+    listing !== undefined &&
+    ("models" in listing || ("unlisted" in listing && lines(models).length > 0));
 
   const add = async () => {
     setBusy(true);
     setProblem(undefined);
     try {
-      // Only an endpoint that answers with this key is kept.
-      await api.testProvider({ type, base_url: baseUrl.trim(), key });
       props.onAdded(
-        await api.addProvider({ name: name.trim(), type, base_url: baseUrl.trim(), key }),
+        await api.addProvider({
+          name: name.trim(),
+          type,
+          base_url: baseUrl.trim(),
+          key,
+          models: lines(models),
+        }),
       );
     } catch (err) {
       setProblem(err instanceof Error ? err.message : String(err));
@@ -455,6 +571,7 @@ function AddProvider(props: {
             onChange={(e) => setKey(e.target.value)}
           />
         </label>
+        {key.trim() && <OnlyModels listing={listing} text={models} onText={setModels} />}
         <p className="st-hint">
           Anthropic for the Messages API, OpenAI for Chat Completions, which most other endpoints
           speak. Ivy lists the endpoint's models with this key before anything is saved.
@@ -466,10 +583,10 @@ function AddProvider(props: {
           <button
             type="button"
             className="primary"
-            disabled={busy || !name.trim() || !key.trim()}
+            disabled={busy || !name.trim() || !reached}
             onClick={add}
           >
-            {busy ? "Checking…" : "Add"}
+            {busy ? "Adding…" : "Add"}
           </button>
         </div>
         {problem && <p className="st-problem">{problem}</p>}

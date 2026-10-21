@@ -36,21 +36,8 @@ export function Pick(props: {
   className?: string;
   onChange(value: string): void;
 }) {
-  const [open, setOpen] = useState(false);
-  const box = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const away = (e: PointerEvent) => {
-      if (!box.current?.contains(e.target as Node)) setOpen(false);
-    };
-    addEventListener("pointerdown", away);
-    return () => removeEventListener("pointerdown", away);
-  }, [open]);
+  const { open, setOpen, box, close } = useMenuBox();
   const chosen = props.options.find((o) => o.value === props.value);
-  const close = () => {
-    setOpen(false);
-    box.current?.querySelector<HTMLElement>(".pick")?.focus();
-  };
   return (
     <div className={`pick-box ${props.className ?? ""}`} ref={box}>
       <button
@@ -87,8 +74,87 @@ export function Pick(props: {
   );
 }
 
+/** Several options at once: each pick turns one on or off, and the menu stays open. The ones
+ * chosen when it opens come first; they stay where they are while it is open. */
+export function PickMany(props: {
+  values: string[];
+  /** What the button shows. */
+  shown: ReactNode;
+  title: string;
+  options: MenuOption[];
+  search?: string;
+  below?: boolean;
+  className?: string;
+  onChange(values: string[]): void;
+}) {
+  const { open, setOpen, box, close } = useMenuBox();
+  const [first, setFirst] = useState<string[]>([]);
+  const options = [
+    ...props.options
+      .filter((o) => first.includes(o.value))
+      .map((o) => ({ ...o, group: "Chosen", detail: o.detail ?? o.group })),
+    ...props.options
+      .filter((o) => !first.includes(o.value))
+      .map((o) => ({ ...o, group: o.group || (first.length ? "More" : undefined) })),
+  ];
+  return (
+    <div className={`pick-box ${props.className ?? ""}`} ref={box}>
+      <button
+        type="button"
+        className={`pick${open ? " open" : ""}`}
+        title={props.title}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => {
+          if (!open) setFirst(props.values);
+          setOpen((o) => !o);
+        }}
+      >
+        <span className="text">{props.shown}</span>
+        <ChevronDown size={13} className="caret" />
+      </button>
+      {open && (
+        <Menu
+          value={props.values[0] ?? ""}
+          chosen={(v) => props.values.includes(v)}
+          options={options}
+          search={props.search}
+          below={props.below}
+          onChoose={(v) =>
+            props.onChange(
+              props.values.includes(v) ? props.values.filter((x) => x !== v) : [...props.values, v],
+            )
+          }
+          onClose={close}
+        />
+      )}
+    </div>
+  );
+}
+
+/** A button's box and whether its menu is open; a click elsewhere closes it. */
+function useMenuBox() {
+  const [open, setOpen] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const away = (e: PointerEvent) => {
+      if (!box.current?.contains(e.target as Node)) setOpen(false);
+    };
+    addEventListener("pointerdown", away);
+    return () => removeEventListener("pointerdown", away);
+  }, [open]);
+  const close = () => {
+    setOpen(false);
+    box.current?.querySelector<HTMLElement>(".pick")?.focus();
+  };
+  return { open, setOpen, box, close };
+}
+
 function Menu(props: {
   value: string;
+  /** Which options are chosen; the one of `value` by default. */
+  chosen?(value: string): boolean;
   options: MenuOption[];
   search?: string;
   below?: boolean;
@@ -97,11 +163,30 @@ function Menu(props: {
 }) {
   const [query, setQuery] = useState("");
   const shown = matching(props.options, query);
+  const chosen = props.chosen ?? ((v: string) => v === props.value);
   // One option is lit, by the keys or the pointer; Enter takes it.
   const [lit, setLit] = useState(() => props.options.find((o) => o.value === props.value)?.value);
   const litAt = shown.findIndex((o) => o.value === lit);
   const list = useRef<HTMLDivElement>(null);
   const field = useRef<HTMLInputElement>(null);
+  const menu = useRef<HTMLDivElement>(null);
+  // The menu stays in the window: on its side if the list fits there or that side has more
+  // room, on the other otherwise, and the list no taller than the room.
+  const [below, setBelow] = useState(props.below ?? false);
+  const [room, setRoom] = useState<number>();
+  useLayoutEffect(() => {
+    const button = menu.current?.parentElement?.getBoundingClientRect();
+    if (!menu.current || !list.current || !button) return;
+    const around = menu.current.offsetHeight - list.current.offsetHeight + MENU_GAP;
+    const under = innerHeight - button.bottom - around;
+    const over = button.top - around;
+    const tallest = Number.parseFloat(getComputedStyle(list.current).maxHeight) || Infinity;
+    const needs = Math.min(list.current.scrollHeight, tallest);
+    const [mine, other] = props.below ? [under, over] : [over, under];
+    const stay = mine >= needs || mine >= other;
+    setBelow(stay === !!props.below);
+    setRoom(Math.min(tallest, stay ? mine : other));
+  }, [props.below]);
   useEffect(() => {
     // The page around stays where it is.
     (field.current ?? list.current)?.focus({ preventScroll: true });
@@ -148,7 +233,8 @@ function Menu(props: {
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: the keys light the options in the list
     <div
-      className={`menu${props.search ? " wide" : ""}${props.below ? " below" : ""}`}
+      ref={menu}
+      className={`menu${props.search ? " wide" : ""}${below ? " below" : ""}`}
       onKeyDown={onKeyDown}
     >
       {props.search && (
@@ -169,8 +255,12 @@ function Menu(props: {
       <div
         className="options"
         role="listbox"
+        style={room === undefined ? undefined : { maxHeight: room }}
+        aria-multiselectable={props.chosen ? true : undefined}
         tabIndex={-1}
         ref={list}
+        // A pick leaves the keys where they were: in the search, choosing several.
+        onMouseDown={(e) => field.current && e.preventDefault()}
         // Scrolled, a group's name stuck at the top lies over options: a line shows it does.
         onScroll={(e) => {
           e.currentTarget.toggleAttribute("data-scrolled", e.currentTarget.scrollTop > 0);
@@ -184,7 +274,7 @@ function Menu(props: {
             <div
               role="option"
               tabIndex={-1}
-              aria-selected={o.value === props.value}
+              aria-selected={chosen(o.value)}
               data-lit={o.value === lit || undefined}
               onPointerMove={() => o.value !== lit && setLit(o.value)}
               onClick={() => props.onChoose(o.value)}
@@ -192,7 +282,7 @@ function Menu(props: {
               {o.icon}
               <span className="label">{o.label}</span>
               {o.detail && <span className="detail">{o.detail}</span>}
-              <span className="mark">{o.value === props.value && <Check size={14} />}</span>
+              <span className="mark">{chosen(o.value) && <Check size={14} />}</span>
             </div>
           </Fragment>
         ))}
@@ -234,6 +324,9 @@ export function Bars({ level, of }: { level: number; of: number }) {
     </svg>
   );
 }
+
+/** Between a menu and the window's edge, and its button. */
+const MENU_GAP = 20;
 
 /** What a group's name, stuck at the top of a list, covers of it. */
 const GROUP_HEIGHT = 28;
