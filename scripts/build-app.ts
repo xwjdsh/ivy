@@ -1,4 +1,4 @@
-// Build the menu-bar app: bun run build:app  →  app/build/darwin-arm64/Ivy.app
+// Build the macOS app: bun run build:app  →  app/build/darwin-arm64/Ivy.app
 // It builds the ivy binary, ships it inside the app as bin/ivy (the daemon, and the `ivy`
 // command the app installs), then packages the app with MyGo. `--install` also copies the
 // app to /Applications, replacing an older one (quit it first).

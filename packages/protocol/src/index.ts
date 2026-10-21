@@ -5,7 +5,7 @@
 // prompt's choices. Clients only draw it. Only types are taken from the kernel, so a web
 // client can use this package without bundling the kernel.
 //
-// The menu-bar app (Go, app/events.go) reads part of it too: /health, /events?notify=1 and
+// The macOS app (Go, app/events.go) reads part of it too: /health, /events?notify=1 and
 // the reminder event. Change those here and there together.
 
 import type { PermissionChoice, RequestInfo, StopReason, TokenCounts } from "@ivy/kernel";

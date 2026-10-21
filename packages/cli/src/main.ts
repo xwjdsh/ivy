@@ -23,7 +23,7 @@ const HELP = `Usage: ivy [options] [prompt]
   ivy "question"      Ask once, print the answer and exit
   ivy -c              Continue the most recent session
   ivy -r [id]         Resume a session (pick from a list without an id)
-  ivy daemon          Run Ivy in the background (the menu-bar app starts it)
+  ivy daemon          Run Ivy in the background (the app starts it)
 
 Options:
   -c, --continue      Continue the most recent session

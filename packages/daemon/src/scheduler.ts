@@ -1,6 +1,6 @@
 // The daemon's scheduler: at the start of every minute it asks the plugins which
 // reminders came due since it last asked, and announces each as a `reminder` event (the
-// menu-bar app shows it as a notification). Asking about "since the last check" announces
+// app shows it as a notification). Asking about "since the last check" announces
 // each reminder once, catches up after the Mac slept or the daemon or the app was off, and
 // on the very first run starts from now, so old overdue todos don't all pop up at once. No
 // model is involved.

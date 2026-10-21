@@ -35,7 +35,7 @@ jobs:
       - name: Build binary
         run: bun run build && ./dist/ivy --help
 
-  # The menu-bar app (Go, MyGo). Pure Go, so its code builds and tests here; packaging and
+  # The macOS app (Go, MyGo). Pure Go, so its code builds and tests here; packaging and
   # signing the .app need macOS (bun run build:app).
   app:
     runs-on: ubuntu-latest

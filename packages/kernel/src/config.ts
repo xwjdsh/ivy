@@ -102,7 +102,7 @@ export interface Paths {
   data: string;
   /** Model capabilities: Models API facts and features learned unsupported. */
   modelsCache: string;
-  /** The daemon's socket: local clients (the TUI, the menu-bar app) talk to it here. */
+  /** The daemon's socket: local clients (the TUI, the app) talk to it here. */
   daemonSocket: string;
   /** The daemon's own state (e.g. which reminders it announced), apart from plugin data. */
   daemonState: string;
