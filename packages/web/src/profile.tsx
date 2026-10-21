@@ -12,7 +12,7 @@ import {
   type Tokens,
 } from "@ivy/protocol";
 import { ChevronLeft, ChevronRight, Monitor, Moon, Search, Sun, X } from "lucide-react";
-import { type ReactNode, useEffect, useState } from "react";
+import { type PointerEvent, type ReactNode, useEffect, useState } from "react";
 import { type Appearance, api } from "./api.ts";
 import ivy from "./ivy.png"; // the app's icon (app/resources/icon.png), smaller
 import { Bars, Pick } from "./menu.tsx";
@@ -83,6 +83,7 @@ export function Profile(props: {
   const [sections, setSections] = useState<AboutSection[]>([]);
   // Her card, or the page of conversations opened from it.
   const [page, setPage] = useState<"card" | "conversations">("card");
+  const [width, setWidth] = useState(savedWidth);
   // biome-ignore lint/correctness/useExhaustiveDependencies: `refresh` is the reason to read
   useEffect(() => {
     api.about().then(setSections, onError);
@@ -101,7 +102,8 @@ export function Profile(props: {
     return () => removeEventListener("keydown", onKey, { capture: true });
   }, [page]);
   return (
-    <aside className="pane" aria-label="Ivy">
+    <aside className="pane" aria-label="Ivy" style={{ width }}>
+      <Edge width={width} onResize={setWidth} />
       <div className="pane-top">
         <button type="button" className="icon" title="Close" onClick={props.onClose}>
           <X size={16} />
@@ -253,6 +255,72 @@ function Hidden({ section }: { section: AboutSection }) {
       </button>
       {open && <Items items={section.items} />}
     </section>
+  );
+}
+
+const WIDTH_KEY = "ivy.pane-width";
+const WIDTH = { usual: 300, min: 260, max: 480 };
+/** The conversation keeps at least this much of the window beside her pane. */
+const CONVERSATION_MIN = 400;
+
+/** A width her pane can take in this window. */
+const clampWidth = (w: number) =>
+  Math.round(Math.max(WIDTH.min, Math.min(w, WIDTH.max, window.innerWidth - CONVERSATION_MIN)));
+
+/** The width the pane was given last, remembered here, in this browser. */
+function savedWidth(): number {
+  try {
+    const w = Number(localStorage.getItem(WIDTH_KEY));
+    return w ? clampWidth(w) : WIDTH.usual;
+  } catch {
+    return WIDTH.usual;
+  }
+}
+
+/**
+ * The pane's left edge, dragged to make it wider or narrower; a double click gives it its
+ * usual width back. Not in a narrow window, where the pane lies over the conversation.
+ */
+function Edge({ width, onResize }: { width: number; onResize(width: number): void }) {
+  const save = (w: number) => {
+    try {
+      if (w === WIDTH.usual) localStorage.removeItem(WIDTH_KEY);
+      else localStorage.setItem(WIDTH_KEY, String(w));
+    } catch {}
+  };
+  const start = (e: PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const edge = e.currentTarget;
+    edge.setPointerCapture(e.pointerId);
+    const from = e.clientX;
+    let next = width;
+    document.documentElement.classList.add("resizing");
+    const move = (m: globalThis.PointerEvent) => {
+      next = clampWidth(width + from - m.clientX);
+      onResize(next);
+    };
+    const end = () => {
+      edge.removeEventListener("pointermove", move);
+      edge.removeEventListener("pointerup", end);
+      edge.removeEventListener("pointercancel", end);
+      document.documentElement.classList.remove("resizing");
+      save(next);
+    };
+    edge.addEventListener("pointermove", move);
+    edge.addEventListener("pointerup", end);
+    edge.addEventListener("pointercancel", end);
+  };
+  return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: a pointer affordance; the width has a sensible default
+    <div
+      className="pane-edge"
+      onPointerDown={start}
+      onDoubleClick={() => {
+        onResize(WIDTH.usual);
+        save(WIDTH.usual);
+      }}
+    />
   );
 }
 

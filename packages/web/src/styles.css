@@ -1713,7 +1713,10 @@ main {
 
 /* Her pane, beside the conversation: who she is and what she keeps track of. */
 .pane {
-  width: 300px;
+  position: relative;
+  width: 300px; /* the pane sets its own, once dragged */
+  /* The conversation keeps 400px however narrow the window gets (CONVERSATION_MIN). */
+  max-width: max(260px, calc(100vw - 400px));
   flex: none;
   display: flex;
   flex-direction: column;
@@ -1730,6 +1733,45 @@ main {
 }
 
 /* A narrow window has no room beside the conversation: the pane goes over it. */
+/* Her pane's left edge, to drag it wider or narrower; it shows itself under the pointer. */
+.pane-edge {
+  position: absolute;
+  top: var(--bar);
+  bottom: 0;
+  left: -3px;
+  z-index: 5;
+  width: 7px;
+  cursor: col-resize;
+}
+
+/* The line it lights runs the pane's whole height, the title bar's part too. */
+.pane::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 5;
+  width: 1px;
+  background: transparent;
+  pointer-events: none;
+  transition: background 0.15s;
+}
+
+.pane:has(> .pane-edge:hover)::before,
+.resizing .pane::before {
+  background: var(--accent);
+}
+
+/* While dragging: the same cursor everywhere, and no text selected on the way. */
+.resizing,
+.resizing * {
+  /* biome-ignore lint/complexity/noImportantStyles: over every element's own cursor */
+  cursor: col-resize !important;
+  /* biome-ignore lint/complexity/noImportantStyles: over text that can be selected */
+  user-select: none !important;
+}
+
 @media (max-width: 760px) {
   .pane {
     position: absolute;
@@ -1737,7 +1779,13 @@ main {
     right: 0;
     bottom: 0;
     z-index: 30;
+    /* biome-ignore lint/complexity/noImportantStyles: over the width the pane was dragged to */
+    width: 300px !important;
     box-shadow: var(--menu-shadow);
+  }
+
+  .pane-edge {
+    display: none;
   }
 }
 
