@@ -295,8 +295,9 @@ export function App() {
               </span>
             )}
           </span>
-          {/* Before a conversation starts, she is in the middle of the page instead. */}
-          {chat || card ? (
+          {/* Before a conversation starts, she is in the middle of the page instead; the
+              settings are behind the scenes, without her. */}
+          {(chat || card) && !settings ? (
             <Contact presence={now} open={card} onToggle={() => setCard(!card)} />
           ) : (
             <span />
