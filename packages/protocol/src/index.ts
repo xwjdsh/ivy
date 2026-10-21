@@ -274,6 +274,72 @@ export interface DaemonState {
   tools: number;
 }
 
+/** A provider as the settings page shows it. Never its key: only where one is kept. */
+export interface ProviderInfo {
+  name: string;
+  type: string;
+  base_url: string;
+  /** Unset: Anthropic's own API. */
+  official: boolean;
+  /** Models offered on it; empty: whatever its endpoint lists. */
+  models: string[];
+  /** Where its API key is: config.toml, the Keychain, or nowhere yet. */
+  key: "config" | "keychain" | "none";
+  /** The model in use is one of its: it can't be removed. */
+  inUse: boolean;
+}
+
+/** GET /settings: what the settings page shows, apart from the app's own settings. */
+export interface Settings {
+  providers: ProviderInfo[];
+  /** Whether keys can go to the Keychain here (macOS). */
+  keychain: boolean;
+  permissions: { allow: string[]; ask: string[]; deny: string[] };
+  tools: Array<{ name: string; risk: string; defaultAllow: boolean }>;
+  plugins: Array<{
+    id: string;
+    description: string;
+    enabled: boolean;
+    config: Record<string, unknown>;
+  }>;
+  paths: { home: string; config: string };
+  /** Which code the daemon runs. */
+  code: string;
+}
+
+const ProviderName = z
+  .string()
+  .regex(/^[A-Za-z0-9_-]+$/, "A provider's name is letters, digits, - and _");
+const BaseUrl = z.union([z.url(), z.literal("")]);
+/** POST /providers: add one, its key (if any) to the Keychain. */
+export const AddProvider = z.object({
+  name: ProviderName,
+  type: z.string().default("anthropic"),
+  base_url: BaseUrl.default(""),
+  models: z.array(z.string().min(1)).default([]),
+  key: z.string().default(""),
+});
+/** PUT /providers/:name: change its endpoint or the models offered on it. */
+export const UpdateProvider = z.object({
+  base_url: BaseUrl.optional(),
+  models: z.array(z.string().min(1)).optional(),
+});
+/**
+ * PUT /providers/:name/key: its key, to the Keychain; one in config.toml moves out. Without
+ * a key, the one in config.toml moves to the Keychain as it is.
+ */
+export const SetKey = z.object({ key: z.string().trim().min(1, "The key is empty").optional() });
+/**
+ * POST /provider-test: the models an endpoint lists with a key, nothing saved. Without a
+ * key, the one `name` already has.
+ */
+export const TestProvider = z.object({
+  name: z.string().optional(),
+  type: z.string().default("anthropic"),
+  base_url: BaseUrl.default(""),
+  key: z.string().default(""),
+});
+
 /** GET /commands: what plugins add to the command list (e.g. /journal). */
 export interface CommandInfo {
   name: string;

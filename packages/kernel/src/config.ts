@@ -6,6 +6,9 @@ import { z } from "zod";
 export const EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const;
 const Effort = z.enum(EFFORT_LEVELS);
 
+/** Where a provider without `base_url` is reached: Anthropic's API. */
+export const DEFAULT_BASE_URL = "https://api.anthropic.com";
+
 /** API kinds Ivy can talk to. Adding one also needs a ModelClient (see createModelClient). */
 export const PROVIDER_TYPES = ["anthropic"] as const;
 
@@ -20,7 +23,7 @@ const ProviderSchema = z.strictObject({
     .default("anthropic"),
   /** Required to call the API. Environment variables are intentionally not used. */
   api_key: z.string().optional(),
-  base_url: z.url().default("https://api.anthropic.com"),
+  base_url: z.url().default(DEFAULT_BASE_URL),
   /**
    * Models /model offers on this provider (by id, without the provider prefix). Unset or
    * empty: no limit, /model offers whatever the endpoint lists.

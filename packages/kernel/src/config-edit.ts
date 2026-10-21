@@ -38,6 +38,86 @@ export function saveAllowRule(paths: Paths, tool: string): Config {
   );
 }
 
+/** A provider's name: a bare TOML key, and never a "/" (models are "<provider>/<id>"). */
+export const PROVIDER_NAME = /^[A-Za-z0-9_-]+$/;
+
+export interface ProviderEdit {
+  base_url?: string;
+  /** Models offered on it; empty: whatever its endpoint lists. */
+  models?: string[];
+}
+
+/** Add `[providers.<name>]` at the end of config.toml. */
+export function addProvider(
+  paths: Paths,
+  name: string,
+  provider: { type: string } & ProviderEdit,
+): Config {
+  if (!PROVIDER_NAME.test(name)) {
+    throw new Error("A provider's name is letters, digits, - and _");
+  }
+  return saveEdit(
+    paths,
+    (toml) => {
+      if (tableRange(toml.split("\n"), ["providers", name])) {
+        throw new Error(`There is a provider named ${name} already`);
+      }
+      const entries: string[] = [`type = ${JSON.stringify(provider.type)}`];
+      if (provider.base_url) entries.push(`base_url = ${JSON.stringify(provider.base_url)}`);
+      if (provider.models?.length) entries.push(`models = ${tomlList(provider.models)}`);
+      return withTable(toml, ["providers", name], entries);
+    },
+    (c) => name in c.providers,
+    "the provider",
+  );
+}
+
+/** Change a provider's endpoint or models, each on its own line. */
+export function updateProvider(paths: Paths, name: string, edit: ProviderEdit): Config {
+  const section = ["providers", name];
+  return saveEdit(
+    paths,
+    (toml) => {
+      let next = toml;
+      if (edit.base_url !== undefined) {
+        next = edit.base_url
+          ? withValue(next, section, "base_url", edit.base_url)
+          : withoutKey(next, section, "base_url");
+      }
+      if (edit.models !== undefined) {
+        next = edit.models.length
+          ? withRaw(next, section, "models", tomlList(edit.models))
+          : withoutKey(next, section, "models");
+      }
+      return next;
+    },
+    (c) => name in c.providers,
+    "the provider",
+  );
+}
+
+/** Remove `[providers.<name>]`: its header and its lines, nothing else. */
+export function removeProvider(paths: Paths, name: string): Config {
+  return saveEdit(
+    paths,
+    (toml) => withoutTable(toml, ["providers", name]),
+    (c) => !(name in c.providers),
+    "the provider",
+  );
+}
+
+/** Remove a provider's `api_key` line, once its key has moved to the Keychain. */
+export function removeApiKey(paths: Paths, name: string): Config {
+  return saveEdit(
+    paths,
+    (toml) => withoutKey(toml, ["providers", name], "api_key"),
+    (c) => c.providers[name]?.api_key === undefined,
+    "the provider",
+  );
+}
+
+const tomlList = (values: string[]) => `[${values.map((v) => JSON.stringify(v)).join(", ")}]`;
+
 function saveEdit(
   paths: Paths,
   edit: (toml: string) => string,
@@ -91,6 +171,82 @@ export function withValue(
   }
   lines.splice(header + 1, 0, rendered);
   return lines.join("\n");
+}
+
+/**
+ * Lines `[start, end)` of the table at `section`: its header and every line up to the next
+ * header. The blank lines and comments just above the next header belong to that one, so
+ * removing a table leaves the next table's comment where it was.
+ */
+function tableRange(lines: string[], section: string[]): { start: number; end: number } | null {
+  const start = lines.findIndex((line) => sameTable(headerPath(line), section));
+  if (start === -1) return null;
+  let end = lines.findIndex((line, i) => i > start && headerPath(line) !== null);
+  if (end === -1) end = lines.length;
+  while (end > start + 1 && /^\s*(#.*)?$/.test(lines[end - 1] ?? "")) end--;
+  return { start, end };
+}
+
+/** Pure text edit: append the table `[section]` with `entries`, one per line. */
+export function withTable(toml: string, section: string[], entries: string[]): string {
+  const body = toml.endsWith("\n") || toml === "" ? toml : `${toml}\n`;
+  return `${body}${body.trim() ? "\n" : ""}[${section.join(".")}]\n${entries.join("\n")}\n`;
+}
+
+/**
+ * Pure text edit: remove the table `[section]` with the comment just above its header, and
+ * the blank line that set it apart.
+ */
+export function withoutTable(toml: string, section: string[]): string {
+  const lines = toml.split("\n");
+  const range = tableRange(lines, section);
+  if (!range) throw new Error(`No [${section.join(".")}] section in config.toml`);
+  let { start } = range;
+  while (start > 0 && /^\s*#/.test(lines[start - 1] ?? "")) start--;
+  if (start > 0 && (lines[start - 1] ?? "").trim() === "") start--;
+  lines.splice(start, range.end - start);
+  return lines.join("\n");
+}
+
+/** Pure text edit: remove `key` from `[section]`, a list over several lines included. */
+export function withoutKey(toml: string, section: string[], key: string): string {
+  const lines = toml.split("\n");
+  const range = tableRange(lines, section);
+  if (!range) throw new Error(`No [${section.join(".")}] section in config.toml`);
+  const at = keyLineIn(lines, range, key);
+  if (at === -1) return toml;
+  lines.splice(at, valueEnd(lines, at) - at + 1);
+  return lines.join("\n");
+}
+
+/**
+ * Pure text edit: set `key` in `[section]` to `value`, already TOML (a list), replacing its
+ * line or lines; a missing key goes right after the header.
+ */
+export function withRaw(toml: string, section: string[], key: string, value: string): string {
+  const lines = toml.split("\n");
+  const range = tableRange(lines, section);
+  if (!range) throw new Error(`No [${section.join(".")}] section in config.toml`);
+  const rendered = `${key} = ${value}`;
+  const at = keyLineIn(lines, range, key);
+  if (at === -1) lines.splice(range.start + 1, 0, rendered);
+  else lines.splice(at, valueEnd(lines, at) - at + 1, rendered);
+  return lines.join("\n");
+}
+
+function keyLineIn(lines: string[], range: { start: number; end: number }, key: string): number {
+  const keyLine = new RegExp(`^\\s*${key}\\s*=`);
+  for (let i = range.start + 1; i < range.end; i++) {
+    if (keyLine.test(lines[i] ?? "")) return i;
+  }
+  return -1;
+}
+
+/** The last line of the value that starts on line `at`: a list may close lines later. */
+function valueEnd(lines: string[], at: number): number {
+  const code = codeOf(lines[at] as string);
+  if (!/=\s*\[/.test(code)) return at;
+  return closingBracket(lines, at)?.line ?? at;
 }
 
 /** `[a.b]`, `[ a . "b.c" ]` → ["a", "b.c"]; null for lines that aren't table headers. */

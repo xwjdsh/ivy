@@ -57,6 +57,8 @@ export class PluginHost {
   private readonly commandMap = new Map<string, RegisteredCommand>();
   /** Plugins turned off with `[plugins.<id>] enabled = false`. */
   readonly disabled: string[] = [];
+  /** Every plugin offered, turned off or not, by id. */
+  private readonly offered = new Map<string, IvyPlugin>();
 
   constructor(
     private readonly dataRoot: string,
@@ -72,6 +74,7 @@ export class PluginHost {
     }
     if (this.plugins.has(plugin.id)) throw new Error(`Duplicate plugin "${plugin.id}"`);
 
+    this.offered.set(plugin.id, plugin);
     const { enabled = true, ...settings } = this.configs[plugin.id] ?? {};
     if (typeof enabled !== "boolean") {
       throw new Error(`Invalid [plugins.${plugin.id}]: enabled must be true or false`);
@@ -121,6 +124,26 @@ export class PluginHost {
 
   async teardown(): Promise<void> {
     for (const plugin of this.plugins.values()) await plugin.teardown?.();
+  }
+
+  /** Every plugin offered, turned off ones too, with its settings from config.toml, by id. */
+  catalog(): Array<{
+    id: string;
+    description: string;
+    enabled: boolean;
+    config: Record<string, unknown>;
+  }> {
+    return [...this.offered.values()]
+      .sort((a, b) => a.id.localeCompare(b.id))
+      .map((p) => {
+        const { enabled: _, ...config } = this.configs[p.id] ?? {};
+        return {
+          id: p.id,
+          description: p.description,
+          enabled: !this.disabled.includes(p.id),
+          config,
+        };
+      });
   }
 
   /** Enabled plugins, sorted by id: a deterministic order keeps prompts byte-stable. */

@@ -3,6 +3,7 @@ import {
   createIvy,
   createLogger,
   type Ivy,
+  type KeyStore,
   type ModelClient,
   type Paths,
   setLogLevel,
@@ -26,6 +27,8 @@ export interface ServeOptions {
   plugins: IvyPlugin[];
   /** One client for every provider, instead of real ones (tests). */
   model?: ModelClient;
+  /** Where API keys are kept; the Keychain on macOS by default. */
+  keys?: KeyStore;
   permissionTimeoutMs?: number;
   /** The clock for sessions going idle (tests). */
   now?: () => number;
@@ -43,7 +46,12 @@ export interface Served {
 
 /** Load Ivy with its plugins and serve its sessions on the socket (no scheduler). */
 export async function serve(opts: ServeOptions): Promise<Served> {
-  const ivy = await createIvy({ plugins: opts.plugins, paths: opts.paths, model: opts.model });
+  const ivy = await createIvy({
+    plugins: opts.plugins,
+    paths: opts.paths,
+    model: opts.model,
+    keys: opts.keys,
+  });
   let daemon: Daemon | undefined;
   const live = new Sessions({
     ivy,

@@ -1,19 +1,25 @@
 // The daemon's requests besides /health and /events: sessions, prompts, permission answers,
-// the model and effort. Bodies are JSON, checked against @ivy/protocol; a refusal is
+// the model and effort, and what the settings page shows and changes (DESIGN.md §5.7). Bodies are JSON, checked against @ivy/protocol; a refusal is
 // `{ error }` with a status that says what kind.
 
 import {
+  addProvider,
   canSwitchModel,
   createLogger,
   EFFORT_LEVELS,
   type Effort,
   errorMessage,
   type Ivy,
+  isOfficialAnthropicApi,
+  removeApiKey,
+  removeProvider,
   saveEffort,
   saveModel,
+  updateProvider,
 } from "@ivy/kernel";
 import type { Logger } from "@ivy/plugin-api";
 import {
+  AddProvider,
   AnswerPermission,
   type CommandInfo,
   type CommandResult,
@@ -25,13 +31,18 @@ import {
   RunCommand,
   SendPrompt,
   SetEffort,
+  SetKey,
   SetModel,
+  type Settings,
   type Switched,
+  TestProvider,
+  UpdateProvider,
 } from "@ivy/protocol";
 import type { z } from "zod";
 import { statusReport, usageReport } from "./reports.ts";
 import type { Routes } from "./server.ts";
 import { SessionNotFoundError, type Sessions } from "./sessions.ts";
+import { codeVersion } from "./version.ts";
 
 class HttpError extends Error {
   constructor(
@@ -79,6 +90,43 @@ export function api(ivy: Ivy, sessions: Sessions): Routes {
       return { ...state(), saved: false, error: errorMessage(err) };
     }
   };
+
+  const settings = (): Settings => {
+    const inUse = ivy.agent.modelRef.provider.name;
+    return {
+      providers: Object.values(ivy.config.providers)
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map((p) => ({
+          name: p.name,
+          type: p.type,
+          base_url: p.base_url,
+          official: isOfficialAnthropicApi(p.base_url),
+          models: p.models,
+          key: ivy.keySource(p.name),
+          inUse: p.name === inUse,
+        })),
+      keychain: ivy.keys.available,
+      permissions: ivy.config.permissions,
+      tools: ivy.plugins.toolList(),
+      plugins: ivy.plugins.catalog(),
+      paths: { home: ivy.paths.home, config: ivy.paths.config },
+      code: codeVersion(),
+    };
+  };
+
+  /** Change the providers in config.toml, then use them as they are now. */
+  const changeProviders = (change: () => void): Response => {
+    try {
+      change();
+    } catch (err) {
+      return fail(400, errorMessage(err));
+    }
+    ivy.reloadProviders();
+    return Response.json(settings());
+  };
+
+  const provider = (name: string) =>
+    ivy.config.providers[name] ?? fail(404, `No provider named ${name}`);
 
   /** Run a plugin command, keeping what it logs for the client's verbose view. */
   const runCommand = async (sessionId: string, name: string, args: string) => {
@@ -145,6 +193,72 @@ export function api(ivy: Ivy, sessions: Sessions): Routes {
         }
         ivy.capabilities.setEffort(effort as Effort);
         return Response.json(switched(() => saveEffort(ivy.paths, effort as Effort)));
+      }
+      case "GET /settings":
+        return Response.json(settings());
+      case "POST /providers": {
+        const p = await body(req, AddProvider);
+        if (p.key && !ivy.keys.available) {
+          return fail(400, "No Keychain here: put api_key in config.toml instead");
+        }
+        return changeProviders(() => {
+          addProvider(ivy.paths, p.name, {
+            type: p.type,
+            ...(p.base_url && { base_url: p.base_url }),
+            models: p.models,
+          });
+          if (p.key) ivy.keys.set(p.name, p.key);
+        });
+      }
+      case "PUT /providers/:": {
+        provider(id);
+        const edit = await body(req, UpdateProvider);
+        return changeProviders(() => updateProvider(ivy.paths, id, edit));
+      }
+      case "DELETE /providers/:": {
+        provider(id);
+        if (ivy.agent.modelRef.provider.name === id) {
+          return fail(409, `The model in use is one of ${id}'s: switch models first`);
+        }
+        return changeProviders(() => {
+          removeProvider(ivy.paths, id);
+          if (ivy.keys.available) ivy.keys.remove(id);
+        });
+      }
+      case "PUT /providers/:/key": {
+        provider(id);
+        const given = (await body(req, SetKey)).key;
+        if (!ivy.keys.available) return fail(400, "No Keychain here: put api_key in config.toml");
+        const key = given ?? provider(id).api_key ?? fail(400, `${id} has no key to move`);
+        return changeProviders(() => {
+          ivy.keys.set(id, key);
+          // One in config.toml would win over the Keychain's: it moves out.
+          if (ivy.keySource(id) === "config") removeApiKey(ivy.paths, id);
+        });
+      }
+      case "DELETE /providers/:/key": {
+        provider(id);
+        if (ivy.agent.modelRef.provider.name === id) {
+          return fail(409, `The model in use needs ${id}'s key: switch models first`);
+        }
+        return changeProviders(() => {
+          if (ivy.keys.available) ivy.keys.remove(id);
+        });
+      }
+      case "POST /provider-test": {
+        const t = await body(req, TestProvider);
+        const known = t.name ? ivy.config.providers[t.name] : undefined;
+        const key =
+          t.key ||
+          known?.api_key ||
+          (t.name && ivy.keys.available ? ivy.keys.get(t.name) : undefined) ||
+          fail(400, "An API key is needed to reach the endpoint");
+        try {
+          const models = await ivy.listModelsAt({ type: t.type, base_url: t.base_url, key });
+          return Response.json({ models });
+        } catch (err) {
+          return fail(400, `Couldn't list the models: ${errorMessage(err)}`);
+        }
       }
       case "GET /commands": {
         const commands: CommandInfo[] = ivy.plugins.commands().map(({ def }) => ({

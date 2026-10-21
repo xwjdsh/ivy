@@ -3,7 +3,20 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resolvePaths } from "./config.ts";
-import { saveAllowRule, saveEffort, saveModel, withListItem, withValue } from "./config-edit.ts";
+import {
+  addProvider,
+  removeApiKey,
+  removeProvider,
+  saveAllowRule,
+  saveEffort,
+  saveModel,
+  updateProvider,
+  withListItem,
+  withoutKey,
+  withoutTable,
+  withRaw,
+  withValue,
+} from "./config-edit.ts";
 
 const CONFIG = `# my notes
 [agent]
@@ -151,4 +164,80 @@ test("saveAllowRule writes, validates and keeps the rest of the file", () => {
     '  "core__*", # time\n  "memory__delete",\n]',
   );
   expect(readFileSync(paths.config, "utf8")).toStartWith("# my notes\n");
+});
+
+const PROVIDERS = `[agent]
+model = "anthropic/claude-opus-5-5"
+
+# the official API
+[providers.anthropic]
+api_key = "sk-1"   # moved soon
+
+# a local proxy
+[providers.proxy]
+base_url = "http://127.0.0.1:8080"
+models = [
+  "a",   # the fast one
+  "b",
+]
+
+# how hard it thinks
+[generation]
+effort = "medium"
+`;
+
+test("a table goes, its lines only: the next one keeps its comment", () => {
+  const out = withoutTable(PROVIDERS, ["providers", "proxy"]);
+  expect(out).not.toContain("proxy");
+  expect(out).not.toContain('"a"');
+  expect(out).toContain('api_key = "sk-1"   # moved soon\n\n# how hard it thinks\n[generation]');
+  expect(() => withoutTable(PROVIDERS, ["providers", "none"])).toThrow("No [providers.none]");
+});
+
+test("a key goes, a list over several lines included; a missing one changes nothing", () => {
+  const out = withoutKey(PROVIDERS, ["providers", "proxy"], "models");
+  expect(out).toContain('base_url = "http://127.0.0.1:8080"\n\n# how hard it thinks');
+  expect(out).not.toContain("the fast one");
+  expect(withoutKey(PROVIDERS, ["providers", "proxy"], "api_key")).toBe(PROVIDERS);
+});
+
+test("a list is replaced whole, or added after the header", () => {
+  const out = withRaw(PROVIDERS, ["providers", "proxy"], "models", '["c"]');
+  expect(out).toContain('base_url = "http://127.0.0.1:8080"\nmodels = ["c"]\n\n# how hard');
+  const added = withRaw(PROVIDERS, ["providers", "anthropic"], "models", '["m"]');
+  expect(added).toContain('[providers.anthropic]\nmodels = ["m"]\napi_key');
+});
+
+test("providers are added, changed and removed in place, the rest of the file untouched", () => {
+  const paths = tempPaths();
+  writeFileSync(paths.config, PROVIDERS);
+  const added = addProvider(paths, "kimi", { type: "anthropic", base_url: "https://k.example/v1" });
+  expect(added.providers.kimi?.base_url).toBe("https://k.example/v1");
+  expect(readFileSync(paths.config, "utf8")).toStartWith(PROVIDERS);
+  expect(readFileSync(paths.config, "utf8")).toEndWith(
+    '\n[providers.kimi]\ntype = "anthropic"\nbase_url = "https://k.example/v1"\n',
+  );
+  expect(() => addProvider(paths, "kimi", { type: "anthropic" })).toThrow("named kimi already");
+  expect(() => addProvider(paths, "a/b", { type: "anthropic" })).toThrow("letters, digits");
+
+  const changed = updateProvider(paths, "proxy", { base_url: "http://127.0.0.1:9090", models: [] });
+  expect(changed.providers.proxy?.base_url).toBe("http://127.0.0.1:9090");
+  expect(changed.providers.proxy?.models).toEqual([]);
+  expect(readFileSync(paths.config, "utf8")).toContain("# a local proxy\n[providers.proxy]");
+
+  expect(removeApiKey(paths, "anthropic").providers.anthropic?.api_key).toBeUndefined();
+  expect(readFileSync(paths.config, "utf8")).toContain(
+    "# the official API\n[providers.anthropic]\n",
+  );
+
+  const removed = removeProvider(paths, "kimi");
+  expect(removed.providers.kimi).toBeUndefined();
+  expect(readFileSync(paths.config, "utf8")).toEndWith('effort = "medium"\n');
+});
+
+test("removing the provider of the model in use is refused, the file left as it was", () => {
+  const paths = tempPaths();
+  writeFileSync(paths.config, PROVIDERS);
+  expect(() => removeProvider(paths, "anthropic")).toThrow("Could not save the provider");
+  expect(readFileSync(paths.config, "utf8")).toBe(PROVIDERS);
 });

@@ -1,8 +1,8 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { resolvePaths } from "@ivy/kernel";
+import { MemoryKeyStore, resolvePaths } from "@ivy/kernel";
 import { ScriptedModel, type Step, text, toolUse } from "@ivy/kernel/testing";
 import { definePlugin, defineTool } from "@ivy/plugin-api";
 import type { SessionEvent, SessionSummary, SessionView } from "@ivy/protocol";
@@ -39,19 +39,22 @@ afterEach(async () => {
   for (const r of running.splice(0)) await r.stop();
 });
 
-async function start(script: Step[], permissionTimeoutMs?: number) {
+async function start(script: Step[], permissionTimeoutMs?: number, listed?: string[]) {
   const home = mkdtempSync(join(tmpdir(), "ivy-s-"));
   writeFileSync(
     join(home, "config.toml"),
     '[agent]\nmodel = "anthropic/claude-opus-5-5"\n[providers.anthropic]\napi_key = "test"\nmodels = ["claude-opus-5-5"]\n',
   );
   const paths = resolvePaths(home);
-  const model = new ScriptedModel(script);
+  const model = new ScriptedModel(script, listed);
+  // Never the real Keychain.
+  const keys = new MemoryKeyStore();
   const clock = { now: Date.now() };
   const served = await serve({
     paths,
     plugins: [tools],
     model,
+    keys,
     permissionTimeoutMs,
     now: () => clock.now,
   });
@@ -67,7 +70,7 @@ async function start(script: Step[], permissionTimeoutMs?: number) {
     const text = await res.text();
     return { status: res.status, body: text ? JSON.parse(text) : undefined };
   };
-  return { call, socket: paths.daemonSocket, sessions, model, clock };
+  return { call, socket: paths.daemonSocket, sessions, model, clock, keys, paths };
 }
 
 /** A client of /events: collects session events, and waits for one that matches. */
@@ -351,4 +354,52 @@ test("a session can be deleted, but not while Ivy replies in it", async () => {
   expect((await call("GET", `/sessions/${empty.id}`)).status).toBe(404);
   slow.open();
   await client.close();
+});
+
+test("settings: providers added, keyed, changed and removed; keys never shown", async () => {
+  const { call, keys, paths } = await start([], undefined, ["m1", "m2"]);
+  const settings = await call("GET", "/settings");
+  expect(settings.status).toBe(200);
+  expect(settings.body.providers).toEqual([
+    expect.objectContaining({ name: "anthropic", key: "config", inUse: true, official: true }),
+  ]);
+  expect(JSON.stringify(settings.body)).not.toContain('"test"'); // the key itself
+
+  // A connection test lists the endpoint's models, nothing saved.
+  const tested = await call("POST", "/provider-test", { base_url: "http://127.0.0.1:9", key: "k" });
+  expect(tested).toEqual({ status: 200, body: { models: ["m1", "m2"] } });
+  expect(await call("POST", "/provider-test", {})).toMatchObject({ status: 400 });
+
+  const added = await call("POST", "/providers", {
+    name: "proxy",
+    base_url: "http://127.0.0.1:9",
+    key: "sk-proxy",
+  });
+  expect(added.status).toBe(200);
+  expect(keys.get("proxy")).toBe("sk-proxy");
+  expect(added.body.providers[1]).toMatchObject({ name: "proxy", key: "keychain", inUse: false });
+  expect(readFileSync(paths.config, "utf8")).not.toContain("sk-proxy");
+  // Its models are offered at once.
+  expect((await call("GET", "/models")).body.models).toContain("proxy/m1");
+
+  const changed = await call("PUT", "/providers/proxy", { models: ["m2"] });
+  expect(changed.body.providers[1].models).toEqual(["m2"]);
+
+  // A key in config.toml moves to the Keychain as it is, out of the file.
+  const moved = await call("PUT", "/providers/anthropic/key", {});
+  expect(moved.body.providers[0].key).toBe("keychain");
+  expect(keys.get("anthropic")).toBe("test");
+  expect(readFileSync(paths.config, "utf8")).not.toContain('api_key = "test"');
+  expect(await call("PUT", "/providers/anthropic/key", {})).toMatchObject({ status: 400 });
+  // A new one replaces it.
+  await call("PUT", "/providers/anthropic/key", { key: "sk-new" });
+  expect(keys.get("anthropic")).toBe("sk-new");
+
+  // The provider of the model in use stays.
+  expect(await call("DELETE", "/providers/anthropic")).toMatchObject({ status: 409 });
+  expect(await call("DELETE", "/providers/anthropic/key")).toMatchObject({ status: 409 });
+  const removed = await call("DELETE", "/providers/proxy");
+  expect(removed.body.providers.map((p: { name: string }) => p.name)).toEqual(["anthropic"]);
+  expect(keys.get("proxy")).toBeUndefined();
+  expect(await call("PUT", "/providers/nope", {})).toMatchObject({ status: 404 });
 });
