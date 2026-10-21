@@ -187,6 +187,13 @@ function Models(props: {
   );
 }
 
+/** The protocols a provider can speak (DESIGN.md §5.2.1), and where each vendor's own API is. */
+const PROTOCOLS: Record<string, { name: string; vendor: string; url: string }> = {
+  anthropic: { name: "Anthropic", vendor: "Anthropic API", url: "https://api.anthropic.com" },
+  openai: { name: "OpenAI", vendor: "OpenAI API", url: "https://api.openai.com/v1" },
+};
+const protocolOf = (type: string) => PROTOCOLS[type] ?? { name: type, vendor: type, url: "" };
+
 const KEY_TEXT: Record<ProviderInfo["key"], string> = {
   keychain: "Key in the Keychain",
   config: "Key in config.toml",
@@ -227,13 +234,14 @@ function Provider(props: {
       <div className="st-head">
         <span className="st-name">{p.name}</span>
         {p.inUse && <span className="st-badge">In use</span>}
-        <span className="st-where">{p.official ? "Anthropic API" : p.base_url}</span>
+        <span className="st-where">{p.official ? protocolOf(p.type).vendor : p.base_url}</span>
       </div>
       <div className="st-info">
         <span className={`st-key st-key-${p.key}`}>
           <KeyRound size={12} />
           {KEY_TEXT[p.key]}
         </span>
+        <span>{protocolOf(p.type).name} protocol</span>
         <span>{p.models.length ? p.models.join(", ") : "Every model the endpoint lists"}</span>
       </div>
 
@@ -243,7 +251,7 @@ function Provider(props: {
             Endpoint
             <input
               value={baseUrl}
-              placeholder="https://api.anthropic.com"
+              placeholder={protocolOf(p.type).url}
               onChange={(e) => setBaseUrl(e.target.value)}
             />
           </label>
@@ -305,7 +313,11 @@ function Provider(props: {
                 run(
                   async () => {
                     // Only a key that reaches the endpoint is kept.
-                    await api.testProvider({ base_url: p.official ? "" : p.base_url, key });
+                    await api.testProvider({
+                      type: p.type,
+                      base_url: p.official ? "" : p.base_url,
+                      key,
+                    });
                     return api.setKey(p.name, key);
                   },
                   () => {
@@ -374,6 +386,7 @@ function AddProvider(props: {
   onCancel(): void;
 }) {
   const [name, setName] = useState("");
+  const [type, setType] = useState("anthropic");
   const [baseUrl, setBaseUrl] = useState("");
   const [key, setKey] = useState("");
   const [busy, setBusy] = useState(false);
@@ -384,8 +397,10 @@ function AddProvider(props: {
     setProblem(undefined);
     try {
       // Only an endpoint that answers with this key is kept.
-      await api.testProvider({ base_url: baseUrl.trim(), key });
-      props.onAdded(await api.addProvider({ name: name.trim(), base_url: baseUrl.trim(), key }));
+      await api.testProvider({ type, base_url: baseUrl.trim(), key });
+      props.onAdded(
+        await api.addProvider({ name: name.trim(), type, base_url: baseUrl.trim(), key }),
+      );
     } catch (err) {
       setProblem(err instanceof Error ? err.message : String(err));
     } finally {
@@ -406,11 +421,26 @@ function AddProvider(props: {
             onChange={(e) => setName(e.target.value)}
           />
         </label>
+        <div className="st-protocol">
+          Protocol
+          <div className="segments">
+            {Object.entries(PROTOCOLS).map(([value, p]) => (
+              <button
+                key={value}
+                type="button"
+                aria-pressed={type === value}
+                onClick={() => setType(value)}
+              >
+                {p.name}
+              </button>
+            ))}
+          </div>
+        </div>
         <label>
           Endpoint
           <input
             value={baseUrl}
-            placeholder="https://api.anthropic.com"
+            placeholder={protocolOf(type).url}
             onChange={(e) => setBaseUrl(e.target.value)}
           />
         </label>
@@ -426,8 +456,8 @@ function AddProvider(props: {
           />
         </label>
         <p className="st-hint">
-          It speaks the Anthropic Messages API. Ivy lists the endpoint's models with this key before
-          anything is saved.
+          Anthropic for the Messages API, OpenAI for Chat Completions, which most other endpoints
+          speak. Ivy lists the endpoint's models with this key before anything is saved.
         </p>
         <div className="st-actions">
           <button type="button" className="ghost" onClick={props.onCancel}>

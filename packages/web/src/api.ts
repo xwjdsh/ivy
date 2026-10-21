@@ -49,7 +49,7 @@ export const api = {
   /** The session's file goes to the trash folder (DESIGN.md §5.7). */
   deleteSession: (id: string) => request<void>("DELETE", `/sessions/${id}`),
   settings: () => request<Settings>("GET", "/settings"),
-  addProvider: (p: { name: string; base_url: string; key: string }) =>
+  addProvider: (p: { name: string; type: string; base_url: string; key: string }) =>
     request<Settings>("POST", "/providers", p),
   updateProvider: (name: string, edit: { base_url?: string; models?: string[] }) =>
     request<Settings>("PUT", `/providers/${encodeURIComponent(name)}`, edit),
@@ -61,7 +61,7 @@ export const api = {
   removeKey: (name: string) =>
     request<Settings>("DELETE", `/providers/${encodeURIComponent(name)}/key`),
   /** The models an endpoint lists with a key (or `name`'s own), nothing saved. */
-  testProvider: (t: { name?: string; base_url: string; key: string }) =>
+  testProvider: (t: { name?: string; type: string; base_url: string; key: string }) =>
     request<{ models: string[] }>("POST", "/provider-test", t),
   // The app's own settings, answered by the app (app/settings.go), not the daemon.
   login: async () => (await request<{ enabled: boolean }>("GET", "/app/login")).enabled,
