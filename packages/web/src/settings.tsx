@@ -19,7 +19,8 @@ export function SettingsPage(props: {
   onError(err: unknown): void;
 }) {
   const { onError } = props;
-  const [section, setSection] = useState<Section>("General");
+  // Without a model (a new install), the one thing to do is there.
+  const [section, setSection] = useState<Section>(props.state?.model === "" ? "Models" : "General");
   const [settings, setSettings] = useState<Settings | undefined>();
   useEffect(() => {
     api.settings().then(setSettings, onError);

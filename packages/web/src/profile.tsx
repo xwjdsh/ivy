@@ -156,7 +156,10 @@ export function ModelSettings(props: {
   useEffect(() => {
     if (state.canSwitchModel) api.models().then((m) => setModels(m.models), onError);
   }, [state.canSwitchModel, onError]);
-  const choices = models?.includes(state.model) ? models : [state.model, ...(models ?? [])];
+  const choices =
+    !state.model || models?.includes(state.model)
+      ? (models ?? [])
+      : [state.model, ...(models ?? [])];
   const groups = sources(choices);
   const efforts = state.efforts;
   return (
@@ -167,6 +170,7 @@ export function ModelSettings(props: {
           className="model"
           below
           value={state.model}
+          shown={state.model ? undefined : <span className="text">Choose a model</span>}
           title="The model, for every session"
           disabled={!state.canSwitchModel}
           search="Search models"

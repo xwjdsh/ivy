@@ -1677,6 +1677,29 @@ main {
 
 /* Errors */
 
+/* A new install: what Ivy needs before anything can be said. */
+.setup-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 8px 8px 14px;
+  border-radius: 14px;
+  background: var(--accent-soft);
+  color: var(--text);
+  font-size: 13.5px;
+}
+
+.setup-banner span {
+  flex: 1;
+}
+
+.setup-banner button {
+  flex: none;
+  height: 30px;
+  padding: 0 12px;
+  font-size: 13px;
+}
+
 .error-banner {
   display: flex;
   align-items: center;

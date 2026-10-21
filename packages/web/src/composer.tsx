@@ -105,6 +105,8 @@ export function Composer(props: {
   busy: boolean;
   /** Writing to a past conversation, to carry it on. */
   replying: boolean;
+  /** No model chosen yet (a new install): nothing can be sent until one is. */
+  noModel: boolean;
   onSend(text: string, images: string[]): Promise<void>;
   onStop(): void;
 }) {
@@ -176,7 +178,8 @@ export function Composer(props: {
   // One that can't go holds the message until it is removed: it never goes without it unseen.
   const problem = attached.find((a) => a.problem)?.problem;
   const images = attached.flatMap((a) => (a.name ? [a.name] : []));
-  const ready = !uploading && !problem && (text.trim() !== "" || images.length > 0);
+  const ready =
+    !props.noModel && !uploading && !problem && (text.trim() !== "" || images.length > 0);
   const submit = () => {
     if (!ready) return;
     const message = text.trim();
@@ -226,11 +229,13 @@ export function Composer(props: {
         rows={1}
         value={text}
         placeholder={
-          props.busy
-            ? "Ivy is replying; a message now is sent next"
-            : props.replying
-              ? "Reply in this conversation"
-              : "Talk to Ivy"
+          props.noModel
+            ? "Choose a model in Settings to start"
+            : props.busy
+              ? "Ivy is replying; a message now is sent next"
+              : props.replying
+                ? "Reply in this conversation"
+                : "Talk to Ivy"
         }
         onChange={(e) => setText(e.target.value)}
         onPaste={(e) => {

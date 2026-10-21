@@ -259,6 +259,7 @@ export function App() {
     <Composer
       busy={target?.running !== undefined}
       replying={reading !== undefined}
+      noModel={state?.model === ""}
       onSend={send}
       onStop={() => target && api.interrupt(target.id).catch(failed)}
     />
@@ -270,6 +271,15 @@ export function App() {
       <span>{error}</span>
       <button type="button" className="icon" title="Dismiss" onClick={() => setError(undefined)}>
         <X size={14} />
+      </button>
+    </div>
+  );
+  // A new install: no model until a provider is added and one chosen.
+  const setup = state?.model === "" && !settings && (
+    <div className="setup-banner fresh">
+      <span>Ivy needs a model to talk with you: add a provider and choose one.</span>
+      <button type="button" className="primary" onClick={() => openSettings(true)}>
+        Open Settings
       </button>
     </div>
   );
@@ -387,6 +397,7 @@ export function App() {
           }
         />
         <div className="dock">
+          {setup}
           {errorBanner}
           {chat?.permission && (
             <Permission
