@@ -30,7 +30,7 @@ export { type PromptPart, SystemPrompt } from "./context.ts";
 export * from "./images.ts";
 export * from "./keychain.ts";
 
-import { errorMessage } from "./log.ts";
+import { createLogger, errorMessage } from "./log.ts";
 
 export { createLogger, errorMessage, type LogLevel, setLogLevel, setLogSink } from "./log.ts";
 export * from "./model.ts";
@@ -116,8 +116,15 @@ export async function createIvy(opts: IvyOptions): Promise<Ivy> {
     }
     return client;
   };
-  // A missing API key fails at startup, not on the first turn.
-  if (config.model) clientFor(config.model.provider);
+  // A missing API key is said now, but doesn't stop Ivy: the settings are where it is set,
+  // and they need Ivy running. A turn says it again.
+  if (config.model) {
+    try {
+      clientFor(config.model.provider);
+    } catch (err) {
+      createLogger("ivy").warn(errorMessage(err));
+    }
+  }
 
   const permissions = new Permissions(
     config.permissions,

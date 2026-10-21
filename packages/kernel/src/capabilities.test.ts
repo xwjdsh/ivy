@@ -152,7 +152,7 @@ test("explain says why each feature is on or off", () => {
   const c = caps();
   c.markUnsupported(on("claude-opus-5-5"), "systemMessages");
   const lines = c.explain(on("claude-opus-5-5")).join("\n");
-  expect(lines).toContain("official Anthropic API");
+  expect(lines).toContain("(Messages API, the vendor's own)");
   expect(lines).toContain("refusal fallback: on");
   expect(lines).toContain(
     "system messages for context: off: rejected by this endpoint earlier (learned)",
@@ -160,6 +160,18 @@ test("explain says why each feature is on or off", () => {
   expect(caps().explain(on("vendor/x", proxy)).join("\n")).toContain(
     "refusal fallback: off: compatible endpoint",
   );
+});
+
+test("Chat Completions: effort at most high, and its own features explained", () => {
+  const openai = { type: "openai", base_url: "https://api.openai.com/v1", refusal_fallback: true };
+  const c = new Capabilities(tempFile(), "max");
+  expect(c.for(on("gpt-6", openai)).effort).toBe("high");
+  expect(new Capabilities(tempFile(), "low").for(on("gpt-6", openai)).effort).toBe("low");
+  const lines = c.explain(on("gpt-6", openai)).join("\n");
+  expect(lines).toContain("(Chat Completions, the vendor's own)");
+  expect(lines).toContain("Chat Completions takes up to high");
+  expect(lines).toContain("prompt cache key: on");
+  expect(lines).not.toContain("refusal fallback");
 });
 
 test("a broken cache file (null, an array) is ignored, not fatal", () => {

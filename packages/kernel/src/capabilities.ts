@@ -3,7 +3,7 @@ import { dirname } from "node:path";
 import type Anthropic from "@anthropic-ai/sdk";
 import { EFFORT_LEVELS, type Effort } from "./config.ts";
 import { createLogger } from "./log.ts";
-import { isOfficialAnthropicApi } from "./model.ts";
+import { isOfficialAnthropicApi, isOfficialApi } from "./model.ts";
 
 /**
  * What a model supports on its provider's endpoint, resolved from three sources:
@@ -68,6 +68,8 @@ export interface ModelLister {
 
 /** The provider settings capabilities depend on (a ProviderConfig has them). */
 export interface Endpoint {
+  /** The protocol (config.ts PROVIDER_TYPES). */
+  type?: string;
   base_url: string;
   refusal_fallback: boolean;
 }
@@ -121,6 +123,10 @@ export class Capabilities {
       effort = undefined;
     } else if (facts?.effortLevels?.length) {
       effort = nearestLevel(this.configuredEffort, facts.effortLevels);
+    } else if (provider.type === "openai") {
+      // reasoning_effort takes these three everywhere; a higher one would be refused, and
+      // effort learned off for the model altogether.
+      effort = nearestLevel(this.configuredEffort, ["low", "medium", "high"]);
     }
 
     return {
@@ -150,7 +156,8 @@ export class Capabilities {
     const { provider, id: model } = target;
     const caps = this.for(target);
     const entry = this.entry(provider);
-    const official = isOfficialAnthropicApi(provider.base_url);
+    const openai = provider.type === "openai";
+    const official = isOfficialApi(openai ? "openai" : "anthropic", provider.base_url);
     const facts = entry.models[model];
     const learned = entry.unsupported[model] ?? [];
     const claude = model.startsWith("claude-");
@@ -164,12 +171,25 @@ export class Capabilities {
       if (oldModel) return "off: older model";
       return "off";
     };
+    const capped =
+      openai && caps.effort && caps.effort !== this.configuredEffort
+        ? "; Chat Completions takes up to high"
+        : "";
     return [
-      `endpoint: ${provider.base_url} (${official ? "official Anthropic API" : "compatible"})`,
-      `model facts: ${facts ? "from the Models API" : official ? "none cached yet" : "n/a (compatible endpoint)"}`,
-      `effort: ${caps.effort ?? "not sent"} (configured ${this.configuredEffort}${facts?.effortLevels ? `; model has ${facts.effortLevels.join("/")}` : ""}${learned.includes("effort") ? "; rejected earlier (learned)" : ""})`,
-      `refusal fallback: ${why(caps.fallbacks, "fallbacks", !provider.refusal_fallback ? "off: refusal_fallback = false" : undefined)}`,
-      `system messages for context: ${why(caps.systemMessages, "systemMessages")}`,
+      `endpoint: ${provider.base_url} (${openai ? "Chat Completions" : "Messages API"}, ${official ? "the vendor's own" : "compatible"})`,
+      `model facts: ${facts ? "from the Models API" : official && !openai ? "none cached yet" : "n/a"}`,
+      `effort: ${caps.effort ?? "not sent"} (configured ${this.configuredEffort}${facts?.effortLevels ? `; model has ${facts.effortLevels.join("/")}` : ""}${capped}${learned.includes("effort") ? "; rejected earlier (learned)" : ""})`,
+      // What each protocol has of its own (DESIGN.md §5.2.1).
+      ...(openai
+        ? [
+            `usage in the stream: ${why(caps.streamUsage, "streamUsage")}`,
+            `prompt cache key: ${why(caps.cacheKey, "cacheKey")}`,
+          ]
+        : [
+            `refusal fallback: ${why(caps.fallbacks, "fallbacks", !provider.refusal_fallback ? "off: refusal_fallback = false" : undefined)}`,
+            `system messages for context: ${why(caps.systemMessages, "systemMessages")}`,
+          ]),
+      `images: ${why(caps.images, "images")}`,
       ...(caps.maxTokens ? [`max_tokens cap: ${caps.maxTokens}`] : []),
     ];
   }

@@ -154,6 +154,8 @@ export class Agent {
     // is written, so the message isn't left without a reply.
     const target = this.current;
     if (!target) throw new Error(NO_MODEL);
+    // No API key throws here, before the message is written.
+    const client = this.opts.clientFor(target.provider);
     const { text: userText, images = [] } = typeof prompt === "string" ? { text: prompt } : prompt;
     const system = await this.opts.systemPrompt(session.id);
     const context = await this.opts.plugins.turnContext({
@@ -167,7 +169,6 @@ export class Agent {
     let costUsd = 0;
     let parseRetries = 0;
 
-    const client = this.opts.clientFor(target.provider);
     const origin: Origin = { endpoint: endpointKey(target.provider.base_url), model: target.id };
     for (let step = 1; step <= config.agent.max_steps; step++) {
       const { request, extras } = this.buildRequest(target, session, system);

@@ -9,10 +9,10 @@ max_steps = 25                    # model calls per turn
 
 [providers.anthropic]
 type = "anthropic"                # the protocol: "anthropic" (Messages API) or "openai" (Chat Completions)
-api_key = ""                      # or leave it out and set the key in Ivy's settings (Keychain)
+# api_key = "sk-..."              # or leave it out and set the key in Ivy's settings (Keychain)
 # base_url = "https://api.anthropic.com"  # optional, default: the vendor's own API for `type`
-# models = ["claude-opus-5-5", "claude-sonnet-5-5"]  # optional: limit what /model offers;
-                                  # left out, /model offers everything the endpoint lists
+# models = ["claude-opus-5-5", "claude-sonnet-5-5"]  # optional: what /model offers from it;
+                                  # left out, everything the endpoint lists (needed if it lists none)
 # refusal_fallback = false        # optional, default true: if the model declines, retry on a fallback model
 
 # A second provider, e.g. a proxy. Its models are named the same way:

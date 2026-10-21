@@ -5,12 +5,12 @@ import { join } from "node:path";
 import Anthropic from "@anthropic-ai/sdk";
 import { addProvider, createIvy, MemoryKeyStore, resolvePaths, whyUnreachable } from "./index.ts";
 
-test("a missing API key fails at startup, naming the provider", async () => {
+test("a missing API key doesn't stop Ivy (the settings set it); a turn names the provider", async () => {
   const paths = resolvePaths(mkdtempSync(join(tmpdir(), "ivy-key-")));
   writeFileSync(paths.config, '[agent]\nmodel = "proxy/m"\n[providers.proxy]\n');
-  await expect(createIvy({ plugins: [], paths, keys: new MemoryKeyStore() })).rejects.toThrow(
-    "No API key for proxy",
-  );
+  const ivy = await createIvy({ plugins: [], paths, keys: new MemoryKeyStore() });
+  expect(ivy.keySource("proxy")).toBe("none");
+  expect(() => ivy.agent.setModel("proxy/m")).toThrow("No API key for proxy");
 });
 
 // A local endpoint, so the background model-list refresh never reaches the network.
