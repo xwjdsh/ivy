@@ -1,12 +1,11 @@
-// Ivy's app: a thin shell around `ivy daemon` (DESIGN.md §5.7), in the menu bar and, while
-// the chat window is open, in the Dock. It keeps the daemon running, shows its reminders
-// as notifications of Ivy's own, shows the chat window (the daemon's web page), starts at
-// login, and installs the `ivy` command. All of Ivy's logic stays in the daemon.
+// Ivy's app: a thin shell around `ivy daemon` (DESIGN.md §5.7), in the Dock. It keeps the
+// daemon running, shows its reminders as notifications of Ivy's own, shows the chat window
+// (the app's web page, a client of the daemon), starts at login, and installs the `ivy`
+// command. All of Ivy's logic stays in the daemon.
 package main
 
 import (
 	"context"
-	_ "embed"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -15,16 +14,12 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/egoist/mygo"
 )
-
-// trayIcon is Ivy's silhouette in the menu bar, a template image made by tools/icongen.
-//
-//go:embed resources/tray.png
-var trayIcon []byte
 
 func main() {
 	if !mygo.App.RequestSingleInstanceLock() {
@@ -47,24 +42,15 @@ func main() {
 	// Before any window: the chat window's requests go to the daemon, and it opens in the
 	// appearance picked last.
 	loadAppearance()
-	if err := mygo.Protocol.Handle(daemonScheme, schemeHandler(socketPath())); err != nil {
+	status := &status{}
+	if err := mygo.Protocol.Handle(daemonScheme, schemeHandler(socketPath(), status.why)); err != nil {
 		log.Fatal(err)
 	}
+	mygo.App.Dock.SetMenu(dockMenu())
 
 	var sup *supervisor
 	mygo.App.WhenReady(func() {
-		mygo.App.SetActivationPolicy(mygo.ActivationPolicyAccessory) // menu bar only, no Dock icon
-		menu := newMenu()
-		if _, err := mygo.NewTray(mygo.TrayOptions{
-			Icon:           trayIcon,
-			IconIsTemplate: true, // tinted for light and dark menu bars
-			ToolTip:        "Ivy",
-			Menu:           menu,
-		}); err != nil {
-			log.Printf("tray: %v", err)
-		}
-
-		// Ivy stays in the menu bar when the chat window closes; Quit Ivy quits.
+		// Ivy keeps running when the chat window is closed (it only hides); Quit quits.
 		mygo.App.OnWindowAllClosed(func() {})
 		// A click on the Dock icon, or on a reminder, opens the chat.
 		mygo.App.OnActivate(func(hasVisibleWindows bool) {
@@ -73,8 +59,11 @@ func main() {
 			}
 		})
 		mygo.App.OnNotificationClick(func(string) { openChat() })
+		// Started at login, Ivy waits in the Dock; started by hand, the user came to talk.
+		if !mygo.App.WasOpenedAtLogin() {
+			openChat()
+		}
 
-		status := newStatus(menu)
 		if problem := socketProblem(); problem != "" {
 			status.setProblem(problem)
 			return
@@ -95,7 +84,7 @@ func main() {
 			sup.stop()
 		}
 	})
-	// SIGTERM (a logout, kill) quits like Quit Ivy does, so the daemon stops with the app.
+	// SIGTERM (a logout, kill) quits like ⌘Q does, so the daemon stops with the app.
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGTERM, syscall.SIGINT)
 	go func() {
@@ -124,14 +113,10 @@ func ivyBinary() (string, error) {
 	return bin, nil
 }
 
-func newMenu() *mygo.Menu {
+// dockMenu adds to the Dock icon's menu what is set once and rarely again.
+func dockMenu() *mygo.Menu {
 	return mygo.NewMenu([]*mygo.MenuItem{
-		{Label: "Open Ivy", Click: func(*mygo.MenuItem, *mygo.Window) { openChat() }},
-		mygo.Separator(),
-		{ID: "status", Label: "Starting…", Disabled: true},
-		mygo.Separator(),
 		{
-			ID:      "login",
 			Label:   "Start at Login",
 			Type:    mygo.MenuItemCheckbox,
 			Checked: mygo.App.OpenAtLogin(),
@@ -143,39 +128,26 @@ func newMenu() *mygo.Menu {
 			},
 		},
 		{Label: "Install the ivy Command", Click: func(*mygo.MenuItem, *mygo.Window) { go installCommand() }},
-		mygo.Separator(),
-		{Label: "Quit Ivy", Role: mygo.RoleQuit},
 	})
 }
 
-// status is the first item of the menu: whether the daemon runs and is followed.
+// status is why the daemon isn't running, if the app knows: the chat window is told when it
+// can't reach the daemon. The supervisor and the event follower set it from their goroutines.
 type status struct {
-	item      *mygo.MenuItem
-	problem   string
-	connected bool
+	mu      sync.Mutex
+	problem string
 }
-
-func newStatus(menu *mygo.Menu) *status { return &status{item: menu.ItemByID("status")} }
 
 func (s *status) setProblem(problem string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.problem = problem
-	s.show()
 }
 
-func (s *status) setConnected(connected bool) {
-	s.connected = connected
-	s.show()
-}
-
-func (s *status) show() {
-	switch {
-	case s.connected:
-		s.item.SetLabel("Ivy is running")
-	case s.problem != "":
-		s.item.SetLabel(s.problem)
-	default:
-		s.item.SetLabel("Starting…")
-	}
+func (s *status) why() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.problem
 }
 
 // follow keeps a subscription to the daemon's events, reconnecting while it restarts.
@@ -189,7 +161,7 @@ func follow(s *status) {
 		err := followEvents(context.Background(), socketPath(), func(e event) {
 			switch e.Type {
 			case "connected":
-				s.setConnected(true)
+				s.setProblem("") // it answers
 			case "reminder":
 				var r reminder
 				if err := json.Unmarshal(e.Data, &r); err != nil {
@@ -199,7 +171,6 @@ func follow(s *status) {
 				go notify(r)
 			}
 		})
-		s.setConnected(false)
 		if err != nil {
 			log.Printf("events: %v", err)
 		}

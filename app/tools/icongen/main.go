@@ -1,13 +1,6 @@
-// Command icongen makes the app's icons from their sources in art/:
-//
-//   - resources/icon.png, the app icon: art/ivy.webp (Ivy, drawn with ChatGPT's image tool)
-//     in a macOS rounded square, 824 pixels on a 1024 canvas with a soft shadow, as the
-//     system's own icons are laid out. The square's corners cover the artwork's own.
-//   - resources/tray.png, the menu-bar icon: art/tray.webp, an ivy leaf like the one on her
-//     hair clip (drawn with the same tool), black on white. A leaf reads at the menu bar's
-//     18 points where a face doesn't, so its veins and stalk are drawn thick. The black is
-//     kept as ink, cut to its edges and made 36 pixels tall: a template image, which
-//     macOS tints for light and dark menu bars.
+// Command icongen makes the app icon, resources/icon.png, from art/ivy.webp (Ivy, drawn with
+// ChatGPT's image tool): in a macOS rounded square, 824 pixels on a 1024 canvas with a soft
+// shadow, as the system's own icons are laid out. The square's corners cover the artwork's own.
 //
 // Run it from the app folder after changing a source: go run ./tools/icongen
 package main
@@ -28,15 +21,11 @@ const (
 	canvas = 1024
 	square = 824 // Apple's icon grid: the shape in a 1024 canvas
 	radius = 185 // its corner radius, about 22.5% of the shape
-	trayPx = 36  // the menu-bar icon's height: 18 points at 2x
 )
 
 func main() {
 	art := load("art/ivy.webp")
 	if err := writePNG("resources/icon.png", appIcon(art)); err != nil {
-		log.Fatal(err)
-	}
-	if err := writePNG("resources/tray.png", trayIcon(load("art/tray.webp"))); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -140,33 +129,6 @@ func boxBlur(m *image.Alpha, r int, horizontal bool) *image.Alpha {
 		}
 	}
 	return out
-}
-
-// trayIcon keeps the artwork's dark pixels as ink, so the background and the veins read
-// as clear, and fits the ink to trayPx in height.
-func trayIcon(art image.Image) image.Image {
-	b := art.Bounds()
-	ink := image.NewAlpha(b)
-	edges := image.Rectangle{}
-	for y := b.Min.Y; y < b.Max.Y; y++ {
-		for x := b.Min.X; x < b.Max.X; x++ {
-			// Dark and opaque is ink; a transparent background counts as white.
-			r, g, bl, a := art.At(x, y).RGBA()
-			if light := (r+g+bl)/3 + 0xffff - a; light < 0x8000 {
-				ink.SetAlpha(x, y, color.Alpha{A: 255})
-				edges = edges.Union(image.Rect(x, y, x+1, y+1))
-			}
-		}
-	}
-	if edges.Empty() {
-		log.Fatal("the menu-bar artwork has no dark pixels")
-	}
-	w := (trayPx*edges.Dx() + edges.Dy() - 1) / edges.Dy()
-	small := image.NewAlpha(image.Rect(0, 0, w, trayPx))
-	draw.CatmullRom.Scale(small, small.Bounds(), ink, edges, draw.Src, nil)
-	img := image.NewNRGBA(small.Bounds())
-	draw.DrawMask(img, img.Bounds(), image.NewUniform(color.Black), image.Point{}, small, image.Point{}, draw.Src)
-	return img
 }
 
 func writePNG(path string, img image.Image) error {

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"log"
 	"net/http"
@@ -20,8 +21,8 @@ import (
 const daemonScheme = "ivy"
 
 // schemeHandler serves ivy://: the app's own settings, and the daemon for the rest.
-func schemeHandler(socket string) http.Handler {
-	daemon := daemonProxy(socket)
+func schemeHandler(socket string, why func() string) http.Handler {
+	daemon := daemonProxy(socket, why)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == appearancePath {
 			appearanceHandler(w, r)
@@ -32,17 +33,23 @@ func schemeHandler(socket string) http.Handler {
 }
 
 // daemonProxy forwards a request of the page to the daemon, streaming the response as it
-// comes (the event stream stays open).
-func daemonProxy(socket string) http.Handler {
+// comes (the event stream stays open). When the daemon can't be reached, the page is told
+// why, if why knows.
+func daemonProxy(socket string, why func() string) http.Handler {
 	daemon := &url.URL{Scheme: "http", Host: "ivy"}
 	proxy := &httputil.ReverseProxy{
 		Rewrite:       func(r *httputil.ProxyRequest) { r.SetURL(daemon) },
 		Transport:     unixTransport(socket),
 		FlushInterval: -1,
 		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, _ error) {
+			msg := "Ivy's daemon isn't running"
+			if problem := why(); problem != "" {
+				msg += ": " + problem
+			}
+			body, _ := json.Marshal(map[string]string{"error": msg})
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadGateway)
-			w.Write([]byte(`{"error":"Ivy's daemon isn't running"}`))
+			w.Write(body)
 		},
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -68,11 +75,9 @@ var chatWindow *mygo.Window
 // quitting is set once the app is quitting, so the chat window closes for good then.
 var quitting bool
 
-// openChat shows the chat window, opening it the first time. From then on Ivy has a Dock
-// icon, as a regular app: closing the window only hides it, as Mac chat apps do, and a
-// click on the icon shows it again as it was.
+// openChat shows the chat window, opening it the first time. Closing it only hides it, as Mac
+// chat apps do, and a click on the Dock icon shows it again as it was.
 func openChat() {
-	mygo.App.SetActivationPolicy(mygo.ActivationPolicyRegular)
 	if w := chatWindow; w != nil {
 		w.Show()
 		w.Focus()

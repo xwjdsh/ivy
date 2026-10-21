@@ -3,11 +3,6 @@
   "identifier": "io.github.xwjdsh.ivy",
   "version": "0.1.0",
   "out": "build",
-  "macos": {
-    "infoPlist": {
-      "LSUIElement": true
-    }
-  },
   "devUrl": "http://localhost:5179",
   "devCommand": "bun run --cwd ../packages/web dev",
   "buildCommand": "bun run --cwd ../packages/web build",
