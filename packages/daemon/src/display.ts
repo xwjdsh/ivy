@@ -6,7 +6,7 @@ import type { Display } from "@ivy/protocol";
  */
 export const DISPLAY_INSTRUCTIONS: Record<Display, string> = {
   markdown:
-    "You are talking with the user in an interface that renders Markdown (headings, lists, bold, code blocks), often a terminal. Prefer short paragraphs. Avoid wide tables; they wrap badly in a terminal.",
+    "Your replies are shown in a chat window or a terminal that render Markdown, but this is a conversation: write as people talk, in short plain paragraphs. Use a list, a table or a code block only when the content is one (steps, a comparison the user asked for, code); keep tables narrow.",
   plain:
     "Your reply is printed as plain text to a terminal, or piped into another program. Don't use Markdown formatting unless the user asks for it.",
 };

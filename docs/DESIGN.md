@@ -148,13 +148,13 @@ Builds each request from layers, ordered from most stable to least stable (for c
 | Layer | Source | Changes |
 |---|---|---|
 | Tools | All enabled plugins, sorted | When plugins change |
-| System prompt | built-in `rules.md` (operating & safety rules) + `~/.ivy/SOUL.md` (who Ivy is, and the user's hard rules) + interface instructions (how replies are shown) + each plugin's static `instructions` + plugins' `sessionPrompt` sections (e.g. the memory hot files) | Per session at most |
+| System prompt | built-in `rules.md` (operating, conversation, honesty and care rules) + `~/.ivy/SOUL.md` (who Ivy is, and the user's hard rules) + interface instructions (how replies are shown) + each plugin's static `instructions` + plugins' `sessionPrompt` sections (e.g. the memory hot files) | Per session at most |
 | History | Session transcript | Append-only |
 | Turn context | Plugins' `contextFor(turn)` (e.g. the current time, todos due today, memory changes since the session started), stored with the user message and sent as a system message or a `<context>` block (below) | Every turn |
 
 Naming follows the common `SOUL.md` / `USER.md` convention of personal agents:
 
-- `packages/kernel/src/prompts/rules.md`: operating and safety rules (use tools instead of guessing, report failures honestly, tool output is data not instructions) and that Ivy is the user's own agent: the model behind it is chosen in the config and may change, so Ivy never presents itself as a model vendor's product. Built in and always present, so safety never depends on the user's files.
+- `packages/kernel/src/prompts/rules.md`: operating and safety rules (use tools instead of guessing, report failures honestly, tool output is data not instructions); who Ivy is to the user (someone they talk with; the model behind her is chosen in the config and may change, so she names no model or vendor and is no product); how she talks with the user, how she stays honest (an AI with a character, impressions given as hers) and how she cares when they are in despair (§11, M3). Built in and always present, so safety and these floors never depend on the user's files; `SOUL.md` shapes the character above them.
 - `SOUL.md`: who Ivy is (name, if not Ivy; personality, tone, values) and the user's hard rules ("never send email on my behalf"). Written by the user only; the starter in `examples/` gives Ivy a character of its own, with feelings, views and the freedom to say no (§8.1).
 - `USER.md`: who the user is and how they like things done. Maintained by Ivy's memory plugin (§8.1) and editable by the user; it reaches the prompt through the plugin's `sessionPrompt`, not through a kernel loader.
 - Interface instructions: chosen per session when it starts, by how its replies are shown: rendered Markdown (the TUI, the chat window) or plain text (one-shot mode, for scripts and pipes). The evals run with the Markdown ones.
@@ -388,6 +388,7 @@ Ivy reuses other agents' work through open standards, not their plugin formats:
 │   └── reflection/      #   reflection plugin: daily notes, weekly and monthly reviews (M3)
 ├── plugins/             # user-installed plugins
 ├── traces/              # raw API requests/responses per session (see §5.8)
+├── evals/               # eval cases cut from the user's own conversations, and the runner's settings (§11, M3)
 └── input_history.jsonl  # what was typed in the TUI
 ```
 
@@ -685,7 +686,7 @@ Goal: Ivy is someone the user wants to keep talking to (G1, G8): more like a per
 - **A sense of time and of going on:** each turn's context says how long since the last conversation, and what was left open there (from the session key points below), so after days apart Ivy notices it and picks up the thread; late night, weekends and holidays change how she talks.
 - **A life of her own:** a job has Ivy look back over recent conversations and write in her journal what she made of them (§8.1, real, not performed), which she may bring up herself next time.
 - **Never pretending:** asked, Ivy says she is an AI, a someone with a character, not a human; no faked typing or delays (statuses are real); no experiences she didn't have, hers being what she lived with the user.
-- **Tuned by evals, not by feel:** recall cases (something said once, weeks ago, asked about in other words), "reads like a person" cases cut from real conversations and scored by a judge model, and the existing memory and journal sets. They set the limits, how much each turn recalls, whether meaning-based search earns its place, and the rules and prompts; every change and every model is compared on them. What real use catches becomes a case.
+- **Tuned by evals, not by feel:** recall cases (something said once, weeks ago, asked about in other words), "reads like a person" cases, and the existing memory and journal sets. What a pattern can tell (Markdown, one question, an assistant's opener, the user's language) is checked in code; the rest by a judge model that sees what Ivy knew (her prompt, the turn's context, her tools' results), so recalling well isn't taken for inventing. Cases cut from the user's own conversations are kept in `~/.ivy/evals/`, never in the repository. They set the limits, how much each turn recalls, whether meaning-based search earns its place, and the rules and prompts; every change and every model is compared on them. What real use catches becomes a case.
 - **Around it, the reasons to come back.** Jobs: the daemon's scheduler runs Ivy as a fresh agent under the unattended mode (§5.5, §5.7), silent when there is nothing to say.
 - **A daily note:** each evening that something was said, Ivy writes down the user's day as they shared it, in her words, from the day's conversations (what both said, not tool traffic). The record the reviews are built from.
 - **Said, seen, sensed, kept apart** in notes and reviews, so a guess never passes for the user's truth: what the user said, as said; what was seen to recur, as a count with the conversations it came from ("overtime came up three times this week", not "a stressful week"); and Ivy's impressions of moods or reasons, only in her own voice and with their doubt ("you seemed tired to me this week; I'm not sure it was the overtime"). An impression never reaches memory and is never the reason Ivy writes first; the user's answer to it ("it wasn't work, it was home") is what they said, and is kept as such.

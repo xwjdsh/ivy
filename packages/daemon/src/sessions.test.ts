@@ -361,7 +361,7 @@ test("a Markdown session let go and loaded again keeps its instructions", async 
   expect(sessions.loaded).toBe(0);
   const second = (await call("POST", `/sessions/${id}/prompts`, { text: "second" })).body;
   await client.until((e) => e.type === "turn_end" && e.promptId === second.id);
-  expect(JSON.stringify(model.requests[1]?.system)).toContain("renders Markdown");
+  expect(JSON.stringify(model.requests[1]?.system)).toContain("render Markdown");
   await client.close();
 });
 
