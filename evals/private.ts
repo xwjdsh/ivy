@@ -1,5 +1,5 @@
 // Cases cut from the user's own conversations: JSON files in $IVY_HOME/evals/, one suite per
-// file (`private-<file>`). They hold what the user confided, so they live with the user's data
+// file (`private-<file>`; `settings.json` there is the runner's, not cases). They hold what the user confided, so they live with the user's data
 // and never in the repository. The same shape as a case here, with what JSON can't hold
 // spelled out: a pattern "/re/flags" is a RegExp, `"judge": "company"` the COMPANY criteria,
 // `"soul"` and `"files"` "user" the user's own SOUL.md and memory files, "starter" the
@@ -31,7 +31,7 @@ export function privateSuites(home: string): Record<string, EvalCase[]> {
   if (!existsSync(dir)) return {};
   const suites: Record<string, EvalCase[]> = {};
   for (const file of readdirSync(dir)
-    .filter((f) => f.endsWith(".json"))
+    .filter((f) => f.endsWith(".json") && f !== "settings.json")
     .sort()) {
     const cases = JSON.parse(readFileSync(join(dir, file), "utf8")) as JsonCase[];
     suites[`private-${file.replace(/\.json$/, "")}`] = cases.map((c) => toCase(c, home));

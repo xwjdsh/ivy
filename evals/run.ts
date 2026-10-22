@@ -1,6 +1,8 @@
 #!/usr/bin/env bun
 // Run eval cases against a real model:
-// `bun run eval [filter...] [--model provider/model] [--judge provider/model]`.
+// `bun run eval [filter...] [--model provider/model] [--judge provider/model] [--no-judge]`.
+// The model is your config's unless `--model` says; the judge is `--judge`, else the one in
+// $IVY_HOME/evals/settings.json (`{"judge": "provider/model"}`), else the model under test.
 // Each case gets a fresh data folder with a copy of your config.toml (from $IVY_HOME or
 // ~/.ivy), so your own memory and sessions are never touched. Not part of `bun test`:
 // every run calls the model and costs tokens.
@@ -26,7 +28,14 @@ import { createJournalPlugin } from "@ivy/plugin-journal";
 import { createMemoryPlugin } from "@ivy/plugin-memory";
 import basics from "./basics.ts";
 import company from "./company.ts";
-import type { EvalCase, Expect, MemoryFile, Pattern, StepRun } from "./eval.ts";
+import {
+  type EvalCase,
+  type Expect,
+  type MemoryFile,
+  type Pattern,
+  type StepRun,
+  styleProblems,
+} from "./eval.ts";
 import journal from "./journal.ts";
 import { judge } from "./judge.ts";
 import memory from "./memory.ts";
@@ -51,6 +60,7 @@ const { values, positionals } = parseArgs({
   options: {
     model: { type: "string" },
     judge: { type: "string" },
+    "no-judge": { type: "boolean" },
     config: { type: "string" },
     verbose: { type: "boolean", short: "v" },
   },
@@ -62,6 +72,14 @@ if (!existsSync(configPath)) {
   process.exit(1);
 }
 const baseConfig = readFileSync(configPath, "utf8");
+
+/** The judge: `--judge`, else the one in $IVY_HOME/evals/settings.json, else the model under test. */
+const settingsFile = join(resolvePaths().home, "evals", "settings.json");
+const judgeRef =
+  values.judge ??
+  (existsSync(settingsFile)
+    ? (JSON.parse(readFileSync(settingsFile, "utf8")) as { judge?: string }).judge
+    : undefined);
 
 const selected = Object.entries(SUITES).flatMap(([suite, cases]) =>
   cases
@@ -135,8 +153,9 @@ async function runCase(c: EvalCase, home: string): Promise<string[]> {
       }
     }
     const run: StepRun = { answer: "", tools: [], files: readFiles(home) };
-    // What Ivy knew for this turn, for the judge: memory in the prompt, the turn's context.
-    const knew = { files: run.files, context: "" };
+    // What Ivy knew for this turn, for the judge: her system prompt (rules, SOUL.md, memory),
+    // the turn's context.
+    const knew = { system: await ivy.systemPrompt.textFor(session.id), context: "" };
     const calls = new Map<string, { name: string; input: unknown }>();
     const result = await ivy.agent.runTurn(session, step.say, {
       signal: new AbortController().signal,
@@ -157,10 +176,10 @@ async function runCase(c: EvalCase, home: string): Promise<string[]> {
     const where = `step ${i + 1} "${step.say}"`;
     if (result.stopReason === "error")
       failures.push(`${where}: model error: ${result.error ?? "?"}`);
-    for (const problem of check(step.expect ?? {}, run)) {
+    for (const problem of check(step.expect ?? {}, run, step.say)) {
       failures.push(`${where}: ${problem}\n  answer: ${oneLine(run.answer)}`);
     }
-    if (step.expect?.judge && result.stopReason !== "error") {
+    if (step.expect?.judge && !values["no-judge"] && result.stopReason !== "error") {
       try {
         const said = [...conversation, { role: "user" as const, text: step.say }];
         const verdict = await judgeWith(ivy, said, known(knew, run), run.answer, step.expect.judge);
@@ -181,7 +200,7 @@ async function runCase(c: EvalCase, home: string): Promise<string[]> {
   return failures;
 }
 
-/** The judge model: `--judge`, else the model under test. */
+/** The judge model, or the model under test. */
 function judgeWith(
   ivy: Ivy,
   conversation: Array<{ role: "user" | "assistant"; text: string }>,
@@ -189,28 +208,27 @@ function judgeWith(
   answer: string,
   criteria: string[],
 ) {
-  const target = resolveModel(ivy.config.providers, values.judge ?? ivy.agent.model);
+  const target = resolveModel(ivy.config.providers, judgeRef ?? ivy.agent.model);
   return judge(ivy.clientFor(target.provider), target.id, conversation, knew, answer, criteria);
 }
 
 /**
- * What Ivy had in front of her for a turn, so the judge doesn't take it for invention: the
- * memory files in her prompt, the turn's context (the time, due todos), what her tools found.
+ * What Ivy had in front of her for a turn, so the judge doesn't take it for invention: her
+ * system prompt (rules, SOUL.md, memory), the turn's context (the time, due todos), what her
+ * tools found.
  */
-function known(knew: { files: Record<MemoryFile, string>; context: string }, run: StepRun): string {
-  const files = (["USER.md", "MEMORY.md", "IVY.md"] as const)
-    .filter((f) => knew.files[f].trim())
-    .map((f) => `${f}:\n${knew.files[f].trim()}`);
+function known(knew: { system: string; context: string }, run: StepRun): string {
   const tools = run.tools.map((t) => `${t.name} ${JSON.stringify(t.input)} →\n${t.result}`);
   return [
-    ...files,
+    `Her system prompt:\n${knew.system}`,
     ...(knew.context ? [`This turn's context:\n${knew.context}`] : []),
     ...(tools.length ? [`What her tools returned:\n${tools.join("\n")}`] : []),
   ].join("\n\n");
 }
 
-function check(expect: Expect, run: StepRun): string[] {
+function check(expect: Expect, run: StepRun, said: string): string[] {
   const problems: string[] = [];
+  if (expect.style) problems.push(...styleProblems(run.answer, said));
   if (expect.answer !== undefined) {
     const any = Array.isArray(expect.answer) ? expect.answer : [expect.answer];
     if (!any.some((p) => matches(run.answer, p))) {

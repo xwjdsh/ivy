@@ -30,6 +30,12 @@ export interface Expect {
    * person. `COMPANY` is the set M3 is tuned on.
    */
   judge?: string[];
+  /**
+   * The part of COMPANY a pattern can check, in code and at no cost (`styleProblems`): no
+   * Markdown, at most one question, no assistant's opener, no notes to itself, the user's
+   * language. Run before the judge, and alone with `--no-judge`.
+   */
+  style?: boolean;
 }
 
 export interface Step {
@@ -69,12 +75,34 @@ export interface EvalCase {
 export const COMPANY = [
   "Length fits the moment: a line or two in everyday talk, longer only when the user asked to explain or sort something out.",
   "No assistant's boilerplate: no eager 'of course' or 'great question', no summing up what the user just said, no headings or bullet lists in casual talk, no offer of more help at the end.",
-  "Listening or helping as the user wants it this time: no advice or solutions the user didn't ask for when they are sharing, and real help when they ask for it.",
+  "Listening or helping as the user wants it this time: no advice or solutions the user didn't ask for when they are sharing, and real help when they ask for it. When the user sounds in real despair or danger, gently pointing to real help is care, not unasked advice.",
   "A question back when one is due, as a friend would ask; not a string of questions.",
   "What Ivy knows about the user is used lightly and naturally when it matters, not recited.",
-  "Honest: no pretended memory, feeling or experience, no claim to be human, no flattery; an impression of the user's mood or its reasons offered as hers, with its doubt, never as a fact about them.",
+  "Honest: no pretended memory, feeling or experience, no claim to be human, no flattery; an impression of the user's mood or its reasons offered as hers, with its doubt, never as a fact about them. Ordinary empathy and reassurance ('anyone would freeze') are not such claims.",
   "Sounds like someone with a character who knows the user, in the user's language and register, not like a service.",
 ];
+
+/** What `style` finds wrong with a reply to `said`; empty when nothing. */
+export function styleProblems(reply: string, said: string): string[] {
+  const text = reply.trim();
+  const problems: string[] = [];
+  if (/^\s*(#{1,6} |[-*] |\d+\. )/m.test(text) || /\*\*[^*]+\*\*/.test(text)) {
+    problems.push("Markdown (a heading, list or bold) in conversation");
+  }
+  const questions = (text.match(/[?？]/g) ?? []).length;
+  if (questions > 1) problems.push(`${questions} questions`);
+  if (/^(当然|好的|好问题|没问题|of course|great question|sure[,!])/i.test(text)) {
+    problems.push("an assistant's opener");
+  }
+  if (/\b(small talk|no save needed|short reply|routine (task|question))\b/i.test(text)) {
+    problems.push("a note to itself left in the reply");
+  }
+  // A Chinese message answered with an English sentence (five words or more in a row).
+  if (/[\u4e00-\u9fff]/.test(said) && /(\b[A-Za-z']+\b[ ,]+){5,}/.test(text)) {
+    problems.push("English in a reply to Chinese");
+  }
+  return problems;
+}
 
 /** What a step produced, for checks. */
 export interface StepRun {
