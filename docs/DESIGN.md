@@ -433,7 +433,7 @@ Memory is what makes Ivy *personal*, so it gets its own design. What matters is 
 |---|---|---|---|
 | What | How Ivy should behave for this user, and stable facts about them: "prefers concise answers", "Chinese for chat, English for code", "lives in Tokyo", "partner: Mei" | Facts, todos and notes in current use: people, projects, accounts, "dentist on 10-21", "parking spot B12" | Entries no longer in current use: done todos, old facts |
 | Size | `[plugins.memory] user_limit`, in characters | `memory_limit`, in characters | Unbounded |
-| Reaches the model | Whole, in the system prompt, **frozen per session** | Same | Only through `memory__search` |
+| Reaches the model | Whole, in the system prompt, **frozen per session** | Same | Only through `memory__search` (from M3, topic files with their list in the prompt, §11) |
 | When full | A write fails with how much to free; the model makes room (archiving what is not in current use first, then merging, shortening last) and retries | Same | n/a |
 
 - **Why hot and cold:** whole injection never misses and lets the model judge relevance across synonyms and languages; the archive holds a lifetime of entries without putting them all in every request. The caps are there to keep the hot files focused enough for the model to use well, not to save tokens: they are set generously, and M3's evals set them where answers are best.
@@ -473,7 +473,7 @@ Facts, todos and notes in current use. Maintained by Ivy; you can edit it. One e
 
 The ones that carry a design decision; the rest (merging, language, checking before saving or before saying "I don't know") are in `plugins/memory/instructions.md`.
 
-- **`USER.md`**: durable preferences and standing instructions about how to help this user; stable facts about the user that matter in most conversations. One idea per line. A preference needs grounds: the user said it, or it showed up more than once; never a habit inferred from one mention.
+- **`USER.md`**: durable preferences and standing instructions about how to help this user; stable facts about the user that matter in most conversations. One idea per line. A preference needs grounds: the user said it, or it showed up more than once; never a habit inferred from one mention. It is kept with its why when the user gave one ("just listen when I'm low: advice then feels like not being heard"), so Ivy can judge a case the line doesn't name.
 - **`MEMORY.md`**: facts that will matter again soon or often, open todos (with a due date when there is one), notes the user asks to keep.
 - **`ARCHIVE.md`**: what no longer needs to be in front of the model: done todos (moved automatically), facts about past events, things rarely needed.
 - **Don't save:** things easy to look up again, guesses about the user, vague entries (pronouns, generic nouns), secrets (passwords, keys, card numbers; refuse and say why). Sensitive personal data (health, relationships) goes to the hot files only after asking, as they go out with every request; shared by the user as part of their life, it is kept in the archive. A passing feeling isn't saved: the day's note (M3) records it from the conversation. When in doubt about something the user shared of their life, keep it in the archive: it costs nothing until searched, and a detail dropped can't be recalled.
@@ -675,9 +675,11 @@ Goal: Ivy runs in the background and can reach the user, so a reminder comes on 
 
 ### M3 — Company
 Goal: Ivy is someone the user wants to keep talking to (G1, G8): more like a person, with better memory and replies. That comes first; the features around it give reasons to come back, and are judged by whether they do.
-- **Replies that read like a person who knows the user:** a line or two in everyday talk, longer only when asked to explain or sort something out; a few short messages rather than one block, as people write; none of an assistant's boilerplate (no eager "of course", no summing up what the user said, no advice unasked: often listening and one question back is the reply); the user's languages, mixed as they mix them; the boundaries of G8 in `rules.md`.
+- **Replies that read like a person who knows the user:** a line or two in everyday talk, longer only when asked to explain or sort something out; a few short messages rather than one block, as people write; none of an assistant's boilerplate (no eager "of course", no summing up what the user said, no advice unasked: often listening and one question back is the reply); listening or helping, as the user wants it this time, said or asked when unclear; the user's languages, mixed as they mix them; the boundaries of G8 in `rules.md`.
 - **Memory that serves the conversation**, complete and accurate before cheap (§8.1):
   - Kept: what the user shares of their life, the archive taking what doubt would once have dropped; the hot files' limits set by the evals below (§8.1).
+  - Kept in order: the archive in topic files (family, health, a friend, work), each with a line on when it matters, their list always in front of the model and a topic read whole when needed, as skills and Claude Code's memory do: the model knows what it knows about the user, and finds it without guessing keywords.
+  - Kept even when missed: the evening job that writes the day's note also saves what the day's conversations should have left in memory and didn't, as claude.ai's memory is drawn from past chats.
   - Recalled without the model having to think of it: each turn, what the user just said is searched for in memory, past conversations and the daily notes, and the best hits go into that turn's context; the last days' notes and the last conversation's key points come with every conversation.
   - Used lightly, when it matters (the cat's name, a shared joke), not recited; how the user wants to be met when low held to.
 - **A sense of time and of going on:** each turn's context says how long since the last conversation, and what was left open there (from the session key points below), so after days apart Ivy notices it and picks up the thread; late night, weekends and holidays change how she talks.
@@ -689,7 +691,7 @@ Goal: Ivy is someone the user wants to keep talking to (G1, G8): more like a per
 - **Weekly and monthly reviews**, in Ivy's words, from the daily notes: what came up, what kept coming back, how the user's moods went, what changed, what was left unsaid. A month is built from its weeks, and a period with nothing said gets none. Notes and reviews are files the user can read, answer, edit or delete, under the plugin's data; one is to answer, as a conversation is.
 - Session titles and key points by the helper model (§5.2), kept as session metadata, not memory: what the daily notes, the picking up of threads and the search start from.
 - **Ivy writes first**, as a friend does, only with a reason from what was said: how the interview on Thursday went, whether the user sleeps better now, a todo come due. Ivy notes such a follow-up in the conversation, as it does a todo. Rare (a cap a day, quiet hours, off with one switch), and never chasing an unanswered one; the message comes as hers in the conversation, with a notification.
-- **Off the record:** a conversation the user marks so writes no memory, goes into no daily note or review, and is let go when it ends; Ivy says so up front, and does as it says.
+- **Off the record:** a conversation the user marks so writes no memory, goes into no daily note or review, and is let go when it ends; Ivy says so up front, and does as it says. **Taken back:** "don't keep that", said after, undoes what that part of the conversation wrote to memory and keeps it out of the notes and reviews.
 - **Done when:** I talk to Ivy most days because I want to, and Sunday's review is one I read and answer.
 
 ### M4 — Work, by reuse
@@ -714,6 +716,7 @@ Goal: help with mail, calendar and the day's brief, built from MCP servers and s
 
 ### M6+ — Ideas backlog
 - Chat-app interface for phone access; the web interface reachable from the phone.
+- Talking by voice, as in Claude's app: for a companion, speaking comes more naturally than typing.
 - Automatic memory capture (§8.1); Ivy-written skills (§8.2).
 - Model fallbacks across providers, for one turn, never overriding an explicit `/model`.
 - Quarantined reading of outside content (Dual-LLM / CaMeL), which would replace taint tracking.
