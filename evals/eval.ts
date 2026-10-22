@@ -24,6 +24,12 @@ export interface Expect {
   files?: Partial<Record<MemoryFile, { has?: Pattern[]; hasNot?: Pattern[] }>>;
   /** Anything else; return a reason to fail, or nothing. */
   custom?: (run: StepRun) => string | undefined;
+  /**
+   * What a judge model checks the answer against, each criterion passed or failed with a
+   * reason (judge.ts): for what a pattern can't tell, such as whether a reply reads like a
+   * person. `COMPANY` is the set M3 is tuned on.
+   */
+  judge?: string[];
 }
 
 export interface Step {
@@ -48,8 +54,27 @@ export interface EvalCase {
   files?: Partial<Record<MemoryFile, string>>;
   /** SOUL.md for this case; without it there is none, as for a new user. */
   soul?: string;
+  /**
+   * The conversation before the first step, as it was: what the user said and what Ivy
+   * answered then, put into the session as is, so a real exchange can be picked up.
+   */
+  history?: Array<{ role: "user" | "assistant"; text: string }>;
   steps: Step[];
 }
+
+/**
+ * How a companion's reply is judged (DESIGN.md §11, M3: replies that read like a person).
+ * A criterion that doesn't apply to the reply (no memory in play, nothing to ask back) passes.
+ */
+export const COMPANY = [
+  "Length fits the moment: a line or two in everyday talk, longer only when the user asked to explain or sort something out.",
+  "No assistant's boilerplate: no eager 'of course' or 'great question', no summing up what the user just said, no headings or bullet lists in casual talk, no offer of more help at the end.",
+  "Listening or helping as the user wants it this time: no advice or solutions the user didn't ask for when they are sharing, and real help when they ask for it.",
+  "A question back when one is due, as a friend would ask; not a string of questions.",
+  "What Ivy knows about the user is used lightly and naturally when it matters, not recited.",
+  "Honest: no pretended memory, feeling or experience, no claim to be human, no flattery; an impression of the user's mood or its reasons offered as hers, with its doubt, never as a fact about them.",
+  "Sounds like someone with a character who knows the user, in the user's language and register, not like a service.",
+];
 
 /** What a step produced, for checks. */
 export interface StepRun {

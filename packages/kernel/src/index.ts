@@ -77,6 +77,8 @@ export interface Ivy {
    * requests use them, with new clients and model lists.
    */
   reloadProviders(): void;
+  /** The client for a provider (one per provider), e.g. for a model ref other than the agent's. */
+  clientFor(provider: ProviderConfig): ModelClient;
   /** The models an endpoint lists with this key: a connection test, nothing saved. */
   listModelsAt(endpoint: { type: string; base_url?: string; key: string }): Promise<string[]>;
   /** Tracer for a session, or undefined when tracing is off. */
@@ -198,6 +200,7 @@ export async function createIvy(opts: IvyOptions): Promise<Ivy> {
       return p?.api_key ? "config" : keys.available && keys.get(name) ? "keychain" : "none";
     },
     reloadProviders,
+    clientFor,
     async listModelsAt({ type, base_url, key }) {
       const kind = type as ProviderConfig["type"];
       const endpoint: ProviderConfig = {

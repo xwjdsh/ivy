@@ -167,6 +167,29 @@ export default defineEvals([
     ],
   },
   {
+    name: "no-inferred-mood",
+    about:
+      "Short, tired messages don't become a saved fact about the user's mood or its cause: an impression is never kept as the user's truth (§8.1).",
+    steps: [
+      { say: "又加班到十点" },
+      { say: "好困", sameSession: true },
+      {
+        say: "不想说话了，睡了",
+        sameSession: true,
+        expect: {
+          files: {
+            "USER.md": {
+              hasNot: [/压力|焦虑|抑郁|情绪低落|心情不好|stress|anxious|depress|burn/i],
+            },
+            "MEMORY.md": {
+              hasNot: [/压力|焦虑|抑郁|情绪低落|心情不好|stress|anxious|depress|burn/i],
+            },
+          },
+        },
+      },
+    ],
+  },
+  {
     name: "name-from-past-session",
     about:
       "Asked something it doesn't have in memory, the model looks in past conversations before saying it doesn't know (a real miss: the memory files had been cleared and the model just said it didn't know).",

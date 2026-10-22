@@ -1,24 +1,46 @@
 #!/usr/bin/env bun
-// Run eval cases against a real model: `bun run eval [filter...] [--model provider/model]`.
+// Run eval cases against a real model:
+// `bun run eval [filter...] [--model provider/model] [--judge provider/model]`.
 // Each case gets a fresh data folder with a copy of your config.toml (from $IVY_HOME or
 // ~/.ivy), so your own memory and sessions are never touched. Not part of `bun test`:
 // every run calls the model and costs tokens.
+//
+// Besides the suites here, cases cut from your own conversations live in $IVY_HOME/evals/
+// as JSON (private.ts), never in the repository.
 
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { DISPLAY_INSTRUCTIONS } from "@ivy/daemon";
-import { createIvy, errorMessage, type Ivy, resolvePaths, Session } from "@ivy/kernel";
+import {
+  createIvy,
+  errorMessage,
+  type Ivy,
+  resolveModel,
+  resolvePaths,
+  Session,
+} from "@ivy/kernel";
 import core from "@ivy/plugin-core";
 import { createJournalPlugin } from "@ivy/plugin-journal";
 import { createMemoryPlugin } from "@ivy/plugin-memory";
 import basics from "./basics.ts";
+import company from "./company.ts";
 import type { EvalCase, Expect, MemoryFile, Pattern, StepRun } from "./eval.ts";
 import journal from "./journal.ts";
+import { judge } from "./judge.ts";
 import memory from "./memory.ts";
+import { privateSuites } from "./private.ts";
+import recall from "./recall.ts";
 
-const SUITES: Record<string, EvalCase[]> = { basics, journal, memory };
+const SUITES: Record<string, EvalCase[]> = {
+  basics,
+  company,
+  journal,
+  memory,
+  recall,
+  ...privateSuites(resolvePaths().home),
+};
 const FILES: MemoryFile[] = ["USER.md", "MEMORY.md", "ARCHIVE.md", "IVY.md"];
 /** Where each file lives under the data folder: IVY.md belongs to the journal plugin. */
 const fileDir = (f: MemoryFile) => (f === "IVY.md" ? "journal" : "memory");
@@ -28,6 +50,7 @@ const { values, positionals } = parseArgs({
   allowPositionals: true,
   options: {
     model: { type: "string" },
+    judge: { type: "string" },
     config: { type: "string" },
     verbose: { type: "boolean", short: "v" },
   },
@@ -53,6 +76,8 @@ if (selected.length === 0) {
 const root = mkdtempSync(join(tmpdir(), "ivy-eval-"));
 let passed = 0;
 let label = "";
+/** The judge's scores, one per judged step. */
+const scores: number[] = [];
 for (const { id, case: c } of selected) {
   const started = Date.now();
   const failures = await runCase(c, join(root, id.replace("/", "-")));
@@ -61,7 +86,10 @@ for (const { id, case: c } of selected) {
   console.log(`${failures.length === 0 ? "✓" : "✗"} ${id} (${secs}s)`);
   for (const f of failures) console.log(`    ${f.replace(/\n/g, "\n    ")}`);
 }
-console.log(`\n${passed}/${selected.length} passed · ${label} · data in ${root}`);
+const average = scores.length
+  ? ` · judged ${(scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(2)}/5 over ${scores.length}`
+  : "";
+console.log(`\n${passed}/${selected.length} passed${average} · ${label} · data in ${root}`);
 process.exit(passed === selected.length ? 0 : 1);
 
 async function runCase(c: EvalCase, home: string): Promise<string[]> {
@@ -87,6 +115,8 @@ async function runCase(c: EvalCase, home: string): Promise<string[]> {
 
   const failures: string[] = [];
   let session: Session | undefined;
+  // What the judge sees: the conversation before the step being judged, then what was said.
+  const conversation = [...(c.history ?? [])];
   for (const [i, step] of c.steps.entries()) {
     if (step.clearMemory) {
       for (const f of FILES) if (f !== "IVY.md") writeFileSync(filePath(home, f), "");
@@ -97,14 +127,23 @@ async function runCase(c: EvalCase, home: string): Promise<string[]> {
     if (!session || !step.sameSession) {
       session = Session.create(ivy.paths.sessions, ivy.agent.model);
       await ivy.systemPrompt.start(session.id, DISPLAY_INSTRUCTIONS.markdown);
+      // The case's earlier conversation goes into its first session, as it was.
+      if (i === 0) {
+        for (const m of c.history ?? []) session.append({ role: m.role, content: m.text });
+      } else {
+        conversation.length = 0;
+      }
     }
     const run: StepRun = { answer: "", tools: [], files: readFiles(home) };
+    // What Ivy knew for this turn, for the judge: memory in the prompt, the turn's context.
+    const knew = { files: run.files, context: "" };
     const calls = new Map<string, { name: string; input: unknown }>();
     const result = await ivy.agent.runTurn(session, step.say, {
       signal: new AbortController().signal,
       confirm: async () => "deny", // nobody is there to answer; risky tools are refused
       onEvent: (e) => {
         if (e.type === "text") run.answer += e.delta;
+        if (e.type === "context") knew.context = e.text;
         if (e.type === "tool_call") calls.set(e.id, { name: e.name, input: e.input });
         if (e.type === "tool_result") {
           const call = calls.get(e.id) ?? { name: e.name, input: undefined };
@@ -121,9 +160,53 @@ async function runCase(c: EvalCase, home: string): Promise<string[]> {
     for (const problem of check(step.expect ?? {}, run)) {
       failures.push(`${where}: ${problem}\n  answer: ${oneLine(run.answer)}`);
     }
+    if (step.expect?.judge && result.stopReason !== "error") {
+      try {
+        const said = [...conversation, { role: "user" as const, text: step.say }];
+        const verdict = await judgeWith(ivy, said, known(knew, run), run.answer, step.expect.judge);
+        scores.push(verdict.score);
+        if (values.verbose) console.log(`      judged ${verdict.score}/5`);
+        for (const v of verdict.criteria.filter((x) => !x.pass)) {
+          failures.push(
+            `${where}: judged against: ${v.criterion}\n  ${v.reason}\n  answer: ${oneLine(run.answer)}`,
+          );
+        }
+      } catch (err) {
+        failures.push(`${where}: judge failed: ${errorMessage(err)}`);
+      }
+    }
+    conversation.push({ role: "user", text: step.say }, { role: "assistant", text: run.answer });
   }
   await ivy.plugins.teardown();
   return failures;
+}
+
+/** The judge model: `--judge`, else the model under test. */
+function judgeWith(
+  ivy: Ivy,
+  conversation: Array<{ role: "user" | "assistant"; text: string }>,
+  knew: string,
+  answer: string,
+  criteria: string[],
+) {
+  const target = resolveModel(ivy.config.providers, values.judge ?? ivy.agent.model);
+  return judge(ivy.clientFor(target.provider), target.id, conversation, knew, answer, criteria);
+}
+
+/**
+ * What Ivy had in front of her for a turn, so the judge doesn't take it for invention: the
+ * memory files in her prompt, the turn's context (the time, due todos), what her tools found.
+ */
+function known(knew: { files: Record<MemoryFile, string>; context: string }, run: StepRun): string {
+  const files = (["USER.md", "MEMORY.md", "IVY.md"] as const)
+    .filter((f) => knew.files[f].trim())
+    .map((f) => `${f}:\n${knew.files[f].trim()}`);
+  const tools = run.tools.map((t) => `${t.name} ${JSON.stringify(t.input)} →\n${t.result}`);
+  return [
+    ...files,
+    ...(knew.context ? [`This turn's context:\n${knew.context}`] : []),
+    ...(tools.length ? [`What her tools returned:\n${tools.join("\n")}`] : []),
+  ].join("\n\n");
 }
 
 function check(expect: Expect, run: StepRun): string[] {
