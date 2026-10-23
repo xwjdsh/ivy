@@ -68,7 +68,7 @@ export function Queue(props: { queue: Prompt[]; onWithdraw(p: Prompt): void }) {
   return (
     <div className="queue">
       {props.queue.map((p) => (
-        <div key={p.id} className="waiting fresh">
+        <div key={p.id} className="queued fresh">
           <CornerDownRight size={14} />
           <span className="text">{p.text || imagesNote(p.images)}</span>
           {p.text && p.images && <span className="tag">{imagesNote(p.images)}</span>}

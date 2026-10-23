@@ -178,8 +178,16 @@ test("tool labels: the tool's own summary, else its name and first argument", as
           risk: "read",
           run: () => "",
           summary: (i) => `search  "${i.query}"\n`,
+          shown: "aside",
         }),
-        defineTool({ name: "plain", description: "", input, risk: "read", run: () => "" }),
+        defineTool({
+          name: "plain",
+          description: "",
+          input,
+          risk: "read",
+          shown: "line",
+          run: () => "",
+        }),
         defineTool({
           name: "broken",
           description: "",
@@ -193,9 +201,11 @@ test("tool labels: the tool's own summary, else its name and first argument", as
       ],
     }),
   );
+  // How the window shows it comes along; a line, the default, goes without saying.
   expect(h.toolLabel("mem__search", { query: "Wen" })).toEqual({
     plugin: "mem",
     text: 'search "Wen"',
+    shown: "aside",
   });
   expect(h.toolLabel("mem__plain", { query: "a\nb", limit: 3 })).toEqual({
     plugin: "mem",
@@ -203,6 +213,13 @@ test("tool labels: the tool's own summary, else its name and first argument", as
   });
   expect(h.toolLabel("mem__plain", {})).toEqual({ plugin: "mem", text: "plain" });
   expect(h.toolLabel("mem__broken", { query: "x" })).toEqual({ plugin: "mem", text: 'broken "x"' });
+  // The vendor's search, offered for a plugin: where her words came from.
+  await h.register(plugin("web", { serverTools: ["web_search"] }));
+  expect(h.toolLabel("web_search", { query: "finale" })).toEqual({
+    plugin: "web",
+    text: "looked up: finale",
+    shown: "source",
+  });
   // A name the model made up: shown as is.
   expect(h.toolLabel("nope__x", { a: 1 })).toEqual({ plugin: "nope__x", text: "1" });
 });

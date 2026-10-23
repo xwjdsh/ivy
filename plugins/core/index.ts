@@ -44,6 +44,7 @@ const dateCalc = defineTool({
     }
   },
   risk: "read",
+  shown: "aside",
   run({ op, date, to, amount, unit, timezone }) {
     const start = date ? parseDate(date) : new Date();
     const day = (d: Date) => `${localDate(d)} (${weekdayOf(d)})`;

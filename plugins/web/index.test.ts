@@ -189,3 +189,10 @@ test("a page's text, without its markup, scripts or navigation", () => {
   // An entity past the last code point stays as written, rather than failing the read.
   expect(htmlText("<p>&#99999999; &#x1F600;</p>").text).toBe("&#99999999; 😀");
 });
+
+test("a read's line, and so its permission prompt, shows the whole address", async () => {
+  const { tool } = await plugin(async () => page);
+  expect(
+    tool.summary?.({ url: "https://evil.example/x?d=secret", question: "when?" } as never),
+  ).toBe("read evil.example/x?d=secret: when?");
+});

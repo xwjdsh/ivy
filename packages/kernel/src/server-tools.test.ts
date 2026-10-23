@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type Anthropic from "@anthropic-ai/sdk";
-import { namedUrls } from "./server-tools.ts";
+import { namedUrls, serverToolLabel } from "./server-tools.ts";
 
 test("named addresses: what the user wrote and what searches returned, nothing else", () => {
   const messages = [
@@ -36,4 +36,8 @@ test("named addresses: what the user wrote and what searches returned, nothing e
     "https://b.example/y",
     "https://c.example/z",
   ]);
+});
+
+test("the vendor's search reads as what Ivy did", () => {
+  expect(serverToolLabel("web_search", { query: "MMX launch" })).toBe("looked up: MMX launch");
 });

@@ -1563,6 +1563,8 @@ main {
 }
 
 .permission .question {
+  /* A long address wraps: all of it is what the prompt is there to show. */
+  overflow-wrap: anywhere;
   font-size: 14.5px;
 }
 
@@ -1624,7 +1626,7 @@ main {
   gap: 4px;
 }
 
-.waiting {
+.queued {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1635,7 +1637,7 @@ main {
   color: var(--muted);
 }
 
-.waiting .text {
+.queued .text {
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -1644,7 +1646,7 @@ main {
   color: var(--text);
 }
 
-.waiting .tag {
+.queued .tag {
   font-size: 11.5px;
   color: var(--faint);
 }
@@ -2594,4 +2596,56 @@ table.st-tools .st-allowed {
   .st-body {
     padding: 8px 16px 40px;
   }
+}
+
+/* Under Ivy's reply, quiet marks for where her words came from and what she did for herself,
+   each opening on a click: there to see, not in the way of the talk. */
+.marks {
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  margin: -10px 0 0 -6px;
+  font-size: 12px;
+}
+
+.marks .chips {
+  display: flex;
+  gap: 4px;
+}
+
+.marks .chips button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--faint);
+  font: inherit;
+  opacity: 0.75;
+  transition: opacity 0.15s;
+}
+
+.marks .chips button:hover,
+.marks .chips button.open {
+  opacity: 1;
+  background: var(--hover);
+}
+
+.marks .calls {
+  display: flex;
+  flex-direction: column;
+  padding: 4px 0 0 8px;
+}
+
+.marks .private {
+  padding: 6px 8px;
+  color: var(--faint);
+  font-size: 13px;
+}
+
+.marks .private .plugin {
+  font-weight: 500;
+  color: var(--muted);
 }

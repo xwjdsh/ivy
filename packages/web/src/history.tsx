@@ -5,9 +5,9 @@
 import type { SessionSummary } from "@ivy/protocol";
 import { ChevronDown, LoaderCircle, Trash2 } from "lucide-react";
 import { useLayoutEffect, useRef, useState } from "react";
-import type { Chat } from "./chat.ts";
+import { arrange, type Chat } from "./chat.ts";
 import { byDay, timeLabel } from "./sessions.ts";
-import { ItemView, type Place } from "./transcript.tsx";
+import { type Place, ShownView } from "./transcript.tsx";
 
 /** How many past conversations show at first, and how many more each "Earlier" brings. */
 const PAGE = 20;
@@ -137,10 +137,9 @@ function Past(props: {
       {open && (
         <div className="past-body">
           {chat ? (
-            chat.items.map((item, i) => (
-              // A past conversation is read once, whole; the index is stable.
-              // biome-ignore lint/suspicious/noArrayIndexKey: see above
-              <ItemView key={i} item={item} sessionId={chat.id} fresh={false} />
+            arrange(chat.items).map((s) => (
+              // A past conversation is read once, whole; where each part starts is stable.
+              <ShownView key={s.at} shown={s} sessionId={chat.id} fresh={false} />
             ))
           ) : (
             <LoaderCircle size={16} className="spin loading" />

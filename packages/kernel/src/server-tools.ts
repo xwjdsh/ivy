@@ -81,9 +81,12 @@ export function withoutServerTools(m: MessageParam): MessageParam {
   return { ...m, content: content.length ? content : [{ type: "text", text: "…" }] };
 }
 
-/** A vendor tool's call as the transcript names it, e.g. `search "finale date"`. */
+/**
+ * A vendor tool's call as the transcript names it, e.g. `looked up: finale date`. Each brings
+ * in what Ivy says, so it shows as where her words came from (ToolDef.shown "source").
+ */
 export function serverToolLabel(name: string, input: unknown): string | undefined {
-  if (name === "web_search") return `search "${(input as { query?: unknown })?.query ?? ""}"`;
+  if (name === "web_search") return `looked up: ${(input as { query?: unknown })?.query ?? ""}`;
   return undefined;
 }
 

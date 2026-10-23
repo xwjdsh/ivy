@@ -27,6 +27,8 @@ export interface ToolContext {
   log: Logger;
 }
 
+export type ToolShown = "line" | "source" | "aside" | "private";
+
 export interface ToolDef<S extends z.ZodType = z.ZodType> {
   /** Local name; exposed to the model as `<pluginId>__<name>`. Must match [a-zA-Z0-9_-]. */
   name: string;
@@ -44,6 +46,16 @@ export interface ToolDef<S extends z.ZodType = z.ZodType> {
    * name and its first argument.
    */
   summary?(input: z.infer<S>): string;
+  /**
+   * How a call shows in the chat window, where Ivy talks as a person (the terminal and the
+   * verbose view show every call): `line`, the default, a line of its own (a tool that acts
+   * on something); `source`, where her words came from (a page read), in a mark of its own
+   * under her reply, a line while it runs; `aside`, her own bookkeeping (a memory saved), in
+   * another quiet mark there; `private`, in that one too but only as having happened (her
+   * journal). A call that fails is a line whatever this says. Presentation only: every client
+   * still gets the call, and the terminal shows it.
+   */
+  shown?: ToolShown;
   /**
    * Why this call needs the user's OK whatever the permission rules allow, or nothing. Asked
    * every time, with no "for this session" or "always"; a deny rule still wins. Memory asks

@@ -66,6 +66,8 @@ export type Entry =
 export interface ToolLabel {
   plugin: string;
   text: string;
+  /** How the window shows it (the plugin API's ToolDef.shown); a line when left out. */
+  shown?: "source" | "aside" | "private";
 }
 
 /** A message the user sent, waiting for its turn or running. */

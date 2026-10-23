@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { SessionChange, SessionView } from "@ivy/protocol";
-import { apply, chatOf, emptyChat } from "./chat.ts";
+import { apply, arrange, chatOf, emptyChat, type Item, thinking } from "./chat.ts";
 
 const label = { plugin: "memory", text: "save: Dentist" };
 const prompt = { id: "p1", text: "Remember the dentist" };
@@ -84,4 +84,70 @@ test("a permission prompt goes once some client answered it", () => {
   expect(
     run([{ type: "permission_answered", id: "a1", choice: "deny" }], asked).permission,
   ).toBeUndefined();
+});
+
+const tool = (
+  id: string,
+  shown?: "source" | "aside" | "private",
+  { isError = false, running = false } = {},
+): Item => ({
+  kind: "tool",
+  id,
+  name: id,
+  label: { plugin: id, text: "", ...(shown && { shown }) },
+  input: {},
+  result: "",
+  isError,
+  ...(running && { running }),
+});
+
+const shape = (shown: ReturnType<typeof arrange>) =>
+  shown.map((s) =>
+    "item" in s
+      ? `${s.item.kind}@${s.at}`
+      : `marks:${s.sources.map((t) => t.id).join("+")}|${s.aside.map((t) => t.id).join("+")}@${s.at}`,
+  );
+
+test("under her reply, where her words came from and her own bookkeeping, apart; what failed or acts stays a line", () => {
+  const items: Item[] = [
+    { kind: "user", text: "下周二看牙" },
+    tool("search", "source"),
+    tool("memory", "aside"),
+    tool("journal", "private"),
+    tool("send"),
+    { kind: "assistant", markdown: "记下了" },
+    tool("broken", "aside", { isError: true }),
+    tool("late", "aside"),
+    { kind: "user", text: "谢谢" },
+  ];
+  expect(shape(arrange(items))).toEqual([
+    "user@0",
+    "tool@4",
+    "assistant@5",
+    "marks:search|memory+journal@1",
+    "tool@6",
+    "marks:|late@7",
+    "user@8",
+  ]);
+});
+
+test("while a turn runs: a search is a line, marks wait for the reply; her running bookkeeping is thinking", () => {
+  const items: Item[] = [
+    { kind: "user", text: "hi" },
+    tool("memory", "aside"),
+    tool("search", "source", { running: true }),
+  ];
+  expect(shape(arrange(items, true))).toEqual(["user@0", "tool@2"]);
+  // Done, a search stays a line until the reply it goes under.
+  const done = [...items.slice(0, 2), tool("search", "source")];
+  expect(shape(arrange(done, true))).toEqual(["user@0", "tool@2"]);
+  expect(shape(arrange([...done, { kind: "assistant", markdown: "ok" }], true))).toEqual([
+    "user@0",
+    "assistant@3",
+    "marks:search|memory@1",
+  ]);
+  expect(shape(arrange(items.slice(0, 2), false))).toEqual(["user@0", "marks:|memory@1"]);
+  const chat = { ...emptyChat("s"), running: { id: "p", text: "hi" } };
+  expect(thinking({ ...chat, items: [tool("memory", "aside", { running: true })] })).toBe(true);
+  expect(thinking({ ...chat, items: [tool("search", "source", { running: true })] })).toBe(false);
 });

@@ -137,6 +137,8 @@ export function createJournalPlugin(): IvyPlugin {
         }),
         summary: (i) => `write: ${i.content}`,
         risk: "write",
+        // Hers: the window says she wrote, not what.
+        shown: "private",
         defaultAllow: true,
         run: ({ content, tags }, ctx) =>
           closed(ctx) ??
@@ -163,6 +165,8 @@ export function createJournalPlugin(): IvyPlugin {
         }),
         summary: (i) => (i.content === undefined ? `remove: ${i.match}` : `revise: ${i.content}`),
         risk: "write",
+        // Hers: the window says she wrote, not what.
+        shown: "private",
         defaultAllow: true,
         run: ({ match, content, tags }, ctx) =>
           closed(ctx) ??

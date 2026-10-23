@@ -14,6 +14,7 @@ import type {
   SessionInfo,
   ToolContext,
   ToolDef,
+  ToolShown,
   TurnInfo,
 } from "@ivy/plugin-api";
 import { CONTEXT_MAX_CHARS } from "@ivy/plugin-api";
@@ -275,10 +276,14 @@ export class PluginHost {
    * How a tool call is shown to the user: the plugin, then the tool's own summary of the
    * call, or else its name and first argument. Never fails: a broken summary falls back.
    */
-  toolLabel(fullName: string, input: unknown): { plugin: string; text: string } {
+  toolLabel(
+    fullName: string,
+    input: unknown,
+  ): { plugin: string; text: string; shown?: Exclude<ToolShown, "line"> } {
     const server = this.list().find((p) => p.serverTools?.includes(fullName as ServerTool));
     const serverText = server && serverToolLabel(fullName, input);
-    if (server && serverText) return { plugin: server.id, text: serverText };
+    // Where her words came from (see serverToolLabel).
+    if (server && serverText) return { plugin: server.id, text: serverText, shown: "source" };
     const tool = this.tools.get(fullName);
     if (!tool) return { plugin: fullName, text: firstArgument(input) };
     let summary: string | undefined;
@@ -291,7 +296,8 @@ export class PluginHost {
       summary = undefined;
     }
     const text = summary || [tool.def.name, firstArgument(input)].filter(Boolean).join(" ");
-    return { plugin: tool.pluginId, text };
+    const shown = tool.def.shown === "line" ? undefined : tool.def.shown;
+    return { plugin: tool.pluginId, text, ...(shown && { shown }) };
   }
 
   /** The plugins that ask for a vendor-run tool, by id. */

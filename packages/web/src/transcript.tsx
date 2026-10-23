@@ -6,7 +6,9 @@ import {
   Check,
   ChevronRight,
   CircleAlert,
+  Globe,
   LoaderCircle,
+  NotebookPen,
   TriangleAlert,
   X,
 } from "lucide-react";
@@ -21,7 +23,7 @@ import {
   useState,
 } from "react";
 import { imageUrl } from "./api.ts";
-import type { Chat, Item } from "./chat.ts";
+import { arrange, type Chat, type Item, type Shown, type ToolItem, thinking } from "./chat.ts";
 import { useHighlight } from "./highlight.ts";
 import { renderMarkdown, showImage } from "./markdown.ts";
 import { viewImage } from "./viewer.tsx";
@@ -116,28 +118,23 @@ export function Timeline(props: {
     setShown({ id, opened: chat?.items.length ?? 0, arrived: (chat?.items.length ?? 0) > 0 });
   }
   const { opened } = shown;
-  const thinking =
-    chat?.running !== undefined &&
-    !chat.streaming &&
-    !chat.permission &&
-    !chat.items.some((i) => i.kind === "tool" && i.running);
+  const parts = chat ? arrange(chat.items, chat.running !== undefined) : [];
   return (
     <div className="transcript" ref={box} onScroll={onScroll}>
       <div className="column" ref={column}>
         {props.history(place)}
         <div key={id ?? ""} className={`now${shown.arrived ? " arrived" : ""}`}>
           {chat
-            ? chat.items.map((item, i) => (
-                // Items are only appended (a tool's result fills its own), so the index is
-                // stable.
-                // biome-ignore lint/suspicious/noArrayIndexKey: see above
-                <ItemView key={i} item={item} sessionId={chat.id} fresh={i >= opened} />
+            ? parts.map((s) => (
+                // Items are only appended (a tool's result fills its own), so where each
+                // starts is stable.
+                <ShownView key={s.at} shown={s} sessionId={chat.id} fresh={s.at >= opened} />
               ))
             : props.empty}
           {chat?.streaming && (
             <Markdown className="assistant streaming fresh" text={chat.streaming} />
           )}
-          {thinking && <Thinking />}
+          {chat && thinking(chat) && <Thinking />}
         </div>
         {away && (
           <div className="to-end">
@@ -147,6 +144,74 @@ export function Timeline(props: {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+/** An item, or the marks under Ivy's reply (see arrange). */
+export function ShownView({
+  shown,
+  sessionId,
+  fresh,
+}: {
+  shown: Shown;
+  sessionId: string;
+  fresh: boolean;
+}) {
+  if ("item" in shown) return <ItemView item={shown.item} sessionId={sessionId} fresh={fresh} />;
+  return <Marks sources={shown.sources} aside={shown.aside} fresh={fresh} />;
+}
+
+/**
+ * Under Ivy's reply, two quiet marks that open on a click, one at a time: where her words
+ * came from (what she looked up and read), and what she did for herself (a memory saved, her
+ * journal written; the journal only as written). There to see, not in the way of the talk.
+ */
+function Marks({
+  sources,
+  aside,
+  fresh,
+}: {
+  sources: ToolItem[];
+  aside: ToolItem[];
+  fresh: boolean;
+}) {
+  const [open, setOpen] = useState<"sources" | "aside">();
+  const plugins = (tools: ToolItem[]) => [...new Set(tools.map((t) => t.label.plugin))].join(" · ");
+  const mark = (which: "sources" | "aside", tools: ToolItem[], icon: ReactNode, name: string) =>
+    tools.length > 0 && (
+      <button
+        type="button"
+        className={open === which ? "open" : ""}
+        title={name}
+        aria-label={`${name}: ${plugins(tools)}`}
+        aria-expanded={open === which}
+        onClick={() => setOpen(open === which ? undefined : which)}
+      >
+        {icon}
+        {plugins(tools)}
+      </button>
+    );
+  const shown = open === "sources" ? sources : open === "aside" ? aside : [];
+  return (
+    <div className={`marks${fresh ? " fresh" : ""}`}>
+      <div className="chips">
+        {mark("sources", sources, <Globe size={13} />, "Where this came from")}
+        {mark("aside", aside, <NotebookPen size={13} />, "What she noted")}
+      </div>
+      {shown.length > 0 && (
+        <div className="calls">
+          {shown.map((t) =>
+            t.label.shown === "private" ? (
+              <div key={t.id} className="private">
+                <span className="plugin">{t.label.plugin}</span> an entry, hers to keep
+              </div>
+            ) : (
+              <ToolCard key={t.id} item={t} fresh={false} />
+            ),
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -237,7 +302,7 @@ function Markdown({ text, className }: { text: string; className: string }) {
   );
 }
 
-function ToolCard({ item, fresh }: { item: Extract<Item, { kind: "tool" }>; fresh: boolean }) {
+function ToolCard({ item, fresh }: { item: ToolItem; fresh: boolean }) {
   const state = item.running ? "running" : item.isError ? "failed" : "done";
   const icon = item.running ? (
     <LoaderCircle size={14} className="spin" />
