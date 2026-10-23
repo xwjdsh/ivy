@@ -20,6 +20,7 @@ import { AnthropicModelClient, type ModelClient } from "./model.ts";
 import { OpenAIChatClient } from "./openai-model.ts";
 import { Permissions } from "./permissions.ts";
 import { PluginHost } from "./plugins.ts";
+import { Points } from "./points.ts";
 import { sessionHistory } from "./session.ts";
 import { pruneTraces, Tracer } from "./trace.ts";
 
@@ -52,6 +53,11 @@ export interface IvyOptions {
   model?: ModelClient;
   /** Where API keys are kept apart from config.toml; the Keychain on macOS by default. */
   keys?: KeyStore;
+  /**
+   * Sum up a conversation when it is let go (points.ts); on by default. Off for tests whose
+   * model answers a script, which the helper's calls would take answers from.
+   */
+  sumUp?: boolean;
 }
 
 /** Where a provider's API key comes from. */
@@ -103,16 +109,11 @@ export async function createIvy(opts: IvyOptions): Promise<Ivy> {
   pruneTraces(paths.traces, config.trace.retention_days);
   // Plugins get the helper before it exists (it needs the model clients made below).
   let helper: Helper | undefined;
-  const plugins = new PluginHost(
-    paths.data,
-    config.plugins,
-    sessionHistory(paths.sessions),
-    paths.soul,
-    {
-      complete: (call) =>
-        helper ? helper.complete(call) : Promise.reject(new Error("Ivy is still starting")),
-    },
-  );
+  const history = sessionHistory(paths.sessions);
+  const plugins = new PluginHost(paths.data, config.plugins, history, paths.soul, {
+    complete: (call) =>
+      helper ? helper.complete(call) : Promise.reject(new Error("Ivy is still starting")),
+  });
   for (const plugin of opts.plugins) await plugins.register(plugin);
 
   const systemPrompt = new SystemPrompt(paths, plugins);
@@ -145,7 +146,10 @@ export async function createIvy(opts: IvyOptions): Promise<Ivy> {
     (tool) => plugins.isDefaultAllowed(tool),
   );
 
+  let points: Points | undefined;
   const agent = new Agent({
+    // A new conversation starts from the last one's points, which may still be coming.
+    beforeFirstTurn: () => points?.settled() ?? Promise.resolve(),
     config,
     clientFor,
     capabilities,
@@ -154,6 +158,9 @@ export async function createIvy(opts: IvyOptions): Promise<Ivy> {
     systemPrompt: (sessionId) => systemPrompt.textFor(sessionId),
   });
   helper = new Helper({ config, clientFor, capabilities, main: () => agent.modelRef });
+  // Conversations Ivy stopped in were never let go: summed up now, in the background.
+  points = opts.sumUp === false ? undefined : new Points(paths.sessions, history, helper);
+  points?.catchUp();
   const upstream = new Map<string, Promise<string[]>>();
   const listUpstream = (provider: ProviderConfig): Promise<string[]> => {
     let list = upstream.get(provider.name);
@@ -239,6 +246,8 @@ export async function createIvy(opts: IvyOptions): Promise<Ivy> {
     releaseSession(id) {
       systemPrompt.end(id);
       plugins.releaseSession({ id });
+      // What the next conversation picks up from, in the background.
+      void points?.sumUp(id);
     },
   };
 }

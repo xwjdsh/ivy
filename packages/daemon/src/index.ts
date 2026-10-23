@@ -35,6 +35,8 @@ export interface ServeOptions {
   now?: () => number;
   /** Started by `ivy` on demand (see Health.onDemand). */
   onDemand?: boolean;
+  /** See IvyOptions.sumUp. */
+  sumUp?: boolean;
 }
 
 export interface Served {
@@ -52,6 +54,7 @@ export async function serve(opts: ServeOptions): Promise<Served> {
     paths: opts.paths,
     model: opts.model,
     keys: opts.keys,
+    sumUp: opts.sumUp,
   });
   // Images attached to a message never sent (DESIGN.md §5.4), now and every hour.
   clearUploads(ivy.paths.uploads);

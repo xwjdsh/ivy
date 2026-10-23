@@ -15,6 +15,7 @@ function history(
         text,
         ts: `${sessions[id]?.[0]}T12:00:00.000Z`,
       })),
+    points: () => undefined,
   };
 }
 
@@ -78,6 +79,7 @@ test("dates are the user's local ones, for `since` and in headers", () => {
     const early: ConversationHistory = {
       sessions: () => [{ id: "early", updatedAt: ts }],
       messages: () => [{ role: "user", text: "the ffmpeg flags again", ts }],
+      points: () => undefined,
     };
     const out = searchSessions(early, { query: "ffmpeg", since: "2026-10-20" });
     expect(out).toContain("## 2026-10-20 (session early)");
@@ -94,6 +96,7 @@ test("a reply written after outside content taints the session that finds it", (
       { role: "user", text: "what did the review say about the finale?", ts },
       { role: "assistant", text: "It says the finale airs on Friday", ts, outside: true },
     ],
+    points: () => undefined,
   };
   expect(searchSessions(searched, { query: "finale" })).toMatchObject({ outside: true });
   expect(typeof searchSessions(h, { query: "ffmpeg" }, "now")).toBe("string");

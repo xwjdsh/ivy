@@ -1,5 +1,6 @@
-import { definePlugin, defineTool, localDate } from "@ivy/plugin-api";
+import { type ConversationHistory, definePlugin, defineTool, localDate } from "@ivy/plugin-api";
 import { z } from "zod";
+import { continuity } from "./continuity.ts";
 import {
   addTo,
   daysBetween,
@@ -71,10 +72,22 @@ const dateCalc = defineTool({
   },
 });
 
-export default definePlugin({
-  id: "core",
-  version: "0.2.0",
-  description: "Current time in every turn's context; a date arithmetic tool.",
-  tools: [dateCalc],
-  contextFor: ({ now }) => nowLine(now),
-});
+export function createCorePlugin() {
+  let history: ConversationHistory | undefined;
+  return definePlugin({
+    id: "core",
+    version: "0.3.0",
+    description:
+      "The time in every turn's context, how long since the user last wrote, and where the last conversation was left; a date arithmetic tool.",
+    tools: [dateCalc],
+    setup(ctx) {
+      history = ctx.history;
+    },
+    contextFor: ({ sessionId, now }) => {
+      const since = history && continuity(history, sessionId, now);
+      return since ? `${nowLine(now)}\n${since}` : nowLine(now);
+    },
+  });
+}
+
+export default createCorePlugin();

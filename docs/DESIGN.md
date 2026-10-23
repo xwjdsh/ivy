@@ -1,6 +1,6 @@
 # Ivy — Design Document
 
-> Status: **Draft v0.1** · M0 and M1 done; M2 built (daemon, reminders, the app and its chat window), its weeks of use now; company (M3) under way (helper model, web search and fetch, outside content kept out of memory) · Last updated: 2026-10-23
+> Status: **Draft v0.1** · M0 and M1 done; M2 built (daemon, reminders, the app and its chat window), its weeks of use now; company (M3) under way (helper model, web search and fetch, outside content kept out of memory, key points and a sense of time) · Last updated: 2026-10-23
 > This is a living document. Every milestone starts by updating it and ends by recording what changed in the [Decision Log](#13-decision-log).
 
 **Before changing this document**, check every sentence added against this list.
@@ -194,6 +194,7 @@ Todos due (mention them to the user once in this conversation, briefly, whatever
 - **System prompt snapshot (planned):** record the system prompt in the session when a session starts, so a request can be rebuilt from the session file alone (traces can be off or pruned).
 - Usage (tokens, cache hits, and a cost estimate that is recorded but not shown) is written per model call; `/usage` reports tokens.
 - A turn that read outside content records it (an `outside` line, naming the tool), and is tainted until the user's next prompt (§8.1).
+- **Key points (M3):** when a session is let go (idle, or on the next start for those Ivy stopped in), the helper model sums it up: a title, what mattered, what was left open. They are kept beside it (`<id>.points.json`, covering it up to its last message; a conversation taken up again is summed up again when let go), so the transcript stays written by its session alone. They are metadata, not memory: plugins read them with the history, and the next conversation starts from them, its first turn waiting a few seconds for one still being summed up (§11, M3). A conversation of a single message isn't summed up; Ivy's replies in tainted turns are marked as left out, not shown (§8.1).
 - **Images the user sends** are uploaded to the daemon as files when attached (not base64 in a request), and a prompt names them; those never sent are cleared. Sent, they move to a folder beside the session file, of its name, each named by its content's hash; the session line names the file instead of holding it, so the file stays readable, and the store reads them back into image blocks when it loads. They live and go with their session, and stay in the history sent to the model; compaction (§5.2) is where history gets shorter.
 
 ### 5.5 Permission Gate
@@ -345,7 +346,7 @@ export interface PluginContext {
   dataDir: string;            // ~/.ivy/data/<pluginId>/
   soulFile: string;           // SOUL.md: read freely; changed only by an approved proposal
   log: Logger;
-  history: ConversationHistory;  // past conversations as text, read-only
+  history: ConversationHistory;  // past conversations as text, and their key points; read-only
   helper: HelperModel;        // side work on the helper model (§5.2): text in, text out, no tools
   // Planned: secrets (macOS Keychain), kernel (notify, call other tools)
 }
@@ -388,7 +389,7 @@ Ivy reuses other agents' work through open standards, not their plugin formats:
 ├── cache/uploads/       # images attached to a message not sent yet
 ├── daemon.sock          # the daemon's socket, for the user alone (M2, §5.7)
 ├── daemon/              # the daemon's own state, e.g. reminders already announced; daemon.log of one `ivy` started
-├── sessions/            # append-only JSONL transcripts; beside each, a folder of the images sent in it
+├── sessions/            # append-only JSONL transcripts; beside each, its key points (<id>.points.json) and a folder of the images sent in it
 ├── data/<pluginId>/     # per-plugin storage
 │   ├── memory/          #   memory plugin: USER.md, MEMORY.md (hot), ARCHIVE.md (cold) (§8.1)
 │   ├── journal/         #   journal plugin: IVY.md, Ivy's own journal (§8.1)
@@ -409,7 +410,7 @@ The data root is `$IVY_HOME`, default `~/.ivy`, which the terminal and the app s
 
 | Plugin | Milestone | Summary | Key tools |
 |---|---|---|---|
-| `core` | M0 / M1 | Current time in every turn's context; date arithmetic | `date_calc` |
+| `core` | M0 / M1 | Current time in every turn's context, with how long since the user last wrote and, as a conversation starts, where the last one was left (M3); date arithmetic | `date_calc` |
 | `memory` | M1 | Preferences, facts and todos as markdown files: capped hot files injected whole per session, a searchable archive (§8.1) | `save`, `update`, `move`, `delete`, `search`, `session_search` |
 | `journal` | M1 | `IVY.md`, Ivy's own first-person journal of what it lived with the user, in every session; proposals for `SOUL.md`; `/journal` to read it; off with `enabled = false` (§8.1) | `write`, `revise`, `propose_soul_edit` |
 | `reflection` | M3 | The user's days and moods as daily notes, and weekly and monthly reviews built from them, in Ivy's words, from what the user shared; run as jobs, kept as files (§11, M3) | job `daily`, job `weekly`, job `monthly` |
@@ -688,7 +689,7 @@ Goal: Ivy is someone the user wants to keep talking to (G1, G8): more like a per
   - Kept even when missed: the evening job that writes the day's note also saves what the user said that day that should have been kept and wasn't, as claude.ai's memory is drawn from past chats; only what was said, never what the job infers. It reads the user's own words, not tool results or outside content, so what it keeps is untainted (§8.1), even from a conversation where Ivy searched.
   - Recalled without the model having to think of it: each turn, what the user just said is searched for in memory, past conversations and the daily notes, and the best hits go into that turn's context; the last days' notes and the last conversation's key points come with every conversation.
   - Used lightly, when it matters (the cat's name, a shared joke), not recited; how the user wants to be met when low held to.
-- **A sense of time and of going on:** each turn's context says how long since the last conversation, and what was left open there (from the session key points below), so after days apart Ivy notices it and picks up the thread; late night, weekends and holidays change how she talks.
+- **A sense of time and of going on:** each turn's context says how long since the user last wrote, and a conversation's first turn what was left open in the last one (key points, §5.4), so after days apart Ivy notices it and picks up the thread; late night, weekends and holidays change how she talks.
 - **A life of her own:** a job has Ivy look back over recent conversations and write in her journal what she made of them (§8.1, real, not performed), which she may bring up herself next time.
 - **The helper model (§5.2)**, which fetch and session key points need.
 - **Knowing what the user is talking about:** a new show, the news, a meme: she looks up what may have changed since her model's training, or what she doesn't know, rather than guessing or giving up; not while the user is pouring something out. The `web` plugin (§8; fetch rules, §6.3). What it brings is outside content, kept out of standing memory unless the user says yes (§8.1); what the user says in such a conversation is still kept, by the evening pass (above).
@@ -700,9 +701,9 @@ Goal: Ivy is someone the user wants to keep talking to (G1, G8): more like a per
 - **A daily note:** each evening that something was said, Ivy writes down the user's day as they shared it, in her words, from the day's conversations (what both said, not tool traffic, nor Ivy's replies after outside content, §8.1). The record the reviews are built from.
 - **Said, seen, sensed, kept apart** in notes and reviews, so a guess never passes for the user's truth: what the user said, as said; what was seen to recur, as a count with the conversations it came from ("overtime came up three times this week", not "a stressful week"); and Ivy's impressions of moods or reasons, only in her own voice and with their doubt ("you seemed tired to me this week; I'm not sure it was the overtime"). An impression never reaches memory and is never the reason Ivy writes first; the user's answer to it ("it wasn't work, it was home") is what they said, and is kept as such.
 - **Weekly and monthly reviews**, in Ivy's words, from the daily notes: what came up, what kept coming back, how the user's moods went as they told them and as she sensed them (kept apart, as above), what changed, what was left open (begun in a conversation and not followed up, not what she supposes went unsaid). A month is built from its weeks, and a period with nothing said gets none. Notes and reviews are files the user can read, answer, edit or delete, under the plugin's data; one is to answer, as a conversation is.
-- Session titles and key points by the helper model (§5.2), kept as session metadata, not memory: what the daily notes, the picking up of threads and the search start from.
+- Session titles and key points (§5.4): what the daily notes, the picking up of threads and the search start from.
 - **Ivy writes first**, as a friend does, only with a reason from what the user said, never from an impression: how the interview on Thursday went, whether the user sleeps better now, a todo come due. Ivy notes such a follow-up in the conversation, as it does a todo. Rare (a cap a day, quiet hours, off with one switch), and never chasing an unanswered one; the message comes as hers in the conversation, with a notification.
-- **Off the record:** a conversation the user marks so writes no memory, goes into no daily note or review, and is let go when it ends; Ivy says so up front, and does as it says. **Taken back:** "don't keep that", said after, undoes what that part of the conversation wrote to memory and keeps it out of the notes and reviews.
+- **Off the record:** a conversation the user marks so writes no memory and no key points, goes into no daily note or review, and is let go when it ends; Ivy says so up front, and does as it says. **Taken back:** "don't keep that", said after, undoes what that part of the conversation wrote to memory and keeps it out of the key points, notes and reviews.
 - **Done when:** I talk to Ivy most days because I want to, and Sunday's review is one I read and answer.
 
 ### M4 — Reached from anywhere

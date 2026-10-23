@@ -19,7 +19,7 @@ async function start(settings: Record<string, unknown> = {}) {
     dataDir: dir,
     soulFile: join(dir, "SOUL.md"),
     log,
-    history: { sessions: () => [], messages: () => [] },
+    history: { sessions: () => [], messages: () => [], points: () => undefined },
     helper: { complete: async () => "" },
   });
 }

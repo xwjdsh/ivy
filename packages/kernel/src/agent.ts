@@ -99,6 +99,8 @@ export interface AgentOptions {
   capabilities: Capabilities;
   /** Who may run which tool without asking. */
   permissions: Permissions;
+  /** What a session's first turn waits for (a bounded wait), before building its context. */
+  beforeFirstTurn?(): Promise<void>;
 }
 
 /** What the user sent: text, or text with the images sent along (in the session's folder). */
@@ -120,6 +122,8 @@ export interface TurnResult {
 }
 
 const MAX_PARSE_RETRIES = 2;
+/** The longest a first turn waits for what it starts from: never long, whatever it is. */
+const FIRST_TURN_WAIT_MS = 5000;
 
 /** What a turn says before any model is chosen (a new install). */
 export const NO_MODEL =
@@ -190,6 +194,20 @@ export class Agent {
     }
     const { text: userText, images = [] } = typeof prompt === "string" ? { text: prompt } : prompt;
     const system = await this.opts.systemPrompt(session.id);
+    const ready = session.messages.length === 0 && this.opts.beforeFirstTurn?.();
+    // Never longer than the cap, nor past an interrupt.
+    if (ready) {
+      await new Promise<void>((resolve) => {
+        const done = () => {
+          clearTimeout(timer);
+          turn.signal.removeEventListener("abort", done);
+          resolve();
+        };
+        const timer = setTimeout(done, FIRST_TURN_WAIT_MS);
+        turn.signal.addEventListener("abort", done);
+        ready.then(done, done);
+      });
+    }
     const context = await this.opts.plugins.turnContext({
       sessionId: session.id,
       userText,

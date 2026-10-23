@@ -55,7 +55,11 @@ export interface ToolOutcome {
   outside?: boolean;
 }
 
-const NO_HISTORY: ConversationHistory = { sessions: () => [], messages: () => [] };
+const NO_HISTORY: ConversationHistory = {
+  sessions: () => [],
+  messages: () => [],
+  points: () => undefined,
+};
 const NO_HELPER: HelperModel = {
   complete: () => Promise.reject(new Error("no helper model here")),
 };

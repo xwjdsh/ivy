@@ -13,7 +13,7 @@ async function plugin(read: (url: string) => Promise<Page>) {
     dataDir: "",
     soulFile: "",
     log,
-    history: { sessions: () => [], messages: () => [] },
+    history: { sessions: () => [], messages: () => [], points: () => undefined },
     helper: {
       async complete(call) {
         asked.push(call);

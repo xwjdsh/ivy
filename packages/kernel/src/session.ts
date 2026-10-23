@@ -6,10 +6,11 @@ import {
   readFileSync,
   renameSync,
   statSync,
+  writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
 import type Anthropic from "@anthropic-ai/sdk";
-import type { ConversationHistory, PastMessage } from "@ivy/plugin-api";
+import type { ConversationHistory, PastMessage, SessionPoints } from "@ivy/plugin-api";
 import { imageTypeOf, isImageName } from "./images.ts";
 import { promptText } from "./turn-context.ts";
 
@@ -282,9 +283,27 @@ export function trashSession(dir: string, id: string): boolean {
   if (!isSessionId(id) || !existsSync(file)) return false;
   mkdirSync(join(dir, TRASH), { recursive: true });
   renameSync(file, join(dir, TRASH, `${id}.jsonl`));
-  // Its images go with it.
+  // Its images and key points go with it.
   if (existsSync(join(dir, id))) renameSync(join(dir, id), join(dir, TRASH, id));
+  const points = pointsFile(dir, id);
+  if (existsSync(points)) renameSync(points, join(dir, TRASH, `${id}.points.json`));
   return true;
+}
+
+/**
+ * A session's key points (points.ts): a file beside its transcript, so the transcript stays
+ * written by its Session alone and its time stays that of the last activity.
+ */
+export function pointsFile(dir: string, id: string): string {
+  return join(dir, `${id}.points.json`);
+}
+
+/** Keep a session's key points, replacing the last; written whole, then moved into place. */
+export function savePoints(dir: string, id: string, points: SessionPoints): void {
+  if (!isSessionId(id) || !existsSync(join(dir, `${id}.jsonl`))) return;
+  const file = pointsFile(dir, id);
+  writeFileSync(`${file}.new`, `${JSON.stringify(points, null, 2)}\n`);
+  renameSync(`${file}.new`, file);
 }
 
 /** A session id names a file in the sessions folder, so it may not reach outside it. */
@@ -364,6 +383,23 @@ export function sessionHistory(dir: string): ConversationHistory {
         if (!text) return [];
         return [{ role, text, ts: r.ts, ...(outside && role === "assistant" && { outside }) }];
       });
+    },
+    points(sessionId) {
+      const file = pointsFile(dir, sessionId);
+      if (!isSessionId(sessionId) || !existsSync(file)) return undefined;
+      try {
+        const p = JSON.parse(readFileSync(file, "utf8")) as SessionPoints;
+        // A file edited by hand or damaged is no points, rather than a failing reader.
+        const lines = (v: unknown) => Array.isArray(v) && v.every((x) => typeof x === "string");
+        const sound =
+          typeof p.title === "string" &&
+          lines(p.points) &&
+          lines(p.open) &&
+          typeof p.through === "string";
+        return sound ? p : undefined;
+      } catch {
+        return undefined;
+      }
     },
   };
 }

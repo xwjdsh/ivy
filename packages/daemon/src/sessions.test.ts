@@ -57,6 +57,8 @@ async function start(script: Step[], permissionTimeoutMs?: number, listed?: stri
     keys,
     permissionTimeoutMs,
     now: () => clock.now,
+    // Every model call here answers the script.
+    sumUp: false,
   });
   running.push(served);
   const { sessions } = served;

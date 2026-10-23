@@ -153,6 +153,7 @@ describe("Agent.runTurn", () => {
     extraPlugins: IvyPlugin[] = [],
     toml = OPUS,
     extraToml = "",
+    beforeFirstTurn?: () => Promise<void>,
   ) {
     const paths = resolvePaths(dir);
     writeFileSync(paths.config, `${toml}${extraToml}`);
@@ -182,6 +183,7 @@ describe("Agent.runTurn", () => {
       systemPrompt: async () => systemPrompt,
       capabilities,
       permissions,
+      beforeFirstTurn,
     });
     confirms.set(agent, confirm);
     return agent;
@@ -195,6 +197,17 @@ describe("Agent.runTurn", () => {
       onEvent: (e) => events.push(e),
       confirm: confirms.get(agent) ?? (async () => "once"),
     });
+
+  test("a session's first turn waits for what it starts from, briefly; later turns don't", async () => {
+    let waited = 0;
+    const model = new FakeModel([reply("end_turn", [text("hi")]), reply("end_turn", [text("ok")])]);
+    const agent = await makeAgent(model, "read", undefined, "sys", [], OPUS, "", async () => {
+      waited++;
+    });
+    await run(agent, "hello");
+    await run(agent, "again");
+    expect(waited).toBe(1);
+  });
 
   test("plain answer ends the turn", async () => {
     const model = new FakeModel([reply("end_turn", [text("hi")])]);

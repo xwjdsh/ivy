@@ -122,6 +122,23 @@ export interface ConversationHistory {
   /** Session ids with their last activity, newest first. */
   sessions(): Array<{ id: string; updatedAt: string }>;
   messages(sessionId: string): PastMessage[];
+  /** What the helper model made of a conversation once it was let go, if it has yet. */
+  points(sessionId: string): SessionPoints | undefined;
+}
+
+/**
+ * A conversation summed up by the helper model (DESIGN.md §11, M3): session metadata, not
+ * memory, from what was said (not Ivy's replies after outside content).
+ */
+export interface SessionPoints {
+  /** A few words, in the conversation's language. */
+  title: string;
+  /** What was talked about and what mattered to the user. */
+  points: string[];
+  /** What was left open: something the user meant to do, was waiting on, or would come back to. */
+  open: string[];
+  /** ISO time of the last message summed up. */
+  through: string;
 }
 
 /** What a plugin knows about the turn it is adding context to. */

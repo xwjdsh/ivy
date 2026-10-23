@@ -65,3 +65,51 @@ test("date_calc explains missing arguments", () => {
   expect(() => calc({ op: "diff", date: "2026-10-16" })).toThrow('"diff" needs `to`');
   expect(() => calc({ op: "add" })).toThrow('"add" needs `amount` and `unit`');
 });
+
+const { continuity } = await import("./continuity.ts");
+type History = import("@ivy/plugin-api").ConversationHistory;
+
+/** Sessions newest first, each with its messages as [role, local time]. */
+function history(
+  sessions: Record<string, Array<["user" | "assistant", Date]>>,
+  points: Record<string, { title: string; points: string[]; open: string[] }> = {},
+): History {
+  return {
+    sessions: () => Object.keys(sessions).map((id) => ({ id, updatedAt: "" })),
+    messages: (id) =>
+      (sessions[id] ?? []).map(([role, at]) => ({ role, text: "…", ts: at.toISOString() })),
+    points: (id) => (points[id] ? { ...points[id], through: "" } : undefined),
+  };
+}
+
+test("after a while apart, how long; at a conversation's start, where the last was left", () => {
+  const now = new Date(2026, 9, 23, 21, 0);
+  const h = history(
+    {
+      old: [
+        ["user", new Date(2026, 9, 20, 22, 15)],
+        ["assistant", new Date(2026, 9, 20, 22, 16)],
+      ],
+    },
+    { old: { title: "面试准备", points: ["周四有面试。"], open: ["面试结果"] } },
+  );
+  expect(continuity(h, "new", now)).toBe(
+    [
+      "The user last wrote 2 days ago (2026-10-20 Tuesday 22:15), in another conversation.",
+      'The last conversation, as summed up after it (not the user\'s words): "面试准备". 周四有面试。',
+      "Left open there: 面试结果",
+    ].join("\n"),
+  );
+  // Later in the same conversation, the last one isn't brought up again.
+  const going = history({
+    now: [["user", new Date(2026, 9, 23, 17, 30)]],
+    old: [["user", new Date(2026, 9, 20, 22, 15)]],
+  });
+  expect(continuity(going, "now", now)).toBe(
+    "The user last wrote 3 hours ago (2026-10-23 Friday 17:30).",
+  );
+  // Talking on: nothing to say.
+  expect(
+    continuity(history({ now: [["user", new Date(2026, 9, 23, 20, 40)]] }), "now", now),
+  ).toBeNull();
+});
