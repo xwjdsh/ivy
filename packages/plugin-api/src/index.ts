@@ -5,13 +5,23 @@ import type { z } from "zod";
 
 export type RiskLevel = "read" | "write" | "external" | "dangerous";
 
-export type ToolResult = string | { content: string; isError?: boolean };
+/**
+ * `outside`: the result is outside content (a web page, mail, search results, or words that
+ * may repeat them), someone else's text: the session has read it, and is tainted until the
+ * user speaks again (DESIGN.md §8.1).
+ */
+export type ToolResult = string | { content: string; isError?: boolean; outside?: boolean };
 
 export interface ToolContext {
   /** Aborted when the user interrupts the turn. */
   signal: AbortSignal;
   /** The session the call belongs to. */
   sessionId: string;
+  /**
+   * The session read outside content since the user's last message, before this call (see
+   * ToolResult), so what it writes may carry someone else's words.
+   */
+  tainted: boolean;
   log: Logger;
 }
 
@@ -32,6 +42,12 @@ export interface ToolDef<S extends z.ZodType = z.ZodType> {
    * name and its first argument.
    */
   summary?(input: z.infer<S>): string;
+  /**
+   * Why this call needs the user's OK whatever the permission rules allow, or nothing. Asked
+   * every time, with no "for this session" or "always"; a deny rule still wins. Memory asks
+   * this before a tainted session writes to the files loaded in every session.
+   */
+  askFirst?(input: z.infer<S>, call: { tainted: boolean }): string | undefined;
   run(input: z.infer<S>, ctx: ToolContext): Promise<ToolResult> | ToolResult;
 }
 
@@ -66,6 +82,8 @@ export interface PastMessage {
   text: string;
   /** ISO time it was written. */
   ts: string;
+  /** Ivy's reply in a turn that read outside content: it may repeat someone else's words. */
+  outside?: boolean;
 }
 
 /**

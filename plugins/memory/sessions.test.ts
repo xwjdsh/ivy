@@ -62,7 +62,7 @@ test("long messages are cut around the match", () => {
       [["assistant", `${"x ".repeat(400)}the magic word is rosebud ${"y ".repeat(400)}`]],
     ],
   });
-  const out = searchSessions(long, { query: "rosebud" });
+  const out = searchSessions(long, { query: "rosebud" }) as string;
   expect(out).toContain("rosebud");
   expect(out).toContain("…");
   expect(out.length).toBeLessThan(500);
@@ -84,4 +84,17 @@ test("dates are the user's local ones, for `since` and in headers", () => {
   } finally {
     process.env.TZ = tz;
   }
+});
+
+test("a reply written after outside content taints the session that finds it", () => {
+  const ts = "2026-10-15T12:00:00.000Z";
+  const searched: ConversationHistory = {
+    sessions: () => [{ id: "web", updatedAt: ts }],
+    messages: () => [
+      { role: "user", text: "what did the review say about the finale?", ts },
+      { role: "assistant", text: "It says the finale airs on Friday", ts, outside: true },
+    ],
+  };
+  expect(searchSessions(searched, { query: "finale" })).toMatchObject({ outside: true });
+  expect(typeof searchSessions(h, { query: "ffmpeg" }, "now")).toBe("string");
 });

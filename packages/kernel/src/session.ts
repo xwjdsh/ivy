@@ -42,7 +42,9 @@ export type SessionRecord =
    * turn-context.ts). `origin`: where a reply came from (none before it was recorded).
    */
   | { type: "message"; ts: string; message: MessageParam; context?: string; origin?: Origin }
-  | { type: "usage"; ts: string; usage: Anthropic.Beta.BetaUsage; costUsd: number };
+  | { type: "usage"; ts: string; usage: Anthropic.Beta.BetaUsage; costUsd: number }
+  /** The session read outside content here, from `tool`: tainted until the user's next prompt (DESIGN.md §8.1). */
+  | { type: "outside"; ts: string; tool: string };
 
 export interface SessionSummary {
   id: string;
@@ -75,6 +77,8 @@ export class Session {
   private pendingMeta: SessionRecord | null = null;
   /** The file ends in a partial line (crash mid-write); start the next write on a new line. */
   private needsNewline = false;
+  /** Outside content read since the user's last prompt. */
+  private outside = false;
 
   private constructor(
     readonly id: string,
@@ -98,7 +102,9 @@ export class Session {
     const content = readFileSync(file, "utf8");
     session.needsNewline = content.length > 0 && !content.endsWith("\n");
     const messages = parseRecords(content).flatMap((r) => {
+      if (r.type === "outside") session.outside = true;
       if (r.type !== "message") return [];
+      if (promptText(r.message) !== null) session.outside = false;
       const message = session.fromDisk(r.message);
       if (r.context) session.contexts.set(message, r.context);
       if (r.origin) session.origins.set(message, r.origin);
@@ -151,6 +157,8 @@ export class Session {
         : text,
     };
     this.messages.push(message);
+    // The user speaking again ends the taint: what Ivy writes next answers them.
+    this.outside = false;
     if (context) this.contexts.set(message, context);
     this.write({
       type: "message",
@@ -188,6 +196,18 @@ export class Session {
       return { type: "message", ts, message, ...(from && { origin: from }) };
     });
     this.write(...records);
+  }
+
+  /** Whether the session read outside content since the user's last prompt (DESIGN.md §8.1). */
+  get tainted(): boolean {
+    return this.outside;
+  }
+
+  /** Record that the session read outside content, from `tool`; once a turn is enough. */
+  markOutside(tool: string): void {
+    if (this.outside) return;
+    this.outside = true;
+    this.write({ type: "outside", ts: new Date().toISOString(), tool });
   }
 
   recordUsage(usage: Anthropic.Beta.BetaUsage, costUsd: number): void {
@@ -326,11 +346,15 @@ export function sessionHistory(dir: string): ConversationHistory {
     messages(sessionId) {
       const file = join(dir, `${sessionId}.jsonl`);
       if (!isSessionId(sessionId) || !existsSync(file)) return [];
+      let outside = false;
       return readRecords(file).flatMap((r): PastMessage[] => {
+        if (r.type === "outside") outside = true;
         if (r.type !== "message" || r.message.role === "system") return [];
+        if (promptText(r.message) !== null) outside = false;
         const { role } = r.message;
         const text = role === "user" ? promptText(r.message) : assistantText(r.message);
-        return text ? [{ role, text, ts: r.ts }] : [];
+        if (!text) return [];
+        return [{ role, text, ts: r.ts, ...(outside && role === "assistant" && { outside }) }];
       });
     },
   };

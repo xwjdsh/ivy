@@ -28,11 +28,16 @@ beforeEach(async () => {
   await start();
 });
 
-const call = (name: string, input: object): Promise<ToolResult> => {
+const call = (name: string, input: object, tainted = false): Promise<ToolResult> => {
   const tool = plugin.tools?.find((t) => t.name === name);
   if (!tool) throw new Error(name);
   return Promise.resolve(
-    tool.run(input as never, { signal: new AbortController().signal, log, sessionId: "s" }),
+    tool.run(input as never, {
+      signal: new AbortController().signal,
+      log,
+      sessionId: "s",
+      tainted,
+    }),
   );
 };
 const text = (r: ToolResult) => (typeof r === "string" ? r : r.content);
@@ -326,4 +331,20 @@ test("reminders: open todos whose time falls in the window, dated ones at remind
   expect((await ask(local(8), local(10)))?.find((r) => r.title === "Pay the rent")?.body).toBe(
     "Was due today",
   );
+});
+
+test("after outside content, writes of new words to any file are asked first", () => {
+  const ask = (name: string, input: object, tainted = true) =>
+    plugin.tools?.find((t) => t.name === name)?.askFirst?.(input as never, { tainted });
+  const reason = "this turn read outside content";
+  expect(ask("save", { file: "user", content: "x" })).toBe(reason);
+  expect(ask("save", { file: "memory", content: "x" })).toBe(reason);
+  expect(ask("save", { file: "user", content: "x" }, false)).toBeUndefined();
+  expect(ask("update", { match: "x", content: "y" })).toBe(reason);
+  expect(ask("update", { match: "x", due: "2026-10-30" })).toBe(reason);
+  // Confirming or finishing an entry, or retiring it, adds no new words.
+  expect(ask("update", { match: "x" })).toBeUndefined();
+  expect(ask("update", { match: "x", done: true })).toBeUndefined();
+  expect(ask("move", { match: "x", to: "archive" })).toBeUndefined();
+  expect(ask("move", { match: "x", to: "memory" })).toBe(reason);
 });

@@ -33,11 +33,16 @@ beforeEach(async () => {
   await start();
 });
 
-const call = (name: string, input: object): Promise<ToolResult> => {
+const call = (name: string, input: object, tainted = false): Promise<ToolResult> => {
   const tool = plugin.tools?.find((t) => t.name === name);
   if (!tool) throw new Error(name);
   return Promise.resolve(
-    tool.run(input as never, { signal: new AbortController().signal, log, sessionId: "s" }),
+    tool.run(input as never, {
+      signal: new AbortController().signal,
+      log,
+      sessionId: "s",
+      tainted,
+    }),
   );
 };
 const text = (r: ToolResult) => (typeof r === "string" ? r : r.content);
@@ -220,4 +225,16 @@ test("/journal shows the entries, usage and where the file is", async () => {
   expect(out).toContain("Left out of what Ivy sees (hidden characters");
   expect(out.split("bad").length).toBe(2); // listed once, under "left out" only
   expect(out).toContain(`File: ${join(dir, "IVY.md")}`);
+});
+
+test("the journal is closed to a conversation that read outside content", async () => {
+  const r = await call("write", { content: "The review made me want to watch it" }, true);
+  expect(r).toMatchObject({ isError: true });
+  expect(text(r)).toContain("IVY.md is closed for now");
+  expect(existsSync(join(dir, "IVY.md"))).toBe(false);
+  for (const name of ["revise", "propose_soul_edit"]) {
+    expect(await call(name, { match: "x", why: "x", new_text: "x" }, true)).toMatchObject({
+      isError: true,
+    });
+  }
 });

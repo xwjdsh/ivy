@@ -47,6 +47,8 @@ interface RegisteredTool {
 export interface ToolOutcome {
   content: string;
   isError: boolean;
+  /** Outside content (see ToolResult in the plugin API). */
+  outside?: boolean;
 }
 
 const NO_HISTORY: ConversationHistory = { sessions: () => [], messages: () => [] };
@@ -280,6 +282,14 @@ export class PluginHost {
     return this.tools.get(fullName)?.def.risk;
   }
 
+  /** Why a call needs the user's OK whatever the rules allow (the tool's `askFirst`), if it does. */
+  askFirst(fullName: string, input: unknown, tainted: boolean): string | undefined {
+    const def = this.tools.get(fullName)?.def;
+    if (!def?.askFirst) return undefined;
+    const parsed = def.input.safeParse(input);
+    return parsed.success ? def.askFirst(parsed.data, { tainted }) : undefined;
+  }
+
   /** Tool definitions for the API, sorted so the request prefix stays byte-stable for caching. */
   apiTools(): Anthropic.Beta.BetaTool[] {
     return this.sortedTools().map(({ fullName, def }) => ({
@@ -310,7 +320,11 @@ export class PluginHost {
       const result = await tool.def.run(parsed.data, ctx);
       return typeof result === "string"
         ? { content: result, isError: false }
-        : { content: result.content, isError: result.isError ?? false };
+        : {
+            content: result.content,
+            isError: result.isError ?? false,
+            ...(result.outside && { outside: true }),
+          };
     } catch (err) {
       return { content: `Tool failed: ${errorMessage(err)}`, isError: true };
     }

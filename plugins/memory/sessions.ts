@@ -3,7 +3,7 @@
 // long conversation can't crowd out the others, and each hit comes with a neighboring
 // message for context. All sessions are searched; an index can come when it gets slow.
 
-import type { ConversationHistory, PastMessage } from "@ivy/plugin-api";
+import type { ConversationHistory, PastMessage, ToolResult } from "@ivy/plugin-api";
 import { localDate } from "./format.ts";
 import { search, terms } from "./search.ts";
 
@@ -26,7 +26,7 @@ export function searchSessions(
   history: ConversationHistory,
   input: SessionSearchInput,
   currentSession?: string,
-): string {
+): ToolResult {
   const limit = input.limit ?? 3;
   const sessions = history
     .sessions()
@@ -57,6 +57,7 @@ export function searchSessions(
   if (shown.length === 0) return "No past conversation matches.";
 
   const words = terms(input.query);
+  let outside = false;
   const blocks = shown.map((hits) => {
     const first = hits[0] as (typeof items)[number];
     const indexes = new Set<number>();
@@ -64,13 +65,19 @@ export function searchSessions(
     const lines = [...indexes]
       .filter((i) => i >= 0 && i < first.messages.length)
       .sort((a, b) => a - b)
-      .map((i) => line(first.messages[i] as PastMessage, words));
+      .map((i) => {
+        const m = first.messages[i] as PastMessage;
+        if (m.outside) outside = true;
+        return line(m, words);
+      });
     return `## ${first.entry.date} (session ${first.session})\n${lines.join("\n")}`;
   });
-  return [
+  const content = [
     `${shown.length} past ${shown.length === 1 ? "session" : "sessions"} matched:`,
     ...blocks,
   ].join("\n\n");
+  // A reply from a turn that read outside content may repeat it, so finding one taints this turn.
+  return outside ? { content, outside } : content;
 }
 
 function line(m: PastMessage, words: string[]): string {

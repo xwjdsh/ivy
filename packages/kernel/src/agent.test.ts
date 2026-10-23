@@ -13,8 +13,38 @@ import { claimUploads, saveUpload } from "./images.ts";
 import type { ModelClient, ModelMessage, ModelRequest, RequestExtras } from "./model.ts";
 import { type PermissionChoice, Permissions } from "./permissions.ts";
 import { PluginHost } from "./plugins.ts";
-import { Session } from "./session.ts";
+import { Session, sessionHistory } from "./session.ts";
 import { PNG } from "./testing.ts";
+
+/** A page tool that brings outside content, and a note tool that asks once that has happened. */
+function outsidePlugin(seen: boolean[]) {
+  return definePlugin({
+    id: "w",
+    version: "0",
+    description: "test",
+    tools: [
+      defineTool({
+        name: "page",
+        description: "page",
+        input: z.object({}),
+        risk: "read",
+        run: () => ({ content: "a page someone else wrote", outside: true }),
+      }),
+      defineTool({
+        name: "note",
+        description: "note",
+        input: z.object({}),
+        risk: "write",
+        defaultAllow: true,
+        askFirst: (_, { tainted }) => (tainted ? "read outside content" : undefined),
+        run: (_, ctx) => {
+          seen.push(ctx.tainted);
+          return "noted";
+        },
+      }),
+    ],
+  });
+}
 
 type Block = ModelMessage["content"][number];
 
@@ -39,7 +69,7 @@ const toolUse = (id: string, name: string, input: unknown = {}) =>
 class FakeModel implements ModelClient {
   readonly requests: ModelRequest[] = [];
   readonly extras: Array<RequestExtras | undefined> = [];
-  constructor(private readonly script: Array<ModelMessage | (() => never)>) {}
+  constructor(readonly script: Array<ModelMessage | (() => never)>) {}
 
   async stream(
     request: ModelRequest,
@@ -644,5 +674,81 @@ describe("Agent.runTurn", () => {
       fallbacks: "default",
       betas: ["server-side-fallback-2026-07-01"],
     });
+  });
+
+  test("outside content taints the turn from the next step, and tools may ask then", async () => {
+    const seen: boolean[] = [];
+    const asked: ToolCallRequest[] = [];
+    const model = new FakeModel([
+      // Written before the page was read: runs as before, unasked.
+      reply("tool_use", [toolUse("tu_1", "w__page"), toolUse("tu_2", "w__note")]),
+      reply("tool_use", [toolUse("tu_3", "w__note")]),
+      reply("end_turn", [text("the page says so")]),
+    ]);
+    const agent = await makeAgent(
+      model,
+      "read",
+      async (c) => {
+        asked.push(c);
+        return "always";
+      },
+      "sys",
+      [outsidePlugin(seen)],
+    );
+    expect(session.tainted).toBe(false);
+    await run(agent, "go");
+    expect(seen).toEqual([false, true]);
+    // Asked every time: "always" adds no rule.
+    expect(asked).toMatchObject([
+      { name: "w__note", reason: "read outside content", canRemember: false },
+    ]);
+    expect(readFileSync(join(dir, "config.toml"), "utf8")).not.toContain("w__note");
+    expect(session.tainted).toBe(true);
+    expect(Session.load(join(dir, "sessions"), session.id).tainted).toBe(true);
+
+    // The user speaking again ends it: the next turn writes unasked.
+    model.script.push(
+      reply("tool_use", [toolUse("tu_4", "w__note")]),
+      reply("end_turn", [text("noted, and on to dinner")]),
+    );
+    await run(agent, "anyway, what should I cook?");
+    expect(seen).toEqual([false, true, false]);
+    expect(asked).toHaveLength(1);
+    expect(session.tainted).toBe(false);
+    expect(Session.load(join(dir, "sessions"), session.id).tainted).toBe(false);
+    // Ivy's reply in the turn that read the page may repeat it; others may not.
+    const history = sessionHistory(join(dir, "sessions")).messages(session.id);
+    expect(history).toMatchObject([
+      { role: "user", text: "go" },
+      { role: "assistant", text: "the page says so", outside: true },
+      { role: "user", text: "anyway, what should I cook?" },
+      { role: "assistant", text: "noted, and on to dinner" },
+    ]);
+    expect(history[3]?.outside).toBeUndefined();
+  });
+
+  test("a deny rule still wins over a tool's own ask", async () => {
+    const seen: boolean[] = [];
+    let asked = 0;
+    const model = new FakeModel([
+      reply("tool_use", [toolUse("tu_1", "w__page")]),
+      reply("tool_use", [toolUse("tu_2", "w__note")]),
+      reply("end_turn", [text("ok")]),
+    ]);
+    const agent = await makeAgent(
+      model,
+      "read",
+      async () => {
+        asked++;
+        return "once";
+      },
+      "sys",
+      [outsidePlugin(seen)],
+      OPUS,
+      '[permissions]\ndeny = ["w__note"]\n',
+    );
+    await run(agent, "go");
+    expect(asked).toBe(0);
+    expect(seen).toEqual([]);
   });
 });

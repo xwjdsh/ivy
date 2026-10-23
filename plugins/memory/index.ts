@@ -39,6 +39,12 @@ import { asToolResult, fullNote, usageText } from "./write.ts";
  */
 const TAGS_HELP = 'Comma-separated, in both languages, e.g. "dentist, 牙医, 看牙"';
 
+/**
+ * Why a turn that read outside content asks before it writes to the files in every session
+ * (DESIGN.md §8.1): the words may be someone else's.
+ */
+const OUTSIDE = "this turn read outside content";
+
 /** Todos overdue for longer than this are flagged in /memory. */
 const LONG_OVERDUE_DAYS = 30;
 /** At most this many due todos in a turn's context. */
@@ -128,6 +134,7 @@ export function createMemoryPlugin(): IvyPlugin {
             .describe("Save even though a nearly identical entry exists"),
         }),
         summary: (i) => `save to ${FILE_NAMES[i.file]}: ${i.content}`,
+        askFirst: (_, { tainted }) => (tainted ? OUTSIDE : undefined),
         risk: "write",
         defaultAllow: true,
         run: (input) =>
@@ -165,6 +172,9 @@ export function createMemoryPlugin(): IvyPlugin {
             : i.content !== undefined
               ? `update: ${i.content}`
               : `confirm: ${i.match}`,
+        // Confirming or finishing an entry writes no new words.
+        askFirst: ({ match: _, done: __, ...changes }, { tainted }) =>
+          tainted && Object.values(changes).some((v) => v !== undefined) ? OUTSIDE : undefined,
         risk: "write",
         defaultAllow: true,
         run: (input) =>
@@ -188,6 +198,7 @@ export function createMemoryPlugin(): IvyPlugin {
           "Move one entry between files: to archive when it's no longer in current use, back to memory or user when it matters again.",
         input: z.object({ match: z.string(), to: z.enum(FILES) }),
         summary: (i) => `move to ${FILE_NAMES[i.to]}: ${i.match}`,
+        askFirst: (i, { tainted }) => (tainted && i.to !== "archive" ? OUTSIDE : undefined),
         risk: "write",
         defaultAllow: true,
         run: ({ match, to }) =>

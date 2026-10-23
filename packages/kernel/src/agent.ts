@@ -266,12 +266,14 @@ export class Agent {
         return { stopReason: "max_tokens", steps: step, costUsd };
       }
 
-      const results = await this.runTools(session.id, toolUses, turn);
+      const { results, outside } = await this.runTools(session, toolUses, turn);
       session.appendFrom(
         origin,
         { role: "assistant", content: message.content },
         { role: "user", content: results },
       );
+      // After the results, so what Ivy said before reading them isn't counted as outside.
+      if (outside) session.markOutside(outside);
       if (turn.signal.aborted) return { stopReason: "interrupted", steps: step, costUsd };
     }
 
@@ -334,13 +336,18 @@ export class Agent {
     };
   }
 
-  /** Ask permission sequentially (prompts can't overlap), then run approved tools in parallel. */
+  /**
+   * Ask permission sequentially (prompts can't overlap), then run approved tools in parallel.
+   * `outside`: the first tool whose result was outside content, if any. Calls in one batch
+   * see the session as it was before it: their input was written before any result.
+   */
   private async runTools(
-    sessionId: string,
+    session: Session,
     toolUses: ToolUseBlock[],
     turn: TurnOptions,
-  ): Promise<ToolResultBlock[]> {
+  ): Promise<{ results: ToolResultBlock[]; outside?: string }> {
     const { plugins, permissions } = this.opts;
+    const { id: sessionId, tainted } = session;
     const toolLog = createLogger("tool");
 
     type Verdict =
@@ -362,7 +369,12 @@ export class Agent {
         verdicts.push("unknown tool"); // a name the model made up; nothing to ask about
         continue;
       }
-      const decided = permissions.decide(use.name, risk, sessionId);
+      const ruled = permissions.decide(use.name, risk, sessionId);
+      // A tool may need the user's OK for this call whatever allows it; a deny rule still wins.
+      const askFirst = ruled.decision !== "deny" && plugins.askFirst(use.name, use.input, tainted);
+      const decided = askFirst
+        ? { decision: "ask" as const, reason: askFirst, canRemember: false }
+        : ruled;
       if (decided.decision !== "ask") {
         verdicts.push(decided.decision === "allow" ? "run" : "denied by rule");
         continue;
@@ -386,7 +398,8 @@ export class Agent {
         "No one answered the permission prompt in time, so this tool call didn't run. The user may not be around.",
       interrupted: () => "Interrupted by the user before this tool ran.",
     };
-    return Promise.all(
+    let outside: string | undefined;
+    const results = await Promise.all(
       toolUses.map(async (use, i): Promise<ToolResultBlock> => {
         const verdict = turn.signal.aborted ? "interrupted" : (verdicts[i] ?? "interrupted");
         const outcome =
@@ -395,9 +408,17 @@ export class Agent {
                 signal: turn.signal,
                 log: toolLog,
                 sessionId,
+                tainted,
               })
             : { content: messages[verdict](use.name), isError: true };
-        turn.onEvent({ type: "tool_result", id: use.id, name: use.name, ...outcome });
+        if (outcome.outside) outside ??= use.name;
+        turn.onEvent({
+          type: "tool_result",
+          id: use.id,
+          name: use.name,
+          content: outcome.content,
+          isError: outcome.isError,
+        });
         return {
           type: "tool_result",
           tool_use_id: use.id,
@@ -406,6 +427,7 @@ export class Agent {
         };
       }),
     );
+    return { results, outside };
   }
 }
 
