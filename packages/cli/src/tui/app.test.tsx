@@ -538,7 +538,9 @@ test("/model opens a picker; choosing switches the model for later turns", async
   expect(frame()).toContain("❯ anthropic/claude-opus-5-5  (current)");
   await type(DOWN);
   await type(ENTER);
-  expect(frame()).toContain("Model: anthropic/claude-sonnet-5-5 (saved to config.toml)");
+  await eventually(() =>
+    expect(frame()).toContain("Model: anthropic/claude-sonnet-5-5 (saved to config.toml)"),
+  );
   expect(readFileSync(join(home, "config.toml"), "utf8")).toContain(
     'model = "anthropic/claude-sonnet-5-5"',
   );
@@ -581,7 +583,8 @@ test("a provider without `models` offers what its endpoint lists; typing filters
   expect(frame()).toContain("❯ p/b/special");
   expect(frame()).not.toContain("p/a/m1");
   await type(ENTER);
-  expect(frame()).toContain("Model: p/b/special (saved to config.toml)");
+  // Saved by the daemon: shown once that answers.
+  await eventually(() => expect(frame()).toContain("Model: p/b/special (saved to config.toml)"));
   await type("hi");
   await type(ENTER);
   await idle();
@@ -589,7 +592,7 @@ test("a provider without `models` offers what its endpoint lists; typing filters
   // The id alone works too when it's unambiguous (here the id is "a/m3").
   await type("/model a/m3");
   await type(ENTER);
-  expect(frame()).toContain("Model: p/a/m3 (saved to config.toml)");
+  await eventually(() => expect(frame()).toContain("Model: p/a/m3 (saved to config.toml)"));
 });
 
 test("an endpoint that can't list its models: a warning, and /model says why", async () => {
@@ -746,7 +749,7 @@ test("/effort opens a picker; the choice is used and saved to config.toml", asyn
   expect(frame()).toContain("❯ medium  (current)");
   await type(DOWN);
   await type(ENTER);
-  expect(frame()).toContain("Effort: high (saved to config.toml).");
+  await eventually(() => expect(frame()).toContain("Effort: high (saved to config.toml)."));
   expect(frame()).toContain("claude-opus-5-5 · high ·");
   expect(readFileSync(join(home, "config.toml"), "utf8")).toContain('effort = "high"');
   await type("hi");
@@ -759,7 +762,7 @@ test("/effort <level> switches directly; unknown levels are rejected", async () 
   const { type, frame } = await start([]);
   await type("/effort low");
   await type(ENTER);
-  expect(frame()).toContain("Effort: low (saved to config.toml).");
+  await eventually(() => expect(frame()).toContain("Effort: low (saved to config.toml)."));
   await type("/effort turbo");
   await type(ENTER);
   expect(frame()).toContain("Unknown effort turbo. Levels: low, medium, high, xhigh, max");
