@@ -59,10 +59,12 @@ export function serverToolCall(block: {
 /** A vendor tool's result, for the transcript, paired with its call by `id`. */
 export function serverToolResult(block: {
   type: string;
-}): { id: string; name: string; content: string; isError: boolean } | undefined {
+}): { id: string; name: string; content: string; isError: boolean; outside: boolean } | undefined {
   if (block.type !== "web_search_tool_result") return undefined;
   const result = block as Anthropic.Beta.BetaWebSearchToolResultBlock;
-  return { id: result.tool_use_id, name: "web_search", ...searchResultText(result) };
+  const text = searchResultText(result);
+  // What a search found is outside content; a failed one brought nothing in.
+  return { id: result.tool_use_id, name: "web_search", ...text, outside: !text.isError };
 }
 
 /**
@@ -81,10 +83,7 @@ export function withoutServerTools(m: MessageParam): MessageParam {
   return { ...m, content: content.length ? content : [{ type: "text", text: "…" }] };
 }
 
-/**
- * A vendor tool's call as the transcript names it, e.g. `looked up: finale date`. Each brings
- * in what Ivy says, so it shows as where her words came from (ToolDef.shown "source").
- */
+/** A vendor tool's call as the transcript names it, e.g. `looked up: finale date`. */
 export function serverToolLabel(name: string, input: unknown): string | undefined {
   if (name === "web_search") return `looked up: ${(input as { query?: unknown })?.query ?? ""}`;
   return undefined;

@@ -191,3 +191,16 @@ test("images are kept as files: the session file names them, and they read back 
     text: "[An image that is no longer on disk]",
   });
 });
+
+test("which calls brought in outside content is kept with the session", () => {
+  const dir = mkdtempSync(join(tmpdir(), "ivy-sessions-"));
+  const s = Session.create(dir, "m");
+  s.appendPrompt("read this page", "");
+  s.markOutside("web__fetch", ["tu_1"]);
+  // A later call in the same turn records its own, though the turn is tainted already.
+  s.markOutside("web__fetch", ["tu_2"]);
+  const loaded = Session.load(dir, s.id);
+  expect([loaded.readOutside("tu_1"), loaded.readOutside("tu_2"), loaded.readOutside("x")]).toEqual(
+    [true, true, false],
+  );
+});

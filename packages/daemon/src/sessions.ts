@@ -420,6 +420,7 @@ export class Sessions {
         if (entry?.kind !== "tool") return; // every result follows its call
         entry.result = e.content;
         entry.isError = e.isError;
+        if (e.outside) entry.outside = true;
         entry.running = undefined;
         this.publish({ sessionId, ...e, label: entry.label });
         return;
@@ -439,7 +440,7 @@ export class Sessions {
 
   /** A stored transcript as clients show it: what was said, and tool calls with their results. */
   private entries(session: Session, messages: Session["messages"]): Entry[] {
-    const results = new Map<string, { content: string; isError: boolean }>();
+    const results = new Map<string, { content: string; isError: boolean; outside?: boolean }>();
     for (const m of messages) {
       if (typeof m.content === "string") continue;
       // The vendor's tools have their results in a reply, maybe the next one (pause_turn).
@@ -456,7 +457,11 @@ export class Sessions {
           typeof b.content === "string"
             ? b.content
             : (b.content ?? []).map((c) => (c.type === "text" ? c.text : `[${c.type}]`)).join(" ");
-        results.set(b.tool_use_id, { content, isError: b.is_error ?? false });
+        results.set(b.tool_use_id, {
+          content,
+          isError: b.is_error ?? false,
+          ...(session.readOutside(b.tool_use_id) && { outside: true }),
+        });
       }
     }
     const entries: Entry[] = [];
@@ -486,6 +491,7 @@ export class Sessions {
               input: call.input,
               result: result.content,
               isError: result.isError,
+              ...(result.outside && { outside: true }),
             });
           }
         }

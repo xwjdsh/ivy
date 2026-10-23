@@ -136,7 +136,7 @@ export function createMemoryPlugin(): IvyPlugin {
         summary: (i) => `save to ${FILE_NAMES[i.file]}: ${i.content}`,
         askFirst: (_, { tainted }) => (tainted ? OUTSIDE : undefined),
         risk: "write",
-        shown: "aside",
+        own: "records",
         defaultAllow: true,
         run: (input) =>
           tool((ctx) => {
@@ -177,7 +177,7 @@ export function createMemoryPlugin(): IvyPlugin {
         askFirst: ({ match: _, done: __, ...changes }, { tainted }) =>
           tainted && Object.values(changes).some((v) => v !== undefined) ? OUTSIDE : undefined,
         risk: "write",
-        shown: "aside",
+        own: "records",
         defaultAllow: true,
         run: (input) =>
           tool((ctx) => {
@@ -202,7 +202,7 @@ export function createMemoryPlugin(): IvyPlugin {
         summary: (i) => `move to ${FILE_NAMES[i.to]}: ${i.match}`,
         askFirst: (i, { tainted }) => (tainted && i.to !== "archive" ? OUTSIDE : undefined),
         risk: "write",
-        shown: "aside",
+        own: "records",
         defaultAllow: true,
         run: ({ match, to }) =>
           tool((ctx) => {
@@ -239,7 +239,7 @@ export function createMemoryPlugin(): IvyPlugin {
         }),
         summary: (i) => (i.query?.trim() ? `search "${i.query}"` : "list the newest entries"),
         risk: "read",
-        shown: "aside",
+        own: "records",
         run: (input) => tool((ctx) => searchText(find(screen(ctx.files).files, input))),
       }),
       defineTool({
@@ -259,7 +259,7 @@ export function createMemoryPlugin(): IvyPlugin {
         }),
         summary: (i) => `search past conversations "${i.query}"`,
         risk: "read",
-        shown: "aside",
+        own: "records",
         run: (input, ctx) => searchSessions(ready().history, input, ctx.sessionId),
       }),
     ],

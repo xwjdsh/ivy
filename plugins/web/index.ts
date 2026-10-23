@@ -59,7 +59,6 @@ export function createWebPlugin(read = fetchPage) {
         }),
         // Where her words come from, in a line: the page and what she wanted from it.
         summary: (i) => `read ${shownUrl(i.url)}: ${i.question}`,
-        shown: "source",
         risk: "read",
         askFirst: (i, { urls }) => {
           const url = normalUrl(i.url);

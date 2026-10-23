@@ -52,7 +52,15 @@ export type AgentEvent =
   /** What is about to be sent for one model call (verbose view). */
   | { type: "request"; step: number; info: RequestInfo }
   | { type: "tool_call"; id: string; name: string; input: unknown }
-  | { type: "tool_result"; id: string; name: string; content: string; isError: boolean }
+  | {
+      type: "tool_result";
+      id: string;
+      name: string;
+      content: string;
+      isError: boolean;
+      /** The result is outside content (see ToolResult in the plugin API). */
+      outside?: boolean;
+    }
   | {
       type: "step";
       step: number;
@@ -326,7 +334,13 @@ export class Agent {
       // The vendor searched within this reply, so what follows in it was written after
       // reading the results, the reply's own tool calls included (DESIGN.md §8.1).
       const read = readsOutside(message.content);
-      if (read) session.markOutside(read);
+      if (read) {
+        const ids = message.content.flatMap((b) => {
+          const result = serverToolResult(b);
+          return result?.outside ? [result.id] : [];
+        });
+        session.markOutside(read, ids);
+      }
 
       if (message.stop_reason === "pause_turn") {
         session.appendFrom(origin, { role: "assistant", content: message.content });
@@ -353,7 +367,7 @@ export class Agent {
         { role: "user", content: results },
       );
       // After the results, so what Ivy said before reading them isn't counted as outside.
-      if (outside) session.markOutside(outside);
+      if (outside) session.markOutside(outside.tool, outside.ids);
       if (turn.signal.aborted) return { stopReason: "interrupted", steps: step, costUsd };
     }
 
@@ -445,7 +459,7 @@ export class Agent {
     reply: ModelMessage,
     turn: TurnOptions,
     turnNumber: number,
-  ): Promise<{ results: ToolResultBlock[]; outside?: string }> {
+  ): Promise<{ results: ToolResultBlock[]; outside?: { tool: string; ids: string[] } }> {
     const { plugins, permissions } = this.opts;
     const { id: sessionId, tainted } = session;
     const toolUses = reply.content.filter((b): b is ToolUseBlock => b.type === "tool_use");
@@ -511,7 +525,7 @@ export class Agent {
         "No one answered the permission prompt in time, so this tool call didn't run. The user may not be around.",
       interrupted: () => "Interrupted by the user before this tool ran.",
     };
-    let outside: string | undefined;
+    let outside: { tool: string; ids: string[] } | undefined;
     const results = await Promise.all(
       toolUses.map(async (use, i): Promise<ToolResultBlock> => {
         const verdict = turn.signal.aborted ? "interrupted" : (verdicts[i] ?? "interrupted");
@@ -525,13 +539,17 @@ export class Agent {
                 tainted,
               })
             : { content: messages[verdict](use.name), isError: true };
-        if (outcome.outside) outside ??= use.name;
+        if (outcome.outside) {
+          outside ??= { tool: use.name, ids: [] };
+          outside.ids.push(use.id);
+        }
         turn.onEvent({
           type: "tool_result",
           id: use.id,
           name: use.name,
           content: outcome.content,
           isError: outcome.isError,
+          ...(outcome.outside && { outside: true }),
         });
         return {
           type: "tool_result",

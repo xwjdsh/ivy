@@ -58,6 +58,8 @@ export type Entry =
       /** Empty while the tool runs. */
       result: string;
       isError: boolean;
+      /** The result is outside content (a search, a page read): where Ivy's words came from. */
+      outside?: boolean;
       /** The call hasn't finished yet (a turn in progress). */
       running?: boolean;
     };
@@ -66,8 +68,11 @@ export type Entry =
 export interface ToolLabel {
   plugin: string;
   text: string;
-  /** How the window shows it (the plugin API's ToolDef.shown); a line when left out. */
-  shown?: "source" | "aside" | "private";
+  /**
+   * What of Ivy's own it acts on, if only that (the plugin API's ToolDef.own), and the tool
+   * may fold for it: never for an external or dangerous tool.
+   */
+  own?: "records" | "journal";
 }
 
 /** A message the user sent, waiting for its turn or running. */
@@ -206,6 +211,7 @@ export type SessionChange =
       label: ToolLabel;
       content: string;
       isError: boolean;
+      outside?: boolean;
     }
   /** Something the user should know, e.g. a feature the endpoint doesn't support. */
   | { type: "notice"; text: string }

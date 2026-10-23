@@ -197,17 +197,25 @@ function Marks({
     <div className={`marks${fresh ? " fresh" : ""}`}>
       <div className="chips">
         {mark("sources", sources, <Globe size={13} />, "Where this came from")}
-        {mark("aside", aside, <NotebookPen size={13} />, "What she noted")}
+        {mark("aside", aside, <NotebookPen size={13} />, "From her own records")}
       </div>
       {shown.length > 0 && (
         <div className="calls">
           {shown.map((t) =>
-            t.label.shown === "private" ? (
+            t.label.own === "journal" ? (
               <div key={t.id} className="private">
                 <span className="plugin">{t.label.plugin}</span> an entry, hers to keep
               </div>
             ) : (
-              <ToolCard key={t.id} item={t} fresh={false} />
+              <div key={t.id} className="call">
+                <ToolCard item={t} fresh={false} />
+                {/* Her own records, but what they gave back came from outside. */}
+                {t.outside && t.label.own && (
+                  <div className="provenance">
+                    Part of what this found came from outside content
+                  </div>
+                )}
+              </div>
             ),
           )}
         </div>

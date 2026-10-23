@@ -947,6 +947,36 @@ describe("Agent.runTurn", () => {
     expect(model.requests[0]?.tools?.map((t) => ("name" in t ? t.name : ""))).toEqual(["t__echo"]);
   });
 
+  test("each result says whether it brought in outside content, and the session keeps which", async () => {
+    const failed = {
+      type: "web_search_tool_result",
+      tool_use_id: "srv_2",
+      content: { type: "web_search_tool_result_error", error_code: "unavailable" },
+    } as unknown as Block;
+    const model = new FakeModel([
+      reply("tool_use", [
+        ...search("srv_1", "finale"),
+        { type: "server_tool_use", id: "srv_2", name: "web_search", input: {} } as unknown as Block,
+        failed,
+        toolUse("tu_1", "w__page"),
+      ]),
+      reply("end_turn", [text("ok")]),
+    ]);
+    await run(await makeAgent(model, "read", undefined, "sys", [outsidePlugin([])]), "go");
+    const results = events.flatMap((e) => (e.type === "tool_result" ? [[e.id, e.outside]] : []));
+    expect(results).toEqual([
+      ["srv_1", true],
+      ["srv_2", false],
+      ["tu_1", true],
+    ]);
+    const loaded = Session.load(join(dir, "sessions"), session.id);
+    expect(["srv_1", "srv_2", "tu_1"].map((id) => loaded.readOutside(id))).toEqual([
+      true,
+      false,
+      true,
+    ]);
+  });
+
   test("a model without the search tool gets the replies without its blocks", async () => {
     const model = new FakeModel([reply("end_turn", [text("ok")])]);
     session.append(

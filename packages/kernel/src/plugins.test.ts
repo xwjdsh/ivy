@@ -178,14 +178,22 @@ test("tool labels: the tool's own summary, else its name and first argument", as
           risk: "read",
           run: () => "",
           summary: (i) => `search  "${i.query}"\n`,
-          shown: "aside",
+          own: "records",
+        }),
+        // Declared as Ivy's own, but it reaches outside: never folds.
+        defineTool({
+          name: "send",
+          description: "",
+          input,
+          risk: "external",
+          own: "records",
+          run: () => "",
         }),
         defineTool({
           name: "plain",
           description: "",
           input,
           risk: "read",
-          shown: "line",
           run: () => "",
         }),
         defineTool({
@@ -201,24 +209,24 @@ test("tool labels: the tool's own summary, else its name and first argument", as
       ],
     }),
   );
-  // How the window shows it comes along; a line, the default, goes without saying.
+  // What of Ivy's own it acts on comes along, for the window; not for what reaches outside.
   expect(h.toolLabel("mem__search", { query: "Wen" })).toEqual({
     plugin: "mem",
     text: 'search "Wen"',
-    shown: "aside",
+    own: "records",
   });
+  expect(h.toolLabel("mem__send", { query: "x" })).toEqual({ plugin: "mem", text: 'send "x"' });
   expect(h.toolLabel("mem__plain", { query: "a\nb", limit: 3 })).toEqual({
     plugin: "mem",
     text: 'plain "a b"',
   });
   expect(h.toolLabel("mem__plain", {})).toEqual({ plugin: "mem", text: "plain" });
   expect(h.toolLabel("mem__broken", { query: "x" })).toEqual({ plugin: "mem", text: 'broken "x"' });
-  // The vendor's search, offered for a plugin: where her words came from.
+  // The vendor's search, offered for a plugin, reads as what Ivy did.
   await h.register(plugin("web", { serverTools: ["web_search"] }));
   expect(h.toolLabel("web_search", { query: "finale" })).toEqual({
     plugin: "web",
     text: "looked up: finale",
-    shown: "source",
   });
   // A name the model made up: shown as is.
   expect(h.toolLabel("nope__x", { a: 1 })).toEqual({ plugin: "nope__x", text: "1" });

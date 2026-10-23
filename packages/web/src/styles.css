@@ -2649,3 +2649,9 @@ table.st-tools .st-allowed {
   font-weight: 500;
   color: var(--muted);
 }
+
+.marks .provenance {
+  padding: 0 8px 6px 34px;
+  color: var(--faint);
+  font-size: 11.5px;
+}

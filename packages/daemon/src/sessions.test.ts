@@ -508,6 +508,8 @@ test("a search shows with its result when the session is opened, even across a p
       name: "web_search",
       result: "Finale — https://a.example/f",
       isError: false,
+      // Where Ivy's words came from, still known once the session is opened again.
+      outside: true,
     },
     { kind: "assistant", markdown: "Friday." },
   ]);

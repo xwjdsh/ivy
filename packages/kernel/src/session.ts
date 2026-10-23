@@ -45,7 +45,7 @@ export type SessionRecord =
   | { type: "message"; ts: string; message: MessageParam; context?: string; origin?: Origin }
   | { type: "usage"; ts: string; usage: Anthropic.Beta.BetaUsage; costUsd: number }
   /** The session read outside content here, from `tool`: tainted until the user's next prompt (DESIGN.md §8.1). */
-  | { type: "outside"; ts: string; tool: string };
+  | { type: "outside"; ts: string; tool: string; ids?: string[] };
 
 export interface SessionSummary {
   id: string;
@@ -80,6 +80,8 @@ export class Session {
   private needsNewline = false;
   /** Outside content read since the user's last prompt. */
   private outside = false;
+  /** The tool calls whose results were outside content, by id: where Ivy's words came from. */
+  private readonly outsideResults = new Set<string>();
 
   private constructor(
     readonly id: string,
@@ -103,7 +105,10 @@ export class Session {
     const content = readFileSync(file, "utf8");
     session.needsNewline = content.length > 0 && !content.endsWith("\n");
     const messages = parseRecords(content).flatMap((r) => {
-      if (r.type === "outside") session.outside = true;
+      if (r.type === "outside") {
+        session.outside = true;
+        for (const id of r.ids ?? []) session.outsideResults.add(id);
+      }
       if (r.type !== "message") return [];
       if (promptText(r.message) !== null) session.outside = false;
       const message = session.fromDisk(r.message);
@@ -204,11 +209,21 @@ export class Session {
     return this.outside;
   }
 
-  /** Record that the session read outside content, from `tool`; once a turn is enough. */
-  markOutside(tool: string): void {
-    if (this.outside) return;
+  /**
+   * Record that the session read outside content, from `tool`, in the results of the calls
+   * `ids`: the turn is tainted (once a turn is enough), and those results are where Ivy's words
+   * came from.
+   */
+  markOutside(tool: string, ids: string[] = []): void {
+    if (this.outside && ids.length === 0) return;
     this.outside = true;
-    this.write({ type: "outside", ts: new Date().toISOString(), tool });
+    for (const id of ids) this.outsideResults.add(id);
+    this.write({ type: "outside", ts: new Date().toISOString(), tool, ...(ids.length && { ids }) });
+  }
+
+  /** Whether a tool call's result was outside content. */
+  readOutside(toolUseId: string): boolean {
+    return this.outsideResults.has(toolUseId);
   }
 
   recordUsage(usage: Anthropic.Beta.BetaUsage, costUsd: number): void {

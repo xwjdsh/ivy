@@ -86,18 +86,24 @@ test("a permission prompt goes once some client answered it", () => {
   ).toBeUndefined();
 });
 
+/** A finished call: one that brought in outside content, one on Ivy's own records or journal, or another. */
 const tool = (
   id: string,
-  shown?: "source" | "aside" | "private",
+  is?: "outside" | "records" | "journal",
   { isError = false, running = false } = {},
 ): Item => ({
   kind: "tool",
   id,
   name: id,
-  label: { plugin: id, text: "", ...(shown && { shown }) },
+  label: {
+    plugin: id,
+    text: "",
+    ...((is === "records" || is === "journal") && { own: is }),
+  },
   input: {},
   result: "",
   isError,
+  ...(is === "outside" && { outside: true }),
   ...(running && { running }),
 });
 
@@ -111,13 +117,13 @@ const shape = (shown: ReturnType<typeof arrange>) =>
 test("under her reply, where her words came from and her own bookkeeping, apart; what failed or acts stays a line", () => {
   const items: Item[] = [
     { kind: "user", text: "下周二看牙" },
-    tool("search", "source"),
-    tool("memory", "aside"),
-    tool("journal", "private"),
+    tool("search", "outside"),
+    tool("memory", "records"),
+    tool("journal", "journal"),
     tool("send"),
     { kind: "assistant", markdown: "记下了" },
-    tool("broken", "aside", { isError: true }),
-    tool("late", "aside"),
+    tool("broken", "records", { isError: true }),
+    tool("late", "records"),
     { kind: "user", text: "谢谢" },
   ];
   expect(shape(arrange(items))).toEqual([
@@ -134,12 +140,13 @@ test("under her reply, where her words came from and her own bookkeeping, apart;
 test("while a turn runs: a search is a line, marks wait for the reply; her running bookkeeping is thinking", () => {
   const items: Item[] = [
     { kind: "user", text: "hi" },
-    tool("memory", "aside"),
-    tool("search", "source", { running: true }),
+    tool("memory", "records"),
+    // Running, what a call brings in isn't known yet.
+    tool("search", undefined, { running: true }),
   ];
   expect(shape(arrange(items, true))).toEqual(["user@0", "tool@2"]);
   // Done, a search stays a line until the reply it goes under.
-  const done = [...items.slice(0, 2), tool("search", "source")];
+  const done = [...items.slice(0, 2), tool("search", "outside")];
   expect(shape(arrange(done, true))).toEqual(["user@0", "tool@2"]);
   expect(shape(arrange([...done, { kind: "assistant", markdown: "ok" }], true))).toEqual([
     "user@0",
@@ -147,7 +154,15 @@ test("while a turn runs: a search is a line, marks wait for the reply; her runni
     "marks:search|memory@1",
   ]);
   expect(shape(arrange(items.slice(0, 2), false))).toEqual(["user@0", "marks:|memory@1"]);
+  // A later line doesn't push a finished search below it.
+  const later = [...done, tool("send", undefined, { running: true })];
+  expect(shape(arrange(later, true))).toEqual(["user@0", "tool@2", "tool@3"]);
+  // Her own records stay hers, even when what they gave back counts as outside.
+  const recall: Item = { ...tool("recall", "records"), outside: true } as Item;
+  const recalling = { ...recall, running: true } as Item;
+  expect(shape(arrange([items[0] as Item, recalling], true))).toEqual(["user@0"]);
+  expect(shape(arrange([items[0] as Item, recall]))).toEqual(["user@0", "marks:|recall@1"]);
   const chat = { ...emptyChat("s"), running: { id: "p", text: "hi" } };
-  expect(thinking({ ...chat, items: [tool("memory", "aside", { running: true })] })).toBe(true);
-  expect(thinking({ ...chat, items: [tool("search", "source", { running: true })] })).toBe(false);
+  expect(thinking({ ...chat, items: [tool("memory", "records", { running: true })] })).toBe(true);
+  expect(thinking({ ...chat, items: [tool("search", undefined, { running: true })] })).toBe(false);
 });
