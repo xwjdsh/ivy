@@ -17,6 +17,7 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -38,13 +39,15 @@ export interface Place {
 
 /**
  * The window's one scroller: what came before (`history`), then the conversation going on now,
- * or `empty` before one starts. The current conversation fills at least the whole view, so the
- * past is out of sight until the user scrolls up to it; far up, a button goes back down.
+ * if any. One taken up (`fill`) fills at least the whole view, so the past is out of sight until
+ * the user scrolls up to it; one begun here, or none yet, grows from the end of the past, in
+ * view above it. Far up, a button goes back down.
  */
 export function Timeline(props: {
   history(place: Place): ReactNode;
   chat: Chat | undefined;
-  empty: ReactNode;
+  /** Fill the view with the conversation going on (see above). */
+  fill: boolean;
   /** Changes when the view should go back to the end of the conversation going on. */
   toEnd: unknown;
 }) {
@@ -123,14 +126,16 @@ export function Timeline(props: {
     <div className="transcript" ref={box} onScroll={onScroll}>
       <div className="column" ref={column}>
         {props.history(place)}
-        <div key={id ?? ""} className={`now${shown.arrived ? " arrived" : ""}`}>
-          {chat
-            ? parts.map((s) => (
-                // Items are only appended (a tool's result fills its own), so where each
-                // starts is stable.
-                <ShownView key={s.at} shown={s} sessionId={chat.id} fresh={s.at >= opened} />
-              ))
-            : props.empty}
+        <div
+          key={id ?? ""}
+          className={`now${props.fill ? " fill" : ""}${shown.arrived ? " arrived" : ""}`}
+        >
+          {chat &&
+            parts.map((s) => (
+              // Items are only appended (a tool's result fills its own), so where each starts
+              // is stable.
+              <ShownView key={s.at} shown={s} sessionId={chat.id} fresh={s.at >= opened} />
+            ))}
           {chat?.streaming && (
             <Markdown className="assistant streaming fresh" text={chat.streaming} />
           )}
@@ -167,6 +172,8 @@ export function ShownView({
  * came from (what she looked up and read), and what she did for herself (a memory saved, her
  * journal written; the journal only as written). There to see, not in the way of the talk.
  */
+const MARKS = { sources: "Where this came from", aside: "From her own records" } as const;
+
 function Marks({
   sources,
   aside,
@@ -176,16 +183,18 @@ function Marks({
   aside: ToolItem[];
   fresh: boolean;
 }) {
-  const [open, setOpen] = useState<"sources" | "aside">();
+  const [open, setOpen] = useState<keyof typeof MARKS>();
+  const calls = useId();
   const plugins = (tools: ToolItem[]) => [...new Set(tools.map((t) => t.label.plugin))].join(" · ");
-  const mark = (which: "sources" | "aside", tools: ToolItem[], icon: ReactNode, name: string) =>
+  const mark = (which: keyof typeof MARKS, tools: ToolItem[], icon: ReactNode) =>
     tools.length > 0 && (
       <button
         type="button"
         className={open === which ? "open" : ""}
-        title={name}
-        aria-label={`${name}: ${plugins(tools)}`}
+        title={MARKS[which]}
+        aria-label={`${MARKS[which]}: ${plugins(tools)}`}
         aria-expanded={open === which}
+        aria-controls={open === which ? calls : undefined}
         onClick={() => setOpen(open === which ? undefined : which)}
       >
         {icon}
@@ -196,11 +205,13 @@ function Marks({
   return (
     <div className={`marks${fresh ? " fresh" : ""}`}>
       <div className="chips">
-        {mark("sources", sources, <Globe size={13} />, "Where this came from")}
-        {mark("aside", aside, <NotebookPen size={13} />, "From her own records")}
+        {mark("sources", sources, <Globe size={13} />)}
+        {mark("aside", aside, <NotebookPen size={13} />)}
       </div>
-      {shown.length > 0 && (
-        <div className="calls">
+      {open && shown.length > 0 && (
+        // A group, not a region: a long talk with marks open shouldn't fill the landmarks.
+        // biome-ignore lint/a11y/useSemanticElements: a fieldset is for form controls
+        <div key={open} id={calls} className="calls" role="group" aria-label={MARKS[open]}>
           {shown.map((t) =>
             t.label.own === "journal" ? (
               <div key={t.id} className="private">

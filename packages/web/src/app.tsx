@@ -1,5 +1,5 @@
 // The chat window: one long conversation with Ivy, the past ones above the one going on now,
-// her at the top, and her card hanging from her when she is clicked. Like the TUI it is a client of
+// her at the top, and her card growing out of her face when she is clicked. Like the TUI it is a client of
 // the daemon, which runs the sessions; this page only shows them and sends what the user types.
 // The session going on is in the URL's hash, so a reload keeps it. While a past one is open,
 // what is written goes to it, and it becomes the one going on.
@@ -20,8 +20,8 @@ import { api, follow } from "./api.ts";
 import { apply, type Chat, chatOf, emptyChat } from "./chat.ts";
 import { Composer, Permission, Queue } from "./composer.tsx";
 import { History } from "./history.tsx";
-import { greeting, presence } from "./presence.ts";
-import { Card, Contact, Portrait } from "./profile.tsx";
+import { presence } from "./presence.ts";
+import { Card, Contact } from "./profile.tsx";
 import { Search } from "./search.tsx";
 import { dayLabel, isRecent, timeLabel } from "./sessions.ts";
 import { SettingsPage } from "./settings.tsx";
@@ -38,6 +38,11 @@ export function App() {
   /** The chat shown; undefined: a new one, not yet started. */
   const [chat, setChat] = useState<Chat | undefined>();
   const chatId = useRef<string | undefined>(undefined);
+  /**
+   * Conversations begun in this window: one grows from the end of the past, which stays in view
+   * above it, rather than filling the view at once as one taken up does.
+   */
+  const startedHere = useRef(new Set<string>());
   const [state, setState] = useState<DaemonState | undefined>();
   const [connected, setConnected] = useState(true);
   const [error, setError] = useState<string | undefined>();
@@ -158,13 +163,15 @@ export function App() {
     open(id);
   };
 
-  // Her card, hanging from her at the top; the search for a past conversation (⌘K); the
-  // settings (⌘,), over the conversation, which stays as it was under them.
-  const [card, setCard] = useState(false);
+  // Her card; the search for a past conversation (⌘K); the settings (⌘,), over the
+  // conversation, which stays as it was under them.
+  // Her card grows out of her face at the top and goes back into it before it is gone: the
+  // face itself, an element, is what it needs.
+  const [card, setCard] = useState<{ from: HTMLElement; closing: boolean } | null>(null);
   const [searching, setSearching] = useState(false);
   const [settings, setSettings] = useState(false);
   const openSettings = useCallback((open: boolean) => {
-    setCard(false);
+    setCard(null);
     setSearching(false);
     setSettings(open);
   }, []);
@@ -181,14 +188,20 @@ export function App() {
     addEventListener("ivy:settings", wanted);
     return () => removeEventListener("ivy:settings", wanted);
   }, [openSettings]);
-  const closeCard = useCallback(() => setCard(false), []);
+  const closeCard = useCallback(
+    () => setCard((c) => (c && !c.closing ? { ...c, closing: true } : c)),
+    [],
+  );
+  const cardClosed = useCallback(() => setCard(null), []);
+  const toggleCard = (e: { currentTarget: HTMLElement }) =>
+    card && !card.closing ? closeCard() : setCard({ from: e.currentTarget, closing: false });
   const closeSearch = useCallback(() => setSearching(false), []);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const plain = e.metaKey && !e.shiftKey && !e.altKey && !e.ctrlKey;
       if (e.key === "Escape" && !e.defaultPrevented) {
         // Her card closes first, then the settings, then the past conversation open above.
-        if (card) setCard(false);
+        if (card && !card.closing) closeCard();
         else if (settings) setSettings(false);
         else if (readingId.current) back();
       }
@@ -205,13 +218,13 @@ export function App() {
       // ⌘K: find a past conversation, as the button beside it.
       else if (plain && e.key === "k") {
         e.preventDefault();
-        setCard(false);
+        setCard(null);
         setSearching((v) => !v);
       }
     };
     addEventListener("keydown", onKey);
     return () => removeEventListener("keydown", onKey);
-  }, [card, settings, openSettings, back, open]);
+  }, [card, closeCard, settings, openSettings, back, open]);
 
   /** Go to a past conversation found, open above to carry on. */
   const pick = (id: string) => {
@@ -231,6 +244,7 @@ export function App() {
       let id = chat?.id;
       if (!id) {
         id = await api.createSession();
+        startedHere.current.add(id);
         chatId.current = id;
         setChat(emptyChat(id));
         history.replaceState(null, "", `#${encodeURIComponent(id)}`);
@@ -306,10 +320,9 @@ export function App() {
               </span>
             )}
           </span>
-          {/* Before a conversation starts, she is in the middle of the page instead; the
-              settings are behind the scenes, without her. */}
-          {(chat || card) && !settings ? (
-            <Contact presence={now} open={card} onToggle={() => setCard(!card)} />
+          {/* Her, always, at the top; the settings are behind the scenes, without her. */}
+          {!settings ? (
+            <Contact presence={now} open={!!card && !card.closing} onToggle={toggleCard} />
           ) : (
             <span />
           )}
@@ -347,6 +360,9 @@ export function App() {
         </header>
         {card && (
           <Card
+            from={card.from}
+            closing={card.closing}
+            onClosed={cardClosed}
             presence={now}
             facts={{
               tokens: chat && chat.tokens.in + chat.tokens.out > 0 ? chat.tokens : undefined,
@@ -381,20 +397,7 @@ export function App() {
               onDelete={remove}
             />
           )}
-          empty={
-            <div className="hello">
-              <button
-                type="button"
-                className="face"
-                title="About Ivy"
-                onClick={() => setCard(true)}
-              >
-                <Portrait size={72} presence={now} />
-              </button>
-              <h1>{greeting()}</h1>
-              <p>What's on your mind?</p>
-            </div>
-          }
+          fill={!!chat && !startedHere.current.has(chat.id)}
         />
         <div className="dock">
           {setup}

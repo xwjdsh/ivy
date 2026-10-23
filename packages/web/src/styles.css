@@ -369,6 +369,8 @@ main {
   min-width: 0;
   display: flex;
   flex-direction: column;
+  /* Each line as wide as its text, so the card's grow from it lines up (profile.tsx). */
+  align-items: flex-start;
   line-height: 1.25;
 }
 
@@ -378,6 +380,7 @@ main {
 }
 
 .doing {
+  max-width: 100%;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -526,24 +529,30 @@ main {
   overflow-y: auto;
   overflow-anchor: none; /* the timeline keeps its own place; see Timeline */
   container-type: size;
-  padding: 8px 24px 24px;
+  /* The space above is the column's: what sticks to the top sticks to the edge. */
+  padding: 0 24px 24px;
 }
 
 .column {
   max-width: var(--column);
   margin: 0 auto;
+  padding-top: 8px;
   display: flex;
   flex-direction: column;
 }
 
-/* The conversation going on fills the view, at the bottom of it, as in a messaging app; the
-   past is just above, out of sight until scrolled to. */
+/* The conversation going on. One taken up fills the view, at the bottom of it as in a
+   messaging app, the past out of sight until scrolled to; one begun here follows the past, as
+   it reads scrolled to the top (transcript.tsx). */
 .now {
-  min-height: 100cqh;
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
   gap: 14px;
+}
+
+.now.fill {
+  min-height: 100cqh;
 }
 
 /* Far up the past, the way back down: it stays at the foot of the view. */
@@ -576,43 +585,6 @@ main {
 /* Another conversation taken up: it comes in as a whole. */
 .now.arrived {
   animation: rise 0.25s cubic-bezier(0.2, 0.8, 0.2, 1) both;
-}
-
-.hello {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 14px;
-  margin: auto 0 8vh;
-  animation: rise 0.4s cubic-bezier(0.2, 0.8, 0.2, 1) both;
-}
-
-.hello .face {
-  padding: 0;
-  border: none;
-  border-radius: 50%;
-  background: none;
-}
-
-/* Her face, where it is large, sits in a soft halo of the accent. */
-.hello .portrait,
-.profile .portrait {
-  box-shadow:
-    0 0 0 6px var(--accent-soft),
-    0 14px 40px -10px color-mix(in srgb, var(--accent) 60%, transparent);
-}
-
-.hello h1 {
-  margin: 6px 0 0;
-  font-size: 24px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-}
-
-.hello p {
-  margin: -8px 0 0;
-  color: var(--muted);
-  font-size: 15px;
 }
 
 .user {
@@ -1798,7 +1770,6 @@ main {
 .past {
   scroll-margin-top: 8px;
   border-radius: 12px;
-  transition: background 0.15s;
 }
 
 .past-head {
@@ -1859,8 +1830,28 @@ main {
   transform: rotate(180deg);
 }
 
+/* Opened: one bounded block in the list, its head a strip that stays in view while it is
+   read, the conversation on the page as it was. Set apart by space; drawn round by an
+   outline, which takes none. */
 .past.open {
+  margin: 10px 0;
+  box-shadow: 0 0 0 1px var(--line-strong);
+  /* Rounds the head's corners while it is in place, and none once it sticks: nothing shows
+     past it. Clip, not hidden, which would keep it from sticking. */
+  overflow: clip;
+}
+
+.past.open .past-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
   background: var(--well);
+}
+
+.past.open .past-head:hover {
+  background-image: linear-gradient(var(--hover), var(--hover));
 }
 
 .past.open .past-row {
@@ -1947,36 +1938,53 @@ main {
 
 /* --- Her card, and the search ------------------------------------------------------- */
 
-/* Her card, hanging from her at the top, over the conversation. */
+/* Her card, grown out of her face, over the conversation (profile.tsx). */
 .card {
   position: absolute;
-  top: calc(var(--bar) - 2px);
   left: 50%;
   z-index: 30;
-  width: 288px;
+  width: min(288px, calc(100% - 32px));
   padding: 18px 12px 8px;
   border-radius: 18px;
   background: var(--menu);
   box-shadow: var(--menu-shadow);
   transform: translateX(-50%);
-  transform-origin: 50% 0;
-  animation: card-in 0.18s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
-@keyframes card-in {
+@keyframes drop-in {
   from {
     opacity: 0;
     transform: translateX(-50%) translateY(-6px) scale(0.97);
   }
 }
 
+/* Her, in the card: a click puts the card back into her face. */
 .profile {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 2px;
+  width: 100%;
   padding: 0 8px 14px;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
   text-align: center;
+}
+
+/* From the keyboard, a ring in the card's own shape and colour. */
+.profile:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  border-radius: 12px;
+}
+
+/* Her face, large in her card, sits in a soft halo of the accent. */
+.card .profile .portrait {
+  box-shadow:
+    0 0 0 6px var(--accent-soft),
+    0 14px 40px -10px color-mix(in srgb, var(--accent) 60%, transparent);
 }
 
 .profile .name {
@@ -2005,7 +2013,7 @@ main {
   box-shadow: var(--menu-shadow);
   transform: translateX(-50%);
   transform-origin: 50% 0;
-  animation: card-in 0.16s cubic-bezier(0.2, 0.8, 0.2, 1);
+  animation: drop-in 0.16s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
 .search .find {
@@ -2633,10 +2641,14 @@ table.st-tools .st-allowed {
   background: var(--hover);
 }
 
+/* What a mark opened hangs from it, the rule running as far as it does. */
 .marks .calls {
   display: flex;
   flex-direction: column;
-  padding: 4px 0 0 8px;
+  margin: 4px 0 8px 12px;
+  padding: 2px 0 2px 12px;
+  border-left: 2px solid var(--line-strong);
+  animation: rise 0.2s ease-out;
 }
 
 .marks .private {

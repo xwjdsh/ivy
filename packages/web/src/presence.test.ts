@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import type { SessionSummary } from "@ivy/protocol";
 import { type Chat, emptyChat } from "./chat.ts";
-import { greeting, presence } from "./presence.ts";
+import { presence } from "./presence.ts";
 
 const summary = (id: string, busy: boolean): SessionSummary => ({
   id,
@@ -42,12 +42,4 @@ test("presence follows what the daemon reports, nothing more", () => {
   // Another chat she's busy in counts; the one shown is judged by its own state.
   expect(presence(idle, [summary("b", true)], true).text).toBe("Busy in another chat");
   expect(presence(idle, [summary("a", true)], true).text).toBe("Here");
-});
-
-test("the greeting follows the hour", () => {
-  const at = (h: number) => new Date(2026, 9, 20, h);
-  expect(greeting(at(8))).toBe("Good morning");
-  expect(greeting(at(14))).toBe("Good afternoon");
-  expect(greeting(at(20))).toBe("Good evening");
-  expect(greeting(at(2))).toBe("Up late?");
 });

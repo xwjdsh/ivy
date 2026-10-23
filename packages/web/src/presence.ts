@@ -27,12 +27,3 @@ export function presence(
   }
   return { tone: "here", text: "Here" };
 }
-
-/** "Good morning" and so on, by the hour. */
-export function greeting(now = new Date()): string {
-  const h = now.getHours();
-  if (h >= 5 && h < 12) return "Good morning";
-  if (h >= 12 && h < 18) return "Good afternoon";
-  if (h >= 18 && h < 23) return "Good evening";
-  return "Up late?";
-}

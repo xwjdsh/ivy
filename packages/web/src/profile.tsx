@@ -1,10 +1,17 @@
 // Ivy herself, at the top of the conversation: her face, her name and what she is doing.
-// Clicking her shows her card, hanging from her: the same, larger, and, folded at its foot,
+// Clicking her grows her card out of her face: the same, larger, and, folded at its foot,
 // what runs her (the model and the effort), out of the way of the conversation.
 
 import { compact, type DaemonState, formatTokens, type Tokens } from "@ivy/protocol";
 import { ChevronRight, Monitor, Moon, Sun } from "lucide-react";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import {
+  type ReactNode,
+  type RefObject,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { type Appearance, api } from "./api.ts";
 import ivy from "./ivy.png"; // the app's icon (app/resources/icon.png), smaller
 import { Bars, Pick } from "./menu.tsx";
@@ -31,7 +38,11 @@ export interface Facts {
 }
 
 /** Ivy at the top of the conversation, as a contact sits at the top of a chat. */
-export function Contact(props: { presence: Presence; open: boolean; onToggle(): void }) {
+export function Contact(props: {
+  presence: Presence;
+  open: boolean;
+  onToggle(e: { currentTarget: HTMLElement }): void;
+}) {
   const { presence } = props;
   return (
     <button
@@ -51,10 +62,16 @@ export function Contact(props: { presence: Presence; open: boolean; onToggle(): 
 }
 
 /**
- * Her card, hanging from her at the top: who she is and what she is doing, and, folded at its
- * foot, what runs her. A click outside it or Esc puts it away.
+ * Her card: who she is and what she is doing, and, folded at its foot, what runs her. It grows
+ * out of the face that was clicked, as a phone's island does, and goes back into it: one face on
+ * screen at a time. A click outside it or Esc puts it away.
  */
 export function Card(props: {
+  /** The face it grows from, hidden while the card is out. */
+  from: HTMLElement;
+  /** On its way back into the face; `onClosed` once there. */
+  closing: boolean;
+  onClosed(): void;
   presence: Presence;
   facts: Facts;
   state: DaemonState | undefined;
@@ -62,24 +79,46 @@ export function Card(props: {
   onError(err: unknown): void;
   onClose(): void;
 }) {
-  const { presence, facts, state, onError, onClose } = props;
+  const { from, presence, facts, state, onError, onClose } = props;
   const card = useRef<HTMLElement>(null);
+  const toggle = useRef<HTMLButtonElement>(null);
+  useMorph(card, from, props.closing, props.onClosed);
   useEffect(() => {
     const away = (e: PointerEvent) => {
-      const t = e.target as Element;
-      // Her at the top toggles the card herself.
-      if (!card.current?.contains(t) && !t.closest(".presence")) onClose();
+      const t = e.target as Node;
+      // The face it came from toggles the card itself.
+      if (!card.current?.contains(t) && !from.contains(t)) onClose();
     };
     addEventListener("pointerdown", away);
     return () => removeEventListener("pointerdown", away);
-  }, [onClose]);
+  }, [from, onClose]);
+  // Opened from the keyboard, focus goes to her in the card, and back to the face she came
+  // from once she is put away. Opened with a click, it stays put: WebKit would ring a button
+  // focused from code, as if by keyboard.
+  useEffect(() => {
+    if (!from.matches(":focus-visible")) return;
+    toggle.current?.focus({ preventScroll: true });
+    const here = card.current;
+    return () => {
+      // Not if the user went on elsewhere (a click on the composer put it away).
+      const now = document.activeElement;
+      if (!now || now === document.body || here?.contains(now)) from.focus({ preventScroll: true });
+    };
+  }, [from]);
   return (
     <aside className="card" aria-label="Ivy" ref={card}>
-      <div className="profile">
+      <button
+        type="button"
+        className="profile"
+        ref={toggle}
+        aria-label="Put Ivy's card away"
+        title="Put away"
+        onClick={onClose}
+      >
         <Portrait size={72} presence={presence} />
         <span className="name">Ivy</span>
         <span className={`doing ${presence.tone}`}>{presence.text}</span>
-      </div>
+      </button>
       <Hood>
         {state && <ModelSettings state={state} onState={props.onState} onError={onError} />}
         <dl className="facts">
@@ -103,6 +142,136 @@ export function Card(props: {
       </Hood>
     </aside>
   );
+}
+
+const MORPH = { duration: 240, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)", fill: "both" } as const;
+
+/**
+ * The card growing out of the face that was clicked, and going back into it: its surface
+ * unclipped from the face's shape, her portrait (and, from the top, her name and what she is
+ * doing) moved and scaled from where they were; the rest fading in. Measured once each way,
+ * never while it runs; with less motion asked for, it just appears and goes.
+ */
+function useMorph(
+  card: RefObject<HTMLElement | null>,
+  from: HTMLElement,
+  closing: boolean,
+  onClosed: () => void,
+) {
+  const running = useRef<Animation[]>([]);
+  const back = useRef(false);
+  const gone = useRef(false);
+  const still = useRef(matchMedia("(prefers-reduced-motion: reduce)").matches);
+  // The latest, so a parent's new function each render doesn't run the closing again.
+  const closed = useRef(onClosed);
+  closed.current = onClosed;
+
+  // Out of the face, which hides meanwhile.
+  useLayoutEffect(() => {
+    const el = card.current;
+    if (!el) return;
+    // Safe to run again on the same card (from changing; React's checks in development).
+    gone.current = false;
+    back.current = false;
+    from.style.visibility = "hidden";
+    // The card takes her place at the top: it is her, grown.
+    const parent = el.offsetParent?.getBoundingClientRect();
+    el.style.top = `${from.getBoundingClientRect().top - (parent?.top ?? 0) - 6}px`;
+    if (!still.current) running.current = grow(el, from);
+    // Done, the card is as it is: no clip left to cut off its menus.
+    const all = running.current;
+    void Promise.all(all.map((a) => a.finished)).then(
+      () => {
+        if (running.current === all && !back.current) for (const a of all) a.cancel();
+      },
+      () => {},
+    );
+    return () => {
+      // Put away by another way (a search, the settings): nothing left to finish.
+      gone.current = true;
+      for (const a of running.current) a.cancel();
+      from.style.visibility = "";
+    };
+  }, [card, from]);
+
+  // Back into it: the same, reversed; turned back midway if it was still growing.
+  useEffect(() => {
+    const el = card.current;
+    // Once per closing, however often the card renders meanwhile.
+    if (!closing || !el || back.current) return;
+    back.current = true;
+    const done = () => {
+      if (!gone.current) closed.current();
+    };
+    if (still.current) return done();
+    const going = running.current.some((a) => a.playState === "running")
+      ? running.current
+      : grow(el, from);
+    running.current = going;
+    for (const a of going) a.reverse();
+    void Promise.all(going.map((a) => a.finished)).then(done, () => {});
+  }, [closing, card, from]);
+}
+
+/** The animations of the card growing from `from` (see useMorph). */
+function grow(card: HTMLElement, from: HTMLElement): Animation[] {
+  const c = card.getBoundingClientRect();
+  const f = from.getBoundingClientRect();
+  const out: Animation[] = [
+    card.animate(
+      [
+        {
+          clipPath: `inset(${f.top - c.top}px ${c.right - f.right}px ${c.bottom - f.bottom}px ${f.left - c.left}px round 999px)`,
+        },
+        // Past the card's edge and shadow, which grow out of it rather than appear at the end.
+        { clipPath: "inset(-48px round 66px)" },
+      ],
+      MORPH,
+    ),
+  ];
+  // What the card shares with the face moves from where it was.
+  const move = (selector: string) => {
+    const to = card.querySelector<HTMLElement>(`.profile ${selector}`);
+    const was = from.querySelector<HTMLElement>(selector);
+    if (!to || !was) return;
+    const a = to.getBoundingClientRect();
+    const b = was.getBoundingClientRect();
+    const dx = b.left + b.width / 2 - (a.left + a.width / 2);
+    const dy = b.top + b.height / 2 - (a.top + a.height / 2);
+    out.push(
+      to.animate(
+        [
+          // Its width: the same text or the same round face, so the ratio is the size's.
+          { transform: `translate(${dx}px, ${dy}px) scale(${b.width / a.width})` },
+          { transform: "none" },
+        ],
+        MORPH,
+      ),
+    );
+  };
+  move(".portrait");
+  // The large face's halo comes as it lands; the small one has none.
+  const face = card.querySelector<HTMLElement>(".profile .portrait");
+  if (face) {
+    const halo = getComputedStyle(face).boxShadow;
+    out.push(
+      face.animate(
+        [
+          { boxShadow: "0 0 0 0 transparent" },
+          { boxShadow: "0 0 0 0 transparent", offset: 0.4 },
+          { boxShadow: halo },
+        ],
+        MORPH,
+      ),
+    );
+  }
+  move(".name");
+  move(".doing");
+  const rest = card.querySelector<HTMLElement>(".hood");
+  if (rest) {
+    out.push(rest.animate([{ opacity: 0 }, { opacity: 0, offset: 0.5 }, { opacity: 1 }], MORPH));
+  }
+  return out;
 }
 
 const HOOD_KEY = "ivy.hood";
