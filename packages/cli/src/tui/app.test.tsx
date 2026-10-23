@@ -346,7 +346,7 @@ test("Ctrl-C interrupts a running turn", async () => {
   const { type, frame, idle } = await start([hang]);
   await type("long task");
   await type(ENTER);
-  expect(frame()).toContain("Thinking");
+  await eventually(() => expect(frame()).toContain("Thinking"));
   await type(CTRL_C);
   await idle();
   expect(frame()).toContain("Interrupted");
@@ -364,7 +364,7 @@ test("slash commands: completion, /help and /new", async () => {
     ?.at(-1);
   await type("/new");
   await type(ENTER);
-  expect(frame()).toContain("New session");
+  await eventually(() => expect(frame()).toContain("New session"));
   expect(
     frame()
       .match(/\d{4}-\d{2}-\d{2}-[0-9a-f]{8}/g)
@@ -494,7 +494,7 @@ test("typing narrows the list; Enter runs a command whose argument is optional",
   expect(frame()).toContain("❯ /resume");
   expect(frame()).not.toContain("/clear");
   await type(ENTER);
-  expect(frame()).toContain("No other sessions to resume.");
+  await eventually(() => expect(frame()).toContain("No other sessions to resume."));
 });
 
 test("/resume without an id opens a picker; Enter resumes, Esc cancels", async () => {
@@ -514,7 +514,7 @@ test("/resume without an id opens a picker; Enter resumes, Esc cancels", async (
   const { type, frame, screen } = await start([]);
   await type("/resume");
   await type(ENTER);
-  expect(frame()).toContain("Resume a session");
+  await eventually(() => expect(frame()).toContain("Resume a session"));
   expect(frame()).toMatch(/❯ just now\s+newer question\s+1 turn/);
   await type(ESC);
   expect(frame()).not.toContain("Resume a session");
@@ -534,7 +534,7 @@ test("/model opens a picker; choosing switches the model for later turns", async
   const { type, frame, idle, model } = await start([{ stop: "end_turn", content: [text("ok")] }]);
   await type("/model");
   await type(ENTER);
-  expect(frame()).toContain("Switch model (saved as default)");
+  await eventually(() => expect(frame()).toContain("Switch model (saved as default)"));
   expect(frame()).toContain("❯ anthropic/claude-opus-5-5  (current)");
   await type(DOWN);
   await type(ENTER);
@@ -555,10 +555,13 @@ test("/model <name> switches directly; unknown names are rejected", async () => 
   const { type, frame } = await start([]);
   await type("/model claude-haiku-4-5"); // the provider can be left out when unambiguous
   await type(ENTER);
-  expect(frame()).toMatch(/anthropic\/claude-haiku-4-5 · \d{4}-/); // Haiku takes no effort setting
+  // Haiku takes no effort setting. Switched by the daemon: shown once it answers.
+  await eventually(() => expect(frame()).toMatch(/anthropic\/claude-haiku-4-5 · \d{4}-/));
   await type("/model gpt-4");
   await type(ENTER);
-  expect(frame()).toContain("Unknown model gpt-4. /model lists the available ones.");
+  await eventually(() =>
+    expect(frame()).toContain("Unknown model gpt-4. /model lists the available ones."),
+  );
 });
 
 // A proxy, so listing models doesn't also feed the official API's capability refresh.
@@ -745,7 +748,7 @@ test("/effort opens a picker; the choice is used and saved to config.toml", asyn
   const { type, frame, idle, model } = await start([{ stop: "end_turn", content: [text("ok")] }]);
   await type("/effort");
   await type(ENTER);
-  expect(frame()).toContain("Switch effort (saved as default)");
+  await eventually(() => expect(frame()).toContain("Switch effort (saved as default)"));
   expect(frame()).toContain("❯ medium  (current)");
   await type(DOWN);
   await type(ENTER);
@@ -765,17 +768,22 @@ test("/effort <level> switches directly; unknown levels are rejected", async () 
   await eventually(() => expect(frame()).toContain("Effort: low (saved to config.toml)."));
   await type("/effort turbo");
   await type(ENTER);
-  expect(frame()).toContain("Unknown effort turbo. Levels: low, medium, high, xhigh, max");
+  await eventually(() =>
+    expect(frame()).toContain("Unknown effort turbo. Levels: low, medium, high, xhigh, max"),
+  );
 });
 
 test("/effort on a model without effort support says it isn't sent", async () => {
   const { type, frame } = await start([]);
   await type("/model claude-haiku-4-5");
   await type(ENTER);
+  await eventually(() => expect(frame()).toContain("Model: anthropic/claude-haiku-4-5"));
   await type("/effort high");
   await type(ENTER);
-  expect(frame().replace(/\s+/g, " ")).toContain(
-    "anthropic/claude-haiku-4-5 doesn't take an effort setting, so it isn't sent.",
+  await eventually(() =>
+    expect(frame().replace(/\s+/g, " ")).toContain(
+      "anthropic/claude-haiku-4-5 doesn't take an effort setting, so it isn't sent.",
+    ),
   );
 });
 
