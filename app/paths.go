@@ -4,10 +4,18 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+
+	"github.com/egoist/mygo"
 )
 
-// ivyHome is Ivy's folder: IVY_HOME when set, else ~/.ivy, the same rule as the kernel's
-// resolvePaths. An app started from Finder has no IVY_HOME, so it uses ~/.ivy.
+// devApp reports whether this is the development app, "Ivy Dev" (`mygo dev`, or a build not
+// meant to be installed): it keeps its own folder, daemon and command apart from the user's
+// Ivy, as the `ivy` it ships does (RELEASE in packages/kernel/src/config.ts).
+func devApp() bool { return strings.HasSuffix(mygo.App.Name(), " Dev") }
+
+// ivyHome is Ivy's folder: IVY_HOME when set, else ~/.ivy, or ~/.ivy-dev for the development
+// app. The daemon is started with it, so both agree.
 func ivyHome() string {
 	if home := os.Getenv("IVY_HOME"); home != "" {
 		if abs, err := filepath.Abs(home); err == nil {
@@ -18,6 +26,9 @@ func ivyHome() string {
 	dir, err := os.UserHomeDir()
 	if err != nil {
 		return ".ivy"
+	}
+	if devApp() {
+		return filepath.Join(dir, ".ivy-dev")
 	}
 	return filepath.Join(dir, ".ivy")
 }

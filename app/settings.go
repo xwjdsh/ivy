@@ -82,7 +82,7 @@ func commandHandler(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "GET or POST")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"installed": commandInstalled(), "path": commandLink})
+	writeJSON(w, http.StatusOK, map[string]any{"installed": commandInstalled(), "path": commandLink()})
 }
 
 // openHandler opens one of Ivy's files or folders, named, never a path from the page: the

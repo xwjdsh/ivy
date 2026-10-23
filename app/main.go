@@ -216,8 +216,13 @@ func notify(r reminder) {
 }
 
 // commandLink is where the `ivy` command is installed: a link to the binary in the app,
-// so the terminal and the app run the same version.
-const commandLink = "/usr/local/bin/ivy"
+// so the terminal and the app run the same version; `ivy-dev` for the development app.
+func commandLink() string {
+	if devApp() {
+		return "/usr/local/bin/ivy-dev"
+	}
+	return "/usr/local/bin/ivy"
+}
 
 // installCommand links the command from the Dock icon's menu, and tells how it went.
 func installCommand() {
@@ -237,16 +242,16 @@ func linkCommand() error {
 	if err != nil {
 		return err
 	}
-	if err = os.MkdirAll(filepath.Dir(commandLink), 0o755); err == nil {
-		_ = os.Remove(commandLink)
-		err = os.Symlink(bin, commandLink)
+	if err = os.MkdirAll(filepath.Dir(commandLink()), 0o755); err == nil {
+		_ = os.Remove(commandLink())
+		err = os.Symlink(bin, commandLink())
 	}
 	if err == nil {
 		return nil
 	}
 	script := fmt.Sprintf(
 		`do shell script "mkdir -p %s && ln -sf %s %s" with administrator privileges`,
-		shellQuote(filepath.Dir(commandLink)), shellQuote(bin), shellQuote(commandLink),
+		shellQuote(filepath.Dir(commandLink())), shellQuote(bin), shellQuote(commandLink()),
 	)
 	if out, err := exec.Command("osascript", "-e", script).CombinedOutput(); err != nil {
 		return fmt.Errorf("%v: %s", err, strings.TrimSpace(string(out)))
@@ -260,7 +265,7 @@ func commandInstalled() bool {
 	if err != nil {
 		return false
 	}
-	target, err := filepath.EvalSymlinks(commandLink)
+	target, err := filepath.EvalSymlinks(commandLink())
 	if err != nil {
 		return false
 	}

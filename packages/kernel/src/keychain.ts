@@ -1,8 +1,10 @@
 // API keys in the macOS Keychain (DESIGN.md §5.2): a provider without `api_key` in
-// config.toml has its key here, as a generic password of service "Ivy" and account the
-// provider's name. Read and written through /usr/bin/security, whose signature never
-// changes, so a rebuilt `ivy` is never asked for access again (the Keychain asks per
-// program). Elsewhere there is no store, and keys stay in config.toml.
+// config.toml has its key here, as a generic password of service "Ivy" ("Ivy Dev" in
+// development) and account the provider's name. Read and written through /usr/bin/security,
+// whose signature never changes, so a rebuilt `ivy` is never asked for access again (the
+// Keychain asks per program). Elsewhere there is no store, and keys stay in config.toml.
+
+import { RELEASE } from "./config.ts";
 
 /** Where keys are kept apart from config.toml. */
 export interface KeyStore {
@@ -14,7 +16,8 @@ export interface KeyStore {
   remove(provider: string): boolean;
 }
 
-const SERVICE = "Ivy";
+/** Development keeps keys of its own, so editing them there never touches the user's (§7). */
+const SERVICE = RELEASE ? "Ivy" : "Ivy Dev";
 const SECURITY = "/usr/bin/security";
 /** `security`'s exit status for an item that isn't there. */
 const NOT_FOUND = 44;

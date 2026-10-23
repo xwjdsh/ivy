@@ -127,7 +127,18 @@ export interface Paths {
   daemonState: string;
 }
 
-export function resolvePaths(home = process.env.IVY_HOME ?? join(homedir(), ".ivy")): Paths {
+declare const IVY_RELEASE: boolean | undefined;
+
+/**
+ * A release build (`bun run build -- --release`, as the installed app ships): the user's own
+ * Ivy, in ~/.ivy. Anything else, from source included, is development, in ~/.ivy-dev, so work
+ * on Ivy never touches the user's conversations, nor their daemon (DESIGN.md §7).
+ */
+export const RELEASE = typeof IVY_RELEASE !== "undefined" && IVY_RELEASE === true;
+
+export function resolvePaths(
+  home = process.env.IVY_HOME ?? join(homedir(), RELEASE ? ".ivy" : ".ivy-dev"),
+): Paths {
   home = resolve(home);
   return {
     home,

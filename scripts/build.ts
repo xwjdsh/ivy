@@ -1,4 +1,6 @@
-// Build a single `ivy` binary: bun run build  →  dist/ivy
+// Build a single `ivy` binary: bun run build  →  dist/ivy. `--release` makes the user's own
+// Ivy (data in ~/.ivy); without it the binary is development's (~/.ivy-dev), as running from
+// source is (RELEASE in packages/kernel/src/config.ts).
 import { unlinkSync } from "node:fs";
 import type { BunPlugin } from "bun";
 
@@ -29,7 +31,10 @@ const result = await Bun.build({
   compile: { outfile: "dist/ivy" },
   minify: true,
   plugins: [stubDevtools],
-  define: { IVY_BUILD: JSON.stringify(build) },
+  define: {
+    IVY_BUILD: JSON.stringify(build),
+    ...(process.argv.includes("--release") && { IVY_RELEASE: "true" }),
+  },
 });
 
 // Bun (1.4.3) leaves the executable's temporary copy, about 70 MB, in the working
