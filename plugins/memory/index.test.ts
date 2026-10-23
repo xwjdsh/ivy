@@ -20,6 +20,7 @@ async function start(settings: Record<string, unknown> = {}) {
     soulFile: join(dir, "SOUL.md"),
     log,
     history: { sessions: () => [], messages: () => [] },
+    helper: { complete: async () => "" },
   });
 }
 
@@ -36,6 +37,7 @@ const call = (name: string, input: object, tainted = false): Promise<ToolResult>
       signal: new AbortController().signal,
       log,
       sessionId: "s",
+      turn: 1,
       tainted,
     }),
   );
@@ -335,7 +337,9 @@ test("reminders: open todos whose time falls in the window, dated ones at remind
 
 test("after outside content, writes of new words to any file are asked first", () => {
   const ask = (name: string, input: object, tainted = true) =>
-    plugin.tools?.find((t) => t.name === name)?.askFirst?.(input as never, { tainted });
+    plugin.tools
+      ?.find((t) => t.name === name)
+      ?.askFirst?.(input as never, { tainted, urls: new Set() });
   const reason = "this turn read outside content";
   expect(ask("save", { file: "user", content: "x" })).toBe(reason);
   expect(ask("save", { file: "memory", content: "x" })).toBe(reason);

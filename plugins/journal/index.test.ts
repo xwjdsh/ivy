@@ -22,6 +22,7 @@ async function start(settings: Record<string, unknown> = {}) {
     soulFile: join(home, "SOUL.md"),
     log,
     history: { sessions: () => [], messages: () => [] },
+    helper: { complete: async () => "" },
   });
 }
 
@@ -41,6 +42,7 @@ const call = (name: string, input: object, tainted = false): Promise<ToolResult>
       signal: new AbortController().signal,
       log,
       sessionId: "s",
+      turn: 1,
       tainted,
     }),
   );

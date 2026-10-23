@@ -2,12 +2,15 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type Anthropic from "@anthropic-ai/sdk";
 import type {
+  CallInfo,
   CommandDef,
   ConversationHistory,
+  HelperModel,
   IvyPlugin,
   Reminder,
   ReminderWindow,
   RiskLevel,
+  ServerTool,
   SessionInfo,
   ToolContext,
   ToolDef,
@@ -16,6 +19,7 @@ import type {
 import { CONTEXT_MAX_CHARS } from "@ivy/plugin-api";
 import { z } from "zod";
 import { createLogger, errorMessage } from "./log.ts";
+import { serverToolLabel } from "./server-tools.ts";
 import { contextBlock } from "./turn-context.ts";
 
 /** Separator between plugin id and tool name. Dots are not allowed in API tool names. */
@@ -52,6 +56,9 @@ export interface ToolOutcome {
 }
 
 const NO_HISTORY: ConversationHistory = { sessions: () => [], messages: () => [] };
+const NO_HELPER: HelperModel = {
+  complete: () => Promise.reject(new Error("no helper model here")),
+};
 
 export class PluginHost {
   private readonly plugins = new Map<string, IvyPlugin>();
@@ -68,6 +75,7 @@ export class PluginHost {
     private readonly history: ConversationHistory = NO_HISTORY,
     /** SOUL.md; by default where the data folder's parent keeps it (tests). */
     private readonly soulFile = join(dataRoot, "..", "SOUL.md"),
+    private readonly helper: HelperModel = NO_HELPER,
   ) {}
 
   async register(plugin: IvyPlugin): Promise<void> {
@@ -120,6 +128,7 @@ export class PluginHost {
       soulFile: this.soulFile,
       log: createLogger(plugin.id),
       history: this.history,
+      helper: this.helper,
     });
     this.plugins.set(plugin.id, plugin);
   }
@@ -263,6 +272,9 @@ export class PluginHost {
    * call, or else its name and first argument. Never fails: a broken summary falls back.
    */
   toolLabel(fullName: string, input: unknown): { plugin: string; text: string } {
+    const server = this.list().find((p) => p.serverTools?.includes(fullName as ServerTool));
+    const serverText = server && serverToolLabel(fullName, input);
+    if (server && serverText) return { plugin: server.id, text: serverText };
     const tool = this.tools.get(fullName);
     if (!tool) return { plugin: fullName, text: firstArgument(input) };
     let summary: string | undefined;
@@ -278,16 +290,21 @@ export class PluginHost {
     return { plugin: tool.pluginId, text };
   }
 
+  /** The vendor-run tools enabled plugins ask for. */
+  serverTools(): Set<ServerTool> {
+    return new Set(this.list().flatMap((p) => p.serverTools ?? []));
+  }
+
   riskOf(fullName: string): RiskLevel | undefined {
     return this.tools.get(fullName)?.def.risk;
   }
 
   /** Why a call needs the user's OK whatever the rules allow (the tool's `askFirst`), if it does. */
-  askFirst(fullName: string, input: unknown, tainted: boolean): string | undefined {
+  askFirst(fullName: string, input: unknown, call: CallInfo): string | undefined {
     const def = this.tools.get(fullName)?.def;
     if (!def?.askFirst) return undefined;
     const parsed = def.input.safeParse(input);
-    return parsed.success ? def.askFirst(parsed.data, { tainted }) : undefined;
+    return parsed.success ? def.askFirst(parsed.data, call) : undefined;
   }
 
   /** Tool definitions for the API, sorted so the request prefix stays byte-stable for caching. */

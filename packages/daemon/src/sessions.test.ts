@@ -460,3 +460,54 @@ test("settings: providers added, keyed, changed and removed; keys never shown", 
   expect(keys.get("proxy")).toBeUndefined();
   expect(await call("PUT", "/providers/nope", {})).toMatchObject({ status: 404 });
 });
+
+test("a search shows with its result when the session is opened, even across a paused reply", async () => {
+  const search = (block: object) => block as unknown as ReturnType<typeof text>;
+  const { call, socket } = await start([
+    {
+      content: [
+        search({
+          type: "server_tool_use",
+          id: "srv_1",
+          name: "web_search",
+          input: { query: "finale" },
+        }),
+      ],
+      stop: "pause_turn",
+    },
+    {
+      content: [
+        search({
+          type: "web_search_tool_result",
+          tool_use_id: "srv_1",
+          content: [
+            {
+              type: "web_search_result",
+              title: "Finale",
+              url: "https://a.example/f",
+              encrypted_content: "x",
+              page_age: null,
+            },
+          ],
+        }),
+        text("Friday."),
+      ],
+    },
+  ]);
+  const client = await follow(socket);
+  const id = (await call("POST", "/sessions", {})).body.id;
+  await call("POST", `/sessions/${id}/prompts`, { text: "when is the finale?" });
+  await client.until((e) => e.type === "turn_end");
+  const view = (await call("GET", `/sessions/${id}`)).body as SessionView;
+  expect(view.entries.filter((e) => e.kind !== "user")).toMatchObject([
+    {
+      kind: "tool",
+      id: "srv_1",
+      name: "web_search",
+      result: "Finale — https://a.example/f",
+      isError: false,
+    },
+    { kind: "assistant", markdown: "Friday." },
+  ]);
+  await client.close();
+});

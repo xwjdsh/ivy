@@ -1,9 +1,9 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import type Anthropic from "@anthropic-ai/sdk";
+import Anthropic from "@anthropic-ai/sdk";
 import { EFFORT_LEVELS, type Effort } from "./config.ts";
-import { createLogger } from "./log.ts";
-import { isOfficialAnthropicApi, isOfficialApi } from "./model.ts";
+import { createLogger, errorMessage } from "./log.ts";
+import { isOfficialAnthropicApi, isOfficialApi, type ModelClient } from "./model.ts";
 
 /**
  * What a model supports on its provider's endpoint, resolved from three sources:
@@ -12,7 +12,10 @@ import { isOfficialAnthropicApi, isOfficialApi } from "./model.ts";
  *    levels, max output tokens. New models need no code change.
  * 2. Features learned to be unsupported at runtime: a request using an optional feature
  *    failed with a 400 naming it, so it is turned off for that model (and remembered).
- * 3. Defaults: Anthropic-only features are tried on the official API with Claude models,
+ * 3. Probed: server-side web search, which a compatible endpoint could ignore without a
+ *    trace, is tried once per model there with a small request and kept if the reply shows a
+ *    search (see probeWebSearch).
+ * 4. Defaults: Anthropic-only features are tried on the official API with Claude models,
  *    except a fixed list of *older* models known to lack them. Compatible endpoints only
  *    get the basics (compatibility first).
  */
@@ -31,7 +34,11 @@ export interface ResolvedCapabilities {
   cacheKey: boolean;
   /** Images the user sent; refused, each is a line saying it was left out. */
   images: boolean;
+  /** The server-side web search tool's type, where the model has one here. */
+  webSearch?: WebSearchType;
 }
+
+export type WebSearchType = "web_search_20260209" | "web_search_20250305";
 
 /** Optional request features that can be learned to be unsupported. */
 export type OptionalFeature =
@@ -40,7 +47,8 @@ export type OptionalFeature =
   | "systemMessages"
   | "streamUsage"
   | "cacheKey"
-  | "images";
+  | "images"
+  | "webSearch";
 
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -49,6 +57,9 @@ const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
  * models never need adding; anything newer is tried and downgraded on a 400.
  */
 const OLD_MODEL = /^claude-(3|haiku|sonnet-4|sonnet-5$|opus-4-[0-7])/;
+
+/** Models with web search's dynamic filtering; other Claude models get the basic variant. */
+const FILTERING_SEARCH = /^claude-(opus-(5|5-5|4-[678])|sonnet-(5|5-5|4-6))$/;
 
 interface ModelFacts {
   effortSupported?: boolean;
@@ -60,6 +71,8 @@ interface EndpointCache {
   fetchedAt?: string;
   models: Record<string, ModelFacts>;
   unsupported: Record<string, OptionalFeature[]>;
+  /** What probing found, by model: the search tool's type, or false for none. */
+  probed?: Record<string, { webSearch: WebSearchType | false; at: string }>;
 }
 
 export interface ModelLister {
@@ -82,6 +95,8 @@ export interface ModelTarget {
 
 export class Capabilities {
   private cache: Record<string, EndpointCache> = {};
+  /** Web search probes under way, by "<endpoint> <model>". */
+  private readonly probing = new Map<string, Promise<void>>();
   private readonly log = createLogger("capabilities");
 
   constructor(
@@ -138,7 +153,96 @@ export class Capabilities {
       streamUsage: !off.has("streamUsage"),
       cacheKey: !off.has("cacheKey"),
       images: !off.has("images"),
+      webSearch: off.has("webSearch") ? undefined : this.webSearchFor(provider, model),
     };
+  }
+
+  /**
+   * The search tool a model has: on Anthropic's own API every Claude model, on another
+   * Messages endpoint what a probe found; none on Chat Completions (DESIGN.md §8).
+   */
+  private webSearchFor(provider: Endpoint, model: string): WebSearchType | undefined {
+    if (provider.type === "openai") return undefined;
+    if (!isOfficialAnthropicApi(provider.base_url)) {
+      return this.entry(provider).probed?.[model]?.webSearch || undefined;
+    }
+    if (!model.startsWith("claude-")) return undefined;
+    return searchTypeFor(model);
+  }
+
+  /**
+   * Whether web search on this model is still to be probed: a compatible Messages endpoint,
+   * not probed yet, or found without it more than a day ago (it may have gained it since).
+   */
+  needsSearchProbe({ provider, id }: ModelTarget, now = Date.now()): boolean {
+    if (provider.type === "openai" || isOfficialAnthropicApi(provider.base_url)) return false;
+    if (this.entry(provider).unsupported[id]?.includes("webSearch")) return false;
+    const probed = this.entry(provider).probed?.[id];
+    return !probed || (!probed.webSearch && now - Date.parse(probed.at) >= CACHE_TTL_MS);
+  }
+
+  /**
+   * Try web search on a model at a compatible endpoint, when it is due (needsSearchProbe) and
+   * not already being tried: a small request that needs a search, kept on if the reply holds
+   * one. Refused with the filtering search, the basic one is tried; refused, failed or
+   * answered without a search, it is off until tried again a day later. Not reaching the
+   * endpoint keeps nothing, so a later turn tries again. Never throws.
+   */
+  probeWebSearch(target: ModelTarget, client: ModelClient): Promise<void> {
+    const key = `${target.provider.base_url} ${target.id}`;
+    const running = this.probing.get(key);
+    if (running) return running;
+    if (!this.needsSearchProbe(target)) return Promise.resolve();
+    const probe = this.probe(target, client).finally(() => this.probing.delete(key));
+    this.probing.set(key, probe);
+    return probe;
+  }
+
+  private async probe(target: ModelTarget, client: ModelClient): Promise<void> {
+    let found: WebSearchType | false = false;
+    for (const type of new Set([searchTypeFor(target.id), "web_search_20250305" as const])) {
+      try {
+        const reply = await client.stream(
+          {
+            model: target.id,
+            max_tokens: 4096,
+            tools: [{ type, name: "web_search", max_uses: 1 }],
+            messages: [
+              {
+                role: "user",
+                content:
+                  "Search the web once for today's top news headline, then name it in a few words.",
+              },
+            ],
+          },
+          {},
+          AbortSignal.timeout(PROBE_TIMEOUT_MS),
+        );
+        found = reply.content.some((b) => b.type === "web_search_tool_result") && type;
+        break;
+      } catch (err) {
+        // Not reached, busy or failing for now: nothing kept, so a later turn tries again.
+        const passing =
+          err instanceof Anthropic.APIError &&
+          (err.status === undefined ||
+            err.status === 408 ||
+            err.status === 429 ||
+            err.status >= 500);
+        if (!(err instanceof Anthropic.APIError) || passing) {
+          this.log.warn(`web search probe failed for ${target.id}`, errorMessage(err));
+          return;
+        }
+        // An endpoint that refuses the filtering search may take the basic one.
+        if (!(err instanceof Anthropic.BadRequestError)) break;
+      }
+    }
+    const entry = this.entry(target.provider);
+    entry.probed = {
+      ...entry.probed,
+      [target.id]: { webSearch: found, at: new Date().toISOString() },
+    };
+    this.log.info(`web search on ${target.id} at ${target.provider.base_url}: ${found || "none"}`);
+    this.save();
   }
 
   /** The configured effort (before per-model adjustment). */
@@ -190,8 +294,26 @@ export class Capabilities {
             `system messages for context: ${why(caps.systemMessages, "systemMessages")}`,
           ]),
       `images: ${why(caps.images, "images")}`,
+      `web search: ${this.searchStatus(target, caps.webSearch, learned)}`,
       ...(caps.maxTokens ? [`max_tokens cap: ${caps.maxTokens}`] : []),
     ];
+  }
+
+  /** Why web search is on or off for a model (`explain`). */
+  private searchStatus(
+    target: ModelTarget,
+    on: WebSearchType | undefined,
+    learned: OptionalFeature[],
+  ): string {
+    const { provider } = target;
+    const official = isOfficialAnthropicApi(provider.base_url);
+    if (on) return official ? on : `${on} (probed)`;
+    if (learned.includes("webSearch")) return "off: rejected by this endpoint earlier (learned)";
+    if (provider.type === "openai") return "off: Chat Completions";
+    if (official) return "off: not a Claude model";
+    return this.entry(provider).probed?.[target.id]
+      ? "off: the probe found none"
+      : "not probed yet";
   }
 
   /** Turn a feature off for a model after its endpoint rejected it; remembered on disk. */
@@ -219,7 +341,7 @@ export class Capabilities {
       entry.fetchedAt = new Date(now).toISOString();
       this.save();
     } catch (err) {
-      this.log.warn("model list refresh failed", String(err));
+      this.log.warn("model list refresh failed", errorMessage(err));
     }
   }
 
@@ -228,7 +350,7 @@ export class Capabilities {
       mkdirSync(dirname(this.cacheFile), { recursive: true });
       writeFileSync(this.cacheFile, JSON.stringify(this.cache, null, 2));
     } catch (err) {
-      this.log.warn("could not save capability cache", String(err));
+      this.log.warn("could not save capability cache", errorMessage(err));
     }
   }
 }
@@ -242,6 +364,14 @@ function factsOf(info: Anthropic.Models.ModelInfo): ModelFacts {
       : undefined,
     maxTokens: info.max_tokens ?? undefined,
   };
+}
+
+const PROBE_TIMEOUT_MS = 120_000;
+
+/** The search tool for a model, by its name: "magpie/claude/claude-opus-5-5" counts as Opus 5.5. */
+function searchTypeFor(model: string): WebSearchType {
+  const name = model.slice(model.lastIndexOf("/") + 1);
+  return FILTERING_SEARCH.test(name) ? "web_search_20260209" : "web_search_20250305";
 }
 
 /** The configured level if supported, else the closest lower one, else the lowest supported. */
@@ -281,5 +411,13 @@ export function rejectedFeature(message: string): OptionalFeature | null {
     return "images";
   }
   if (m.includes("effort") || m.includes("output_config")) return "effort";
+  // The tool refused, not a search block in the history it didn't like.
+  if (
+    /tools\.\d+.*web_search|web_search\S*.*(not supported|unsupported|unknown|not available)/.test(
+      m,
+    )
+  ) {
+    return "webSearch";
+  }
   return null;
 }

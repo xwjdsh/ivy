@@ -17,6 +17,8 @@ export interface ToolContext {
   signal: AbortSignal;
   /** The session the call belongs to. */
   sessionId: string;
+  /** Which of the session's turns (the user's prompts, from 1) the call belongs to. */
+  turn: number;
   /**
    * The session read outside content since the user's last message, before this call (see
    * ToolResult), so what it writes may carry someone else's words.
@@ -47,8 +49,32 @@ export interface ToolDef<S extends z.ZodType = z.ZodType> {
    * every time, with no "for this session" or "always"; a deny rule still wins. Memory asks
    * this before a tainted session writes to the files loaded in every session.
    */
-  askFirst?(input: z.infer<S>, call: { tainted: boolean }): string | undefined;
+  askFirst?(input: z.infer<S>, call: CallInfo): string | undefined;
   run(input: z.infer<S>, ctx: ToolContext): Promise<ToolResult> | ToolResult;
+}
+
+/** What `askFirst` knows about the call's session. */
+export interface CallInfo {
+  /** As ToolContext.tainted. */
+  tainted: boolean;
+  /**
+   * Addresses the user wrote in this session or a search returned (as `normalUrl` gives
+   * them): they can't carry what the model read since (DESIGN.md §6.3).
+   */
+  urls: ReadonlySet<string>;
+}
+
+/** Side work on the helper model (DESIGN.md §5.2): text in, text out, no tools. */
+export interface HelperModel {
+  complete(call: {
+    /** What the helper is for this time, as its system prompt. */
+    system: string;
+    /** What it works on and what is asked of it. */
+    prompt: string;
+    /** Room for the answer; side work is short. */
+    maxTokens?: number;
+    signal?: AbortSignal;
+  }): Promise<string>;
 }
 
 export interface Logger {
@@ -74,6 +100,8 @@ export interface PluginContext {
   log: Logger;
   /** Past conversations, read-only. */
   history: ConversationHistory;
+  /** A small fast model for reading and summing up. */
+  helper: HelperModel;
 }
 
 /** One message of a past conversation: what the user typed or what Ivy answered. */
@@ -143,6 +171,12 @@ export interface CommandDef {
   run(args: string, ctx: CommandContext): Promise<string | undefined> | string | undefined;
 }
 
+/**
+ * A tool the model's vendor runs on its own servers, offered where the model has it
+ * (DESIGN.md §5.2). Its results are outside content.
+ */
+export type ServerTool = "web_search";
+
 export interface IvyPlugin {
   id: string;
   version: string;
@@ -152,6 +186,8 @@ export interface IvyPlugin {
   setup?(ctx: PluginContext): Promise<void> | void;
   teardown?(): Promise<void> | void;
   tools?: ToolDef[];
+  /** Vendor-run tools to offer where the model has them; turned off with the plugin. */
+  serverTools?: ServerTool[];
   /** Static text appended to the system prompt. Must be deterministic (prompt caching). */
   instructions?: string;
   /**
@@ -194,6 +230,21 @@ export const CONTEXT_MAX_CHARS = 2000;
 export function localDate(d: Date): string {
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/**
+ * An http(s) address as Ivy compares them: parsed, without its #fragment; undefined if it
+ * isn't one.
+ */
+export function normalUrl(text: string): string | undefined {
+  try {
+    const url = new URL(text);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return undefined;
+    url.hash = "";
+    return url.href;
+  } catch {
+    return undefined;
+  }
 }
 
 /** Identity helper that keeps the input type of `run` inferred from the zod schema. */

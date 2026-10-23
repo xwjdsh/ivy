@@ -5,6 +5,8 @@ export type ModelMessage = Anthropic.Beta.BetaMessage;
 
 export interface StreamHandlers {
   onText?(delta: string): void;
+  /** Each block once it is complete, in order (to show the vendor's searches as they run). */
+  onBlock?(block: ModelMessage["content"][number]): void;
 }
 
 /**
@@ -53,6 +55,7 @@ export class AnthropicModelClient implements ModelClient {
   ): Promise<ModelMessage> {
     const stream = this.client.beta.messages.stream(request, { signal });
     if (handlers.onText) stream.on("text", handlers.onText);
+    if (handlers.onBlock) stream.on("contentBlock", handlers.onBlock);
     return stream.finalMessage();
   }
 

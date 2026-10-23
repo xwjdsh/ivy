@@ -13,9 +13,15 @@ import {
 } from "./model.ts";
 import type { PermissionChoice, Permissions } from "./permissions.ts";
 import type { PluginHost } from "./plugins.ts";
+import { namedUrls, searched, searchResultText, withoutServerTools } from "./server-tools.ts";
 import type { Origin, Session } from "./session.ts";
 import type { Tracer } from "./trace.ts";
-import { CONTEXT_SYSTEM_BETA, type ContextMode, renderMessages } from "./turn-context.ts";
+import {
+  CONTEXT_SYSTEM_BETA,
+  type ContextMode,
+  promptText,
+  renderMessages,
+} from "./turn-context.ts";
 
 type ToolUseBlock = Anthropic.Beta.BetaToolUseBlock;
 type MessageParam = Anthropic.Beta.BetaMessageParam;
@@ -156,6 +162,11 @@ export class Agent {
     if (!target) throw new Error(NO_MODEL);
     // No API key throws here, before the message is written.
     const client = this.opts.clientFor(target.provider);
+    // Whether a compatible endpoint passes the model's search on is found out in the
+    // background (DESIGN.md §5.2, source 3); later turns use what it finds.
+    if (this.opts.plugins.serverTools().has("web_search")) {
+      void this.opts.capabilities.probeWebSearch(target, client);
+    }
     const { text: userText, images = [] } = typeof prompt === "string" ? { text: prompt } : prompt;
     const system = await this.opts.systemPrompt(session.id);
     const context = await this.opts.plugins.turnContext({
@@ -164,6 +175,7 @@ export class Agent {
       now: new Date(),
     });
     session.appendPrompt(userText, context, images);
+    const turnNumber = session.messages.filter((m) => promptText(m) !== null).length;
     if (context) turn.onEvent({ type: "context", text: context });
 
     let costUsd = 0;
@@ -179,7 +191,10 @@ export class Agent {
       try {
         message = await client.stream(
           request,
-          { onText: (delta) => turn.onEvent({ type: "text", delta }) },
+          {
+            onText: (delta) => turn.onEvent({ type: "text", delta }),
+            onBlock: (block) => showSearch(block, turn.onEvent),
+          },
           turn.signal,
           extras,
         );
@@ -248,6 +263,10 @@ export class Agent {
       // A refusal may cut content off mid-block; don't keep it in history.
       if (message.stop_reason === "refusal") return { stopReason: "refusal", steps: step, costUsd };
 
+      // The vendor searched within this reply, so what follows in it was written after
+      // reading the results, the reply's own tool calls included (DESIGN.md §8.1).
+      if (searched(message.content)) session.markOutside("web_search");
+
       if (message.stop_reason === "pause_turn") {
         session.appendFrom(origin, { role: "assistant", content: message.content });
         continue;
@@ -266,7 +285,7 @@ export class Agent {
         return { stopReason: "max_tokens", steps: step, costUsd };
       }
 
-      const { results, outside } = await this.runTools(session, toolUses, turn);
+      const { results, outside } = await this.runTools(session, message, turn, turnNumber);
       session.appendFrom(
         origin,
         { role: "assistant", content: message.content },
@@ -287,16 +306,25 @@ export class Agent {
   ): { request: ModelRequest; extras: RequestExtras } {
     const { config, plugins } = this.opts;
     const caps = this.opts.capabilities.for(target);
+    const search = plugins.serverTools().has("web_search") ? caps.webSearch : undefined;
     const request: ModelRequest = {
       model: target.id,
       max_tokens: Math.min(
         config.generation.max_tokens,
         caps.maxTokens ?? Number.POSITIVE_INFINITY,
       ),
-      tools: plugins.apiTools(),
+      tools: [
+        ...plugins.apiTools(),
+        // After the plugins' tools, so their part of the cached prefix stays as it was.
+        ...(search ? [{ type: search, name: "web_search" as const, max_uses: MAX_SEARCHES }] : []),
+      ],
       // System messages for context where the model and endpoint support them, else text blocks.
       messages: renderMessages(
-        session.messages.map((m) => forModel(m, session.originOf(m), target, caps.images)),
+        session.messages.map((m) => {
+          const seen = forModel(m, session.originOf(m), target, caps.images);
+          // Without the tool, an endpoint may refuse its blocks.
+          return search ? seen : withoutServerTools(seen);
+        }),
         (m) => session.contextOf(m),
         caps.systemMessages ? "system" : "block",
       ),
@@ -343,11 +371,23 @@ export class Agent {
    */
   private async runTools(
     session: Session,
-    toolUses: ToolUseBlock[],
+    reply: ModelMessage,
     turn: TurnOptions,
+    turnNumber: number,
   ): Promise<{ results: ToolResultBlock[]; outside?: string }> {
     const { plugins, permissions } = this.opts;
     const { id: sessionId, tainted } = session;
+    const toolUses = reply.content.filter((b): b is ToolUseBlock => b.type === "tool_use");
+    // What the user wrote and searches returned, this reply's own searches included; read
+    // only by a tool that asks about addresses.
+    let urls: Set<string> | undefined;
+    const call = {
+      tainted,
+      get urls() {
+        urls ??= namedUrls([...session.messages, { role: "assistant", content: reply.content }]);
+        return urls;
+      },
+    };
     const toolLog = createLogger("tool");
 
     type Verdict =
@@ -371,7 +411,7 @@ export class Agent {
       }
       const ruled = permissions.decide(use.name, risk, sessionId);
       // A tool may need the user's OK for this call whatever allows it; a deny rule still wins.
-      const askFirst = ruled.decision !== "deny" && plugins.askFirst(use.name, use.input, tainted);
+      const askFirst = ruled.decision !== "deny" && plugins.askFirst(use.name, use.input, call);
       const decided = askFirst
         ? { decision: "ask" as const, reason: askFirst, canRemember: false }
         : ruled;
@@ -408,6 +448,7 @@ export class Agent {
                 signal: turn.signal,
                 log: toolLog,
                 sessionId,
+                turn: turnNumber,
                 tainted,
               })
             : { content: messages[verdict](use.name), isError: true };
@@ -431,6 +472,23 @@ export class Agent {
   }
 }
 
+/** Searches the model may run in one request (a continued reply gets as many again). */
+const MAX_SEARCHES = 5;
+
+/** The vendor's search as a tool call and its result in the transcript, as each block completes. */
+function showSearch(block: ModelMessage["content"][number], onEvent: TurnOptions["onEvent"]): void {
+  if (block.type === "server_tool_use" && block.name === "web_search") {
+    onEvent({ type: "tool_call", id: block.id, name: block.name, input: block.input });
+  } else if (block.type === "web_search_tool_result") {
+    onEvent({
+      type: "tool_result",
+      id: block.tool_use_id,
+      name: "web_search",
+      ...searchResultText(block),
+    });
+  }
+}
+
 const FEATURE_NAMES: Record<OptionalFeature, string> = {
   effort: "the effort setting",
   fallbacks: "server-side refusal fallback",
@@ -438,6 +496,7 @@ const FEATURE_NAMES: Record<OptionalFeature, string> = {
   streamUsage: "usage in the stream",
   cacheKey: "a prompt cache key",
   images: "images (each is left out, and kept in the conversation)",
+  webSearch: "web search",
 };
 
 /** The optional features a request carries. */
@@ -448,6 +507,9 @@ function optionalUsed(request: ModelRequest, extras: RequestExtras): OptionalFea
   if (request.messages.some((m) => m.role === "system")) used.push("systemMessages");
   if (extras.streamUsage) used.push("streamUsage");
   if (extras.cacheKey) used.push("cacheKey");
+  if (request.tools?.some((t) => "type" in t && t.type?.startsWith("web_search"))) {
+    used.push("webSearch");
+  }
   if (request.messages.some((m) => typeof m.content !== "string" && m.content.some(isImage))) {
     used.push("images");
   }

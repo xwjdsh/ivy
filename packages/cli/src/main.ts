@@ -6,6 +6,7 @@ import { errorMessage, resolvePaths } from "@ivy/kernel";
 import core from "@ivy/plugin-core";
 import journal from "@ivy/plugin-journal";
 import memory from "@ivy/plugin-memory";
+import web from "@ivy/plugin-web";
 import { render } from "ink";
 import { createElement } from "react";
 import { connect } from "./client.ts";
@@ -48,7 +49,7 @@ async function main(): Promise<number> {
       options: { "idle-exit": { type: "string" } },
     });
     const idleExitMs = values["idle-exit"] ? Number(values["idle-exit"]) : undefined;
-    await runDaemon(resolvePaths(), [core, memory, journal], { idleExitMs });
+    await runDaemon(resolvePaths(), [core, memory, journal, web], { idleExitMs });
     return 0;
   }
   const { values, positionals } = parseArgs({

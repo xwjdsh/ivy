@@ -34,6 +34,7 @@
         "@ivy/plugin-core": "workspace:*",
         "@ivy/plugin-journal": "workspace:*",
         "@ivy/plugin-memory": "workspace:*",
+        "@ivy/plugin-web": "workspace:*",
         "@ivy/protocol": "workspace:*",
         "ink": "^8.0.0",
         "marked": "^18.1.1",
@@ -125,6 +126,14 @@
         "zod": "^4.6.7",
       },
     },
+    "plugins/web": {
+      "name": "@ivy/plugin-web",
+      "version": "0.0.1",
+      "dependencies": {
+        "@ivy/plugin-api": "workspace:*",
+        "zod": "^4.6.7",
+      },
+    },
   },
   "patchedDependencies": {
     "marked-terminal@7.3.0": "patches/marked-terminal@7.3.0.patch",
@@ -171,6 +180,8 @@
     "@ivy/plugin-journal": ["@ivy/plugin-journal@workspace:plugins/journal"],
 
     "@ivy/plugin-memory": ["@ivy/plugin-memory@workspace:plugins/memory"],
+
+    "@ivy/plugin-web": ["@ivy/plugin-web@workspace:plugins/web"],
 
     "@ivy/protocol": ["@ivy/protocol@workspace:packages/protocol"],
 

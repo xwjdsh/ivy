@@ -4,19 +4,13 @@
 // can only shape its answer; what it read from outside is outside content all the same, which
 // its caller marks.
 
+import type { HelperModel } from "@ivy/plugin-api";
 import type { Capabilities } from "./capabilities.ts";
 import { type Config, type ModelRef, type ProviderConfig, resolveModel } from "./config.ts";
 import type { ModelClient, ModelRequest } from "./model.ts";
 
-export interface HelperCall {
-  /** What the helper is for this time, as its system prompt. */
-  system: string;
-  /** What it works on and what is asked of it. */
-  prompt: string;
-  /** Room for the answer; side work is short. */
-  maxTokens?: number;
-  signal?: AbortSignal;
-}
+/** One piece of side work: its own system prompt, and what it works on (see HelperModel). */
+export type HelperCall = Parameters<HelperModel["complete"]>[0];
 
 export class Helper {
   constructor(

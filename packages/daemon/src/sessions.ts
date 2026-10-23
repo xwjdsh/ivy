@@ -18,6 +18,7 @@ import {
   type PermissionChoice,
   promptText,
   Session,
+  searchResultText,
   summarizeUsage,
   type ToolCallRequest,
   type Tracer,
@@ -439,7 +440,14 @@ export class Sessions {
   private entries(session: Session, messages: Session["messages"]): Entry[] {
     const results = new Map<string, { content: string; isError: boolean }>();
     for (const m of messages) {
-      if (m.role !== "user" || typeof m.content === "string") continue;
+      if (typeof m.content === "string") continue;
+      // The vendor's searches have their results in a reply, maybe the next one (pause_turn).
+      if (m.role === "assistant") {
+        for (const b of m.content) {
+          if (b.type === "web_search_tool_result") results.set(b.tool_use_id, searchResultText(b));
+        }
+        continue;
+      }
       for (const b of m.content) {
         if (b.type !== "tool_result") continue;
         const content =
@@ -464,7 +472,10 @@ export class Sessions {
         for (const b of m.content) {
           if (b.type === "text" && b.text.trim()) {
             entries.push({ kind: "assistant", markdown: b.text });
-          } else if (b.type === "tool_use") {
+          } else if (
+            b.type === "tool_use" ||
+            (b.type === "server_tool_use" && b.name === "web_search")
+          ) {
             const result = results.get(b.id) ?? { content: "(no result)", isError: true };
             entries.push({
               kind: "tool",

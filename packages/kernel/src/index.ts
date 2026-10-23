@@ -39,6 +39,7 @@ export * from "./model.ts";
 export * from "./openai-model.ts";
 export * from "./permissions.ts";
 export * from "./plugins.ts";
+export * from "./server-tools.ts";
 export * from "./session.ts";
 export * from "./trace.ts";
 export * from "./turn-context.ts";
@@ -100,11 +101,17 @@ export async function createIvy(opts: IvyOptions): Promise<Ivy> {
   const keys = opts.keys ?? defaultKeyStore();
   const config = loadConfig(paths);
   pruneTraces(paths.traces, config.trace.retention_days);
+  // Plugins get the helper before it exists (it needs the model clients made below).
+  let helper: Helper | undefined;
   const plugins = new PluginHost(
     paths.data,
     config.plugins,
     sessionHistory(paths.sessions),
     paths.soul,
+    {
+      complete: (call) =>
+        helper ? helper.complete(call) : Promise.reject(new Error("Ivy is still starting")),
+    },
   );
   for (const plugin of opts.plugins) await plugins.register(plugin);
 
@@ -146,7 +153,7 @@ export async function createIvy(opts: IvyOptions): Promise<Ivy> {
     plugins,
     systemPrompt: (sessionId) => systemPrompt.textFor(sessionId),
   });
-  const helper = new Helper({ config, clientFor, capabilities, main: () => agent.modelRef });
+  helper = new Helper({ config, clientFor, capabilities, main: () => agent.modelRef });
   const upstream = new Map<string, Promise<string[]>>();
   const listUpstream = (provider: ProviderConfig): Promise<string[]> => {
     let list = upstream.get(provider.name);

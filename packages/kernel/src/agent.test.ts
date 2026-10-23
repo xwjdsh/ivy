@@ -16,8 +16,27 @@ import { PluginHost } from "./plugins.ts";
 import { Session, sessionHistory } from "./session.ts";
 import { PNG } from "./testing.ts";
 
+/** Search blocks as the vendor returns them. */
+const search = (id: string, query: string) =>
+  [
+    { type: "server_tool_use", id, name: "web_search", input: { query } },
+    {
+      type: "web_search_tool_result",
+      tool_use_id: id,
+      content: [
+        {
+          type: "web_search_result",
+          title: "Finale",
+          url: "https://a.example/f",
+          encrypted_content: "x",
+          page_age: null,
+        },
+      ],
+    },
+  ] as unknown as Block[];
+
 /** A page tool that brings outside content, and a note tool that asks once that has happened. */
-function outsidePlugin(seen: boolean[]) {
+function outsidePlugin(seen: boolean[], turns: number[] = []) {
   return definePlugin({
     id: "w",
     version: "0",
@@ -39,6 +58,7 @@ function outsidePlugin(seen: boolean[]) {
         askFirst: (_, { tainted }) => (tainted ? "read outside content" : undefined),
         run: (_, ctx) => {
           seen.push(ctx.tainted);
+          turns.push(ctx.turn);
           return "noted";
         },
       }),
@@ -73,7 +93,7 @@ class FakeModel implements ModelClient {
 
   async stream(
     request: ModelRequest,
-    handlers: { onText?(d: string): void },
+    handlers: { onText?(d: string): void; onBlock?(b: Block): void },
     _signal?: AbortSignal,
     extras?: RequestExtras,
   ) {
@@ -83,7 +103,10 @@ class FakeModel implements ModelClient {
     if (!next) throw new Error("script exhausted");
     if (typeof next === "function") next();
     const message = next as ModelMessage;
-    for (const b of message.content) if (b.type === "text") handlers.onText?.(b.text);
+    for (const b of message.content) {
+      if (b.type === "text") handlers.onText?.(b.text);
+      handlers.onBlock?.(b);
+    }
     return message;
   }
 }
@@ -678,6 +701,7 @@ describe("Agent.runTurn", () => {
 
   test("outside content taints the turn from the next step, and tools may ask then", async () => {
     const seen: boolean[] = [];
+    const turns: number[] = [];
     const asked: ToolCallRequest[] = [];
     const model = new FakeModel([
       // Written before the page was read: runs as before, unasked.
@@ -693,7 +717,7 @@ describe("Agent.runTurn", () => {
         return "always";
       },
       "sys",
-      [outsidePlugin(seen)],
+      [outsidePlugin(seen, turns)],
     );
     expect(session.tainted).toBe(false);
     await run(agent, "go");
@@ -713,6 +737,7 @@ describe("Agent.runTurn", () => {
     );
     await run(agent, "anyway, what should I cook?");
     expect(seen).toEqual([false, true, false]);
+    expect(turns).toEqual([1, 1, 2]);
     expect(asked).toHaveLength(1);
     expect(session.tainted).toBe(false);
     expect(Session.load(join(dir, "sessions"), session.id).tainted).toBe(false);
@@ -725,6 +750,113 @@ describe("Agent.runTurn", () => {
       { role: "assistant", text: "noted, and on to dinner" },
     ]);
     expect(history[3]?.outside).toBeUndefined();
+  });
+
+  test("the vendor's search: offered, shown, and tainting the reply that ran it", async () => {
+    const seen: boolean[] = [];
+    const asked: ToolCallRequest[] = [];
+    const web = definePlugin({
+      id: "web",
+      version: "0",
+      description: "web",
+      serverTools: ["web_search"],
+    });
+    const model = new FakeModel([
+      // The note is written after the results, in the same reply: it is asked.
+      reply("tool_use", [...search("srv_1", "finale date"), toolUse("tu_1", "w__note")]),
+      reply("end_turn", [text("It airs Friday.")]),
+    ]);
+    const agent = await makeAgent(
+      model,
+      "read",
+      async (c) => {
+        asked.push(c);
+        return "once";
+      },
+      "sys",
+      [outsidePlugin(seen), web],
+    );
+    await run(agent, "when is the finale?");
+    expect(model.requests[0]?.tools?.at(-1)).toEqual({
+      type: "web_search_20260209",
+      name: "web_search",
+      max_uses: 5,
+    });
+    expect(events.filter((e) => e.type === "tool_call" || e.type === "tool_result")).toMatchObject([
+      { type: "tool_call", id: "srv_1", name: "web_search", input: { query: "finale date" } },
+      { type: "tool_result", id: "srv_1", content: "Finale — https://a.example/f", isError: false },
+      { type: "tool_call", id: "tu_1", name: "w__note" },
+      { type: "tool_result", id: "tu_1" },
+    ]);
+    expect(asked).toMatchObject([{ name: "w__note" }]);
+    expect(seen).toEqual([true]);
+    expect(sessionHistory(join(dir, "sessions")).messages(session.id).at(-1)).toMatchObject({
+      text: "It airs Friday.",
+      outside: true,
+    });
+  });
+
+  test("addresses the user wrote or a search returned, this reply's own included, go unasked", async () => {
+    const asked: ToolCallRequest[] = [];
+    const web = definePlugin({
+      id: "web",
+      version: "0",
+      description: "web",
+      serverTools: ["web_search"],
+      tools: [
+        defineTool({
+          name: "fetch",
+          description: "fetch",
+          input: z.object({ url: z.string() }),
+          risk: "read",
+          askFirst: (i, { urls }) => (urls.has(i.url) ? undefined : "unnamed"),
+          run: () => "page",
+        }),
+      ],
+    });
+    const model = new FakeModel([
+      reply("tool_use", [
+        ...search("srv_1", "finale"),
+        toolUse("tu_1", "web__fetch", { url: "https://a.example/f" }),
+        toolUse("tu_2", "web__fetch", { url: "https://user.example/page" }),
+        toolUse("tu_3", "web__fetch", { url: "https://made.up/?d=secret" }),
+      ]),
+      reply("end_turn", [text("ok")]),
+    ]);
+    const agent = await makeAgent(
+      model,
+      "read",
+      async (c) => {
+        asked.push(c);
+        return "deny";
+      },
+      "sys",
+      [web],
+    );
+    await run(agent, "see https://user.example/page and look up the finale");
+    expect(asked.map((c) => (c.input as { url: string }).url)).toEqual([
+      "https://made.up/?d=secret",
+    ]);
+  });
+
+  test("a model without the search tool gets the replies without its blocks", async () => {
+    const model = new FakeModel([reply("end_turn", [text("ok")])]);
+    session.append(
+      { role: "user", content: "when is the finale?" },
+      {
+        role: "assistant",
+        content: [
+          ...search("srv_1", "finale"),
+          { type: "text", text: "Friday.", citations: [{ type: "web_search_result_location" }] },
+        ] as unknown as Block[],
+      },
+    );
+    // No web plugin: no search tool, so the history can't hold its blocks.
+    await run(await makeAgent(model), "thanks");
+    expect(model.requests[0]?.messages[1]).toEqual({
+      role: "assistant",
+      content: [{ type: "text", text: "Friday." }],
+    });
   });
 
   test("a deny rule still wins over a tool's own ask", async () => {
