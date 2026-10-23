@@ -60,6 +60,23 @@ export class SystemPrompt {
     return (await this.partsFor(sessionId)).map((p) => p.text).join("\n\n");
   }
 
+  /**
+   * Ivy as a conversation starting now would have her, for writing without tools (writer.ts):
+   * the rules, SOUL.md and the plugins' session sections, built under a passing id that the
+   * plugins let go of after.
+   */
+  async persona(id: string): Promise<string> {
+    const parts = [RULES.trim()];
+    const soul = readOptional(this.paths.soul);
+    if (soul) parts.push(soul);
+    try {
+      for (const { text } of await this.plugins.sessionPrompts({ id })) parts.push(text);
+    } finally {
+      this.plugins.releaseSession({ id });
+    }
+    return parts.join("\n\n");
+  }
+
   private async build(sessionId: string, interfaceInstructions: string): Promise<PromptPart[]> {
     const parts = [{ name: "rules.md", text: RULES.trim() }];
 

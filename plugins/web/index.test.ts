@@ -20,6 +20,7 @@ async function plugin(read: (url: string) => Promise<Page>) {
         return "It airs on Friday.";
       },
     },
+    writer: { complete: async () => "" },
   });
   const tool = p.tools?.find((t) => t.name === "fetch");
   if (!tool) throw new Error("no fetch tool");

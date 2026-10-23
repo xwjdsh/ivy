@@ -86,6 +86,38 @@ export interface HelperModel {
   }): Promise<string>;
 }
 
+/**
+ * Ivy speaking, for what she writes herself (a day's note, a review): the main model, with
+ * her rules, SOUL.md and the plugins' session sections (her memory, her journal) as the start
+ * of its system prompt, and `system` after them as the task. No tools.
+ */
+export type WriterModel = HelperModel;
+
+/** What a job is told when it runs. */
+export interface JobRun {
+  now: Date;
+  /**
+   * When it last ran to the end, at most a week ago: what came due since is the job's to do,
+   * and what came before was done (or left, as the user deleted it).
+   */
+  since: Date;
+  /** Aborted when Ivy stops. */
+  signal: AbortSignal;
+}
+
+/**
+ * Work the daemon runs once a day, from a local time on (on waking, if the Mac slept). A run
+ * that fails is tried again the next day; the job finds what is due from `since` and its own
+ * files, so a run is safe to repeat.
+ */
+export interface JobDef {
+  /** Lowercase letters, digits and dashes. */
+  name: string;
+  /** From when it runs each day, local "HH:MM"; read after setup, so settings apply. */
+  at(): string;
+  run(run: JobRun): Promise<void>;
+}
+
 export interface Logger {
   debug(msg: string, data?: unknown): void;
   info(msg: string, data?: unknown): void;
@@ -111,6 +143,8 @@ export interface PluginContext {
   history: ConversationHistory;
   /** A small fast model for reading and summing up. */
   helper: HelperModel;
+  /** Ivy herself, for what she writes in her own words. */
+  writer: WriterModel;
 }
 
 /** One message of a past conversation: what the user typed or what Ivy answered. */
@@ -241,6 +275,7 @@ export interface IvyPlugin {
    */
   reminders?(window: ReminderWindow): Promise<Reminder[]> | Reminder[];
   commands?: CommandDef[];
+  jobs?: JobDef[];
 }
 
 /**
@@ -256,6 +291,11 @@ export const CONTEXT_MAX_CHARS = 2000;
 export function localDate(d: Date): string {
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/** "21:40": a time of day, local, as Ivy writes and the user reads it. */
+export function localTime(d: Date): string {
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
 /**

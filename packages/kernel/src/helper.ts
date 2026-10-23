@@ -51,25 +51,56 @@ export class Helper {
     if (!this.separate && this.opts.capabilities.for(target).effort) {
       request.output_config = { effort: "low" };
     }
-    const client = this.opts.clientFor(target.provider);
-    const ask = (sent: ModelRequest) => {
-      const timeout = AbortSignal.timeout(TIMEOUT_MS);
-      const signal = call.signal ? AbortSignal.any([call.signal, timeout]) : timeout;
-      return client.stream(sent, {}, signal);
-    };
-    let message: Awaited<ReturnType<typeof ask>>;
-    try {
-      message = await ask(request);
-    } catch (err) {
-      // An endpoint that refuses the effort, as the turn loop learns it (agent.ts).
-      if (downgradable(err, request) !== "effort") throw err;
-      this.opts.capabilities.markUnsupported(target, "effort");
-      const { output_config: _, ...withoutEffort } = request;
-      message = await ask(withoutEffort);
-    }
-    return message.content
-      .flatMap((b) => (b.type === "text" ? [b.text] : []))
-      .join("")
-      .trim();
+    return completeText({
+      client: this.opts.clientFor(target.provider),
+      capabilities: this.opts.capabilities,
+      target,
+      request,
+      signal: call.signal,
+      timeoutMs: TIMEOUT_MS,
+    });
   }
+}
+
+/**
+ * One request without tools, its answer as text: within `timeoutMs` whatever the caller's
+ * signal allows; an endpoint that refuses the effort asked again without it, as the turn loop
+ * learns it (agent.ts). A refused answer is an error. One cut off (max_tokens) is too where it
+ * must be `whole` (what is kept as written, a note); elsewhere it comes marked as cut off (a
+ * page's answer is still worth having).
+ */
+export async function completeText(opts: {
+  client: ModelClient;
+  capabilities: Capabilities;
+  target: ModelRef;
+  request: ModelRequest;
+  signal?: AbortSignal;
+  timeoutMs: number;
+  whole?: boolean;
+}): Promise<string> {
+  const ask = (sent: ModelRequest) => {
+    const timeout = AbortSignal.timeout(opts.timeoutMs);
+    return opts.client.stream(
+      sent,
+      {},
+      opts.signal ? AbortSignal.any([opts.signal, timeout]) : timeout,
+    );
+  };
+  let message: Awaited<ReturnType<typeof ask>>;
+  try {
+    message = await ask(opts.request);
+  } catch (err) {
+    if (downgradable(err, opts.request) !== "effort") throw err;
+    opts.capabilities.markUnsupported(opts.target, "effort");
+    const { output_config: _, ...withoutEffort } = opts.request;
+    message = await ask(withoutEffort);
+  }
+  if (message.stop_reason === "refusal") throw new Error("the answer was refused");
+  const cut = message.stop_reason === "max_tokens";
+  if (cut && opts.whole) throw new Error("the answer was cut off");
+  const text = message.content
+    .flatMap((b) => (b.type === "text" ? [b.text] : []))
+    .join("")
+    .trim();
+  return cut ? `${text} […]` : text;
 }

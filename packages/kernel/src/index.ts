@@ -23,6 +23,7 @@ import { PluginHost } from "./plugins.ts";
 import { Points } from "./points.ts";
 import { sessionHistory } from "./session.ts";
 import { pruneTraces, Tracer } from "./trace.ts";
+import { Writer } from "./writer.ts";
 
 export * from "./agent.ts";
 export * from "./capabilities.ts";
@@ -45,6 +46,7 @@ export * from "./session.ts";
 export * from "./trace.ts";
 export * from "./turn-context.ts";
 export * from "./usage.ts";
+export * from "./writer.ts";
 
 export interface IvyOptions {
   plugins: IvyPlugin[];
@@ -109,11 +111,17 @@ export async function createIvy(opts: IvyOptions): Promise<Ivy> {
   pruneTraces(paths.traces, config.trace.retention_days);
   // Plugins get the helper before it exists (it needs the model clients made below).
   let helper: Helper | undefined;
+  let writer: Writer | undefined;
+  const starting = () => Promise.reject(new Error("Ivy is still starting"));
   const history = sessionHistory(paths.sessions);
-  const plugins = new PluginHost(paths.data, config.plugins, history, paths.soul, {
-    complete: (call) =>
-      helper ? helper.complete(call) : Promise.reject(new Error("Ivy is still starting")),
-  });
+  const plugins = new PluginHost(
+    paths.data,
+    config.plugins,
+    history,
+    paths.soul,
+    { complete: (call) => (helper ? helper.complete(call) : starting()) },
+    { complete: (call) => (writer ? writer.complete(call) : starting()) },
+  );
   for (const plugin of opts.plugins) await plugins.register(plugin);
 
   const systemPrompt = new SystemPrompt(paths, plugins);
@@ -158,6 +166,12 @@ export async function createIvy(opts: IvyOptions): Promise<Ivy> {
     systemPrompt: (sessionId) => systemPrompt.textFor(sessionId),
   });
   helper = new Helper({ config, clientFor, capabilities, main: () => agent.modelRef });
+  writer = new Writer({
+    clientFor,
+    capabilities,
+    main: () => agent.modelRef,
+    persona: () => systemPrompt.persona(`writer-${crypto.randomUUID().slice(0, 8)}`),
+  });
   // Conversations Ivy stopped in were never let go: summed up now, in the background.
   points = opts.sumUp === false ? undefined : new Points(paths.sessions, history, helper);
   points?.catchUp();

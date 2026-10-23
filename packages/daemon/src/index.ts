@@ -12,6 +12,7 @@ import {
 } from "@ivy/kernel";
 import type { IvyPlugin } from "@ivy/plugin-api";
 import { api } from "./api.ts";
+import { startJobs } from "./jobs.ts";
 import { startScheduler } from "./scheduler.ts";
 import { type Daemon, startDaemon } from "./server.ts";
 import { Sessions } from "./sessions.ts";
@@ -117,6 +118,10 @@ export async function runDaemon(
     publish: (event) => daemon.publish(event),
     canDeliver: () => daemon.notifiers > 0,
   });
+  const jobs = startJobs({
+    stateFile: join(paths.daemonState, "jobs.json"),
+    jobs: ivy.plugins.jobs(),
+  });
   const log = createLogger("daemon");
   await new Promise<void>((resolve) => {
     const stop = (why: string) => {
@@ -131,7 +136,7 @@ export async function runDaemon(
       let activeAt = Date.now();
       setInterval(
         () => {
-          if (daemon.clients > 0 || sessions.busy) activeAt = Date.now();
+          if (daemon.clients > 0 || sessions.busy || jobs.busy) activeAt = Date.now();
           else if (Date.now() - activeAt >= idleExitMs) stop("idle");
         },
         Math.min(IDLE_CHECK_MS, idleExitMs),
@@ -139,5 +144,6 @@ export async function runDaemon(
     }
   });
   scheduler.stop();
+  jobs.stop();
   await served.stop();
 }

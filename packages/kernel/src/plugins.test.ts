@@ -262,3 +262,26 @@ test("releasing a session tells every plugin; one that throws doesn't stop the r
   setLogSink(null);
   expect(released).toEqual(["s1"]);
 });
+
+test("job names key what is kept of their runs: plain, and once per plugin", async () => {
+  const run = async () => {};
+  const at = () => "04:00";
+  const h = new PluginHost(mkdtempSync(join(tmpdir(), "ivy-jobs-")), {});
+  await expect(h.register(plugin("a", { jobs: [{ name: "Bad Name", at, run }] }))).rejects.toThrow(
+    "job name",
+  );
+  await expect(
+    h.register(
+      plugin("b", {
+        jobs: [
+          { name: "x", at, run },
+          { name: "x", at, run },
+        ],
+      }),
+    ),
+  ).rejects.toThrow("repeated");
+  const job = { name: "reflect", at, run };
+  await h.register(plugin("c", { jobs: [job] }));
+  expect(h.jobs()).toMatchObject([{ name: "reflect", plugin: "c" }]);
+  expect("plugin" in job).toBe(false);
+});

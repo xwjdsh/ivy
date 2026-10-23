@@ -23,6 +23,7 @@ async function start(settings: Record<string, unknown> = {}) {
     log,
     history: { sessions: () => [], messages: () => [], points: () => undefined },
     helper: { complete: async () => "" },
+    writer: { complete: async () => "" },
   });
 }
 

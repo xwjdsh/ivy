@@ -7,6 +7,7 @@ import type {
   ConversationHistory,
   HelperModel,
   IvyPlugin,
+  JobDef,
   Reminder,
   ReminderWindow,
   RiskLevel,
@@ -15,6 +16,7 @@ import type {
   ToolContext,
   ToolDef,
   TurnInfo,
+  WriterModel,
 } from "@ivy/plugin-api";
 import { CONTEXT_MAX_CHARS } from "@ivy/plugin-api";
 import { z } from "zod";
@@ -26,6 +28,7 @@ import { contextBlock } from "./turn-context.ts";
 const SEP = "__";
 const NAME_RE = /^[a-zA-Z0-9_-]+$/;
 const COMMAND_RE = /^\/[a-z][a-z0-9-]*$/;
+const JOB_RE = /^[a-z][a-z0-9-]*$/;
 
 // Per-plugin limits for contextFor, so one plugin can't bloat or stall a turn. The size
 // limit, CONTEXT_MAX_CHARS, is in the plugin API, so plugins can fit their text in.
@@ -80,6 +83,7 @@ export class PluginHost {
     /** SOUL.md; by default where the data folder's parent keeps it (tests). */
     private readonly soulFile = join(dataRoot, "..", "SOUL.md"),
     private readonly helper: HelperModel = NO_HELPER,
+    private readonly writer: WriterModel = NO_HELPER,
   ) {}
 
   async register(plugin: IvyPlugin): Promise<void> {
@@ -111,6 +115,15 @@ export class PluginHost {
       this.tools.set(fullName, { fullName, pluginId: plugin.id, def });
     }
 
+    const jobNames = new Set<string>();
+    for (const def of plugin.jobs ?? []) {
+      // Its name keys what the daemon keeps of its runs.
+      if (!JOB_RE.test(def.name) || jobNames.has(def.name)) {
+        throw new Error(`Invalid or repeated job name "${def.name}" in plugin "${plugin.id}"`);
+      }
+      jobNames.add(def.name);
+    }
+
     for (const def of plugin.commands ?? []) {
       if (!COMMAND_RE.test(def.name)) {
         throw new Error(`Invalid command name "${def.name}" in plugin "${plugin.id}"`);
@@ -133,6 +146,7 @@ export class PluginHost {
       log: createLogger(plugin.id),
       history: this.history,
       helper: this.helper,
+      writer: this.writer,
     });
     this.plugins.set(plugin.id, plugin);
   }
@@ -298,6 +312,11 @@ export class PluginHost {
     const outward = tool.def.risk === "external" || tool.def.risk === "dangerous";
     const own = outward ? undefined : tool.def.own;
     return { plugin: tool.pluginId, text, ...(own && { own }) };
+  }
+
+  /** Every enabled plugin's jobs, with the plugin's id. */
+  jobs(): Array<JobDef & { plugin: string }> {
+    return this.list().flatMap((p) => (p.jobs ?? []).map((j) => ({ ...j, plugin: p.id })));
   }
 
   /** The plugins that ask for a vendor-run tool, by id. */

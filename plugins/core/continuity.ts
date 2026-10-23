@@ -1,7 +1,7 @@
 // A sense of time and of going on (DESIGN.md §11, M3): how long since the user last wrote,
 // and, as a conversation starts, where the last one was left.
 
-import { type ConversationHistory, localDate } from "@ivy/plugin-api";
+import { type ConversationHistory, localDate, localTime } from "@ivy/plugin-api";
 import { weekdayOf } from "./dates.ts";
 
 /** Less than this since the user last wrote is one stretch of talk: nothing to say. */
@@ -29,8 +29,7 @@ function ago(from: Date, now: Date): string {
   return `${Math.floor(hours / 24)} days ago`;
 }
 
-const when = (d: Date) =>
-  `${localDate(d)} ${weekdayOf(d)} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+const when = (d: Date) => `${localDate(d)} ${weekdayOf(d)} ${localTime(d)}`;
 
 /**
  * Lines for a turn's context: the time since the user last wrote, after a while apart; and

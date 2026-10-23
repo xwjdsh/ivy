@@ -58,3 +58,12 @@ test("the helper model is saved, taken out, and checked against the providers", 
   expect(saveHelperModel(paths, undefined).agent.helper_model).toBeUndefined();
   expect(() => saveHelperModel(paths, "nowhere/model")).toThrow("helper_model");
 });
+
+test("a helper answer cut off comes marked, still worth having", async () => {
+  const { ivy } = await ivyWith('helper_model = "proxy/small-model"\n', [
+    { content: [text("It airs on Fri")], stop: "max_tokens" },
+  ]);
+  expect(await ivy.helper.complete({ system: "Read.", prompt: "A page" })).toBe(
+    "It airs on Fri […]",
+  );
+});

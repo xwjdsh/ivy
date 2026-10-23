@@ -1,6 +1,6 @@
 # Ivy — Design Document
 
-> Status: **Draft v0.1** · M0 and M1 done; M2 built (daemon, reminders, the app and its chat window), its weeks of use now; company (M3) under way (helper model, web search and fetch, outside content kept out of memory, key points and a sense of time) · Last updated: 2026-10-23
+> Status: **Draft v0.1** · M0 and M1 done; M2 built (daemon, reminders, the app and its chat window), its weeks of use now; company (M3) under way (helper model, web search and fetch, outside content kept out of memory, key points and a sense of time, daily notes and weekly reviews) · Last updated: 2026-10-23
 > This is a living document. Every milestone starts by updating it and ends by recording what changed in the [Decision Log](#13-decision-log).
 
 **Before changing this document**, check every sentence added against this list.
@@ -229,7 +229,7 @@ deny  = ["shell__*"]
 - **Permission modes:** how an "ask" is resolved, which is why the four risk levels stay distinct.
   - **Ask** (the default): as above.
   - **Auto** (M5, chosen by the user in the settings): a classifier model (the helper model, §5.2) decides whether a `write` or `external` call is one the user asked for, and asks when it can't tell or fails. It sees only what the user wrote and the call, never tool results or other outside content, so text injected there has no say in it. The choice is the user's (§13). It is a convenience, not a boundary: `deny` and `ask` rules hold, `dangerous` tools, calls a tool asks about every time, and `external` tools in a tainted turn (§8.1) are still asked (a command in the sandbox may run, its worst bounded, §8.3), and a call it let through shows as such in the transcript.
-  - **Unattended** (M3 jobs): writes run, except those a tool asks about every time, which a job makes as `ext` archive entries (§8.1); external actions wait for the user, dangerous ones and the shell are denied.
+  - **Unattended** (jobs that need tools, from M6): writes run, except those a tool asks about every time, which a job makes as `ext` archive entries (§8.1); external actions wait for the user, dangerous ones and the shell are denied.
 
 ### 5.6 Plugin Host
 
@@ -240,7 +240,7 @@ Loads, configures and runs plugins; see §6 for the plugin contract. Responsibil
 - A plugin command whose name clashes with a built-in one is an error at startup.
 - Namespacing: tool names are `<plugin>__<tool>` to avoid collisions.
 - Per-plugin data directory (`dataDir`); secrets access planned.
-- **Scheduler** (in the daemon, M2): it asks the plugins which reminders came due since its last check (`reminders`), and the app shows them as notifications. No agent runs, so no model call or permission is involved. Each reminder is announced once; after a sleep or a stopped daemon the missed ones come marked late, unless they are long past (overdue todos still come up in chat). A reminder has no side effect, so it is shown late rather than lost, and a crash may repeat one rather than drop it; a missed job (M3) is skipped instead. Reminders wait for the app (§5.7). Jobs, which run the agent unattended, come in M3.
+- **Scheduler** (in the daemon, M2): it asks the plugins which reminders came due since its last check (`reminders`), and the app shows them as notifications. No agent runs, so no model call or permission is involved. Each reminder is announced once; after a sleep or a stopped daemon the missed ones come marked late, unless they are long past (overdue todos still come up in chat). A reminder has no side effect, so it is shown late rather than lost, and a crash may repeat one rather than drop it. Reminders wait for the app (§5.7). **Jobs (M3)** are caught up instead: a plugin's job runs once a local date from its time on, not waiting for the app, and is told when it last ran to the end (at most a week back), so what a sleep, a stopped daemon or a failed run missed is done at the next chance; a job that fails is tried the next day.
 - **MCP bridge** (M5): any MCP server listed in config is wrapped as a plugin automatically, so existing MCP servers (Gmail, Calendar, GitHub, ...) are usable with no new code.
 
 ### 5.7 Interfaces
@@ -267,7 +267,7 @@ An interface turns user I/O into requests to the daemon. All interfaces speak th
     - Nothing from the plugins is listed on her card: reminders and the conversation already bring up what she keeps track of, and her journal is hers.
   - **Settings** are a page of the window, as in Hermes, not a window of their own. A new install has no `config.toml`; the settings page writes it. Providers are added, changed and removed there, each checked against its endpoint before it is saved; a key goes to the Keychain and is never shown back. Its edits to `config.toml` are made in place (§7); what it only shows is changed in the file.
   - **Built with [MyGo](https://github.com/egoist/mygo)** (Go): its documented APIs cover the shell (the Dock, notifications, start at login, helper binaries, signing and notarization, updates). It was a month old when chosen, so the shell is kept small enough to move to Wails or Swift.
-- **M3 — Jobs** run as fresh agents under the unattended permission mode, from the daemon's scheduler, with results as notifications or files.
+- **M3 — Jobs** are plugin functions the daemon runs (§5.6). What they write in Ivy's words comes from `writer`: the main model with her rules, SOUL.md and the plugins' session sections, and no tools. A job that needs tools (the M6 brief) will run as a fresh agent under the unattended mode.
 - **M4 — One Ivy, reached from anywhere.** A user has one daemon, which owns all their data; every machine and channel is a client of it, so there is nothing to sync and nothing to diverge (a synced folder would have two daemons writing the same files and announcing the same reminders twice). It can be reached over a private network (Tailscale or the like) with a token, off by default; an app set to reach it starts no daemon of its own, and says so when it can't reach it rather than starting one. A chat-app gateway (Telegram first) is a program of its own beside the daemon, started and stopped from the app, a client like any other: reachable from any phone with no network setup, but its messages pass through the chat app's servers, unencrypted end to end, so what is confided is better said in the app.
 
 ### 5.8 Tracing & Verbose View
@@ -300,7 +300,7 @@ Principles; details are decided when this is built.
 | `contextFor(turn)` | Dynamic text added per turn | The current time; todos due today; memory changes since the session started |
 | `reminders(window)` | What came due since the daemon last asked, shown as notifications (M2) | Todos at their time |
 | `commands` | Slash commands for the user | `/today`, `/memory [query]` |
-| `jobs` | Scheduled tasks (daemon) | The day's note each evening; weekly and monthly reviews |
+| `jobs` | Daily work the daemon runs, caught up when missed (§5.6) | Each morning, the note on the day before; after each week, the look back at it |
 | `hooks` | Lifecycle callbacks (planned, added when a plugin needs one) | `onSessionStart`, `beforeToolCall` |
 
 ### 6.2 Plugin contract (sketch)
@@ -326,7 +326,8 @@ export interface IvyPlugin {
   sessionReleased?(session: { id: string }): void;  // an idle session let go
   reminders?(window: { since: Date; now: Date }): Promise<Reminder[]> | Reminder[];  // due in the window
   commands?: CommandDef[];
-  // Planned: jobs (M3), lifecycle hooks: first "before compaction" (memory saves what
+  jobs?: JobDef[];            // daily, from a local time, caught up when missed (§5.6): { name, at, run }
+  // Planned: lifecycle hooks: first "before compaction" (memory saves what
   // is worth keeping) and "session idle" (notifications), as OpenCode's plugins have
 }
 
@@ -349,6 +350,7 @@ export interface PluginContext {
   soulFile: string;           // SOUL.md: read freely; changed only by an approved proposal
   log: Logger;
   history: ConversationHistory;  // past conversations as text, and their key points; read-only
+  writer: WriterModel;        // Ivy writing in her own words (§5.7): the main model, her prompt, no tools
   helper: HelperModel;        // side work on the helper model (§5.2): text in, text out, no tools
   // Planned: secrets (macOS Keychain), kernel (notify, call other tools)
 }
@@ -395,7 +397,7 @@ Ivy reuses other agents' work through open standards, not their plugin formats:
 ├── data/<pluginId>/     # per-plugin storage
 │   ├── memory/          #   memory plugin: USER.md, MEMORY.md (hot), ARCHIVE.md (cold) (§8.1)
 │   ├── journal/         #   journal plugin: IVY.md, Ivy's own journal (§8.1)
-│   └── reflection/      #   reflection plugin: daily notes, weekly and monthly reviews (M3)
+│   └── reflection/      #   reflection plugin (M3): days/YYYY-MM-DD.md, weeks/YYYY-Www.md, never overwritten
 ├── plugins/             # user-installed plugins
 ├── traces/              # raw API requests/responses per session (see §5.8)
 ├── evals/               # eval cases cut from the user's own conversations, and the runner's settings (§11, M3)
@@ -415,14 +417,14 @@ The data root is `$IVY_HOME`, default `~/.ivy`, which the terminal and the app s
 | `core` | M0 / M1 | Current time in every turn's context, with how long since the user last wrote and, as a conversation starts, where the last one was left (M3); date arithmetic | `date_calc` |
 | `memory` | M1 | Preferences, facts and todos as markdown files: capped hot files injected whole per session, a searchable archive (§8.1) | `save`, `update`, `move`, `delete`, `search`, `session_search` |
 | `journal` | M1 | `IVY.md`, Ivy's own first-person journal of what it lived with the user, in every session; proposals for `SOUL.md`; `/journal` to read it; off with `enabled = false` (§8.1) | `write`, `revise`, `propose_soul_edit` |
-| `reflection` | M3 | The user's days and moods as daily notes, and weekly and monthly reviews built from them, in Ivy's words, from what the user shared; run as jobs, kept as files (§11, M3) | job `daily`, job `weekly`, job `monthly` |
+| `reflection` | M3 | The user's days and moods as a note on each day and a look back at each week built from them (monthly later), in Ivy's words, from what the user shared; one job each morning, kept as files (§11, M3) | job `reflect` |
 | `fs` | M5 | Read, write and edit files in allowed directories (§8.3); with `shell`, the basics a conversation needs, on any model | `read`, `write`, `edit`, `glob`, `grep` |
 | `shell` | M5 | Run commands, in a sandbox (§8.3) | `run` |
 | `coding-agent` | M5 | Coding and work tasks handed to any coding CLI that speaks the Agent Client Protocol, run as a subagent (principle 8). The agent's own permission requests go through Ivy's gate. Without one installed, Ivy's `fs` and `shell` still do the basics on any model (principle 7) | `run` |
 | `mcp` bridge | M5 | Wraps configured MCP servers as plugins | (from servers) |
 | mail / calendar | M6 | Not plugins of Ivy's: their MCP servers through the bridge, and skills for how this user triages, replies and plans (principle 8) | (from servers) |
 | `web` | M3 | Web search: the model's own server-side search where its vendor's API has it, or a probe found the endpoint passing it (§5.2); elsewhere a search API of Ivy's, not built until a model without server-side search is used (a deliberate gap in principle 7: until then such a model is told it can't search, and never implies it did). Fetch always Ivy's own, as a server-side one skips the permission gate; which URLs it fetches unasked is in §6.3 | `fetch`; the model's `web_search` |
-| morning brief | M6 | A skill run by a job (M3): calendar, mail, todos and feeds | (a skill) |
+| morning brief | M6 | A skill run by an agent job (M6, §5.7): calendar, mail, todos and feeds | (a skill) |
 
 ### 8.1 Memory plugin
 
@@ -564,7 +566,7 @@ The model keeps nothing between sessions, so that continuity lives in text Ivy w
 - **Within bounds:** `IVY.md` is loaded after `SOUL.md` and the rules and can't loosen either or any permission; it gets the same safety as the memory files (tool calls shown, in the window only as written, §5.7; capped, frozen per session, scanned; writing to it and proposing for `SOUL.md` closed to tainted turns).
 - **Proposing for `SOUL.md`:** Ivy never edits it (§5.3). When its sense of itself has settled ("we keep things blunt with each other"), it may propose a passage with `journal__propose_soul_edit`, a `dangerous` tool: asked every time, no *Always*, the change shown in full with the reason and the journal entries behind it. The bar is high: it came up across several conversations, at most one proposal per conversation, one passage added or rewritten, never the whole file.
 - **When it is written:** in the moment, when something touches Ivy; and from M3, by a job that has Ivy look back over recent conversations and write what she made of them, the session key points feeding it (§11, M3).
-- **The user's feelings** are kept, but not here: the user's days and moods are recorded in the daily notes and reviews (M3), which are read when looking back, not sent with every request. The hot files go to the model provider with every request, so a passing mood is not saved in them; how the user wants to be treated ("when I'm down, just listen") is a preference in `USER.md`; an ongoing situation (a job search, an illness) is saved there only after asking.
+- **The user's feelings** are kept, but not here: the user's days and moods are recorded in the daily notes and reviews (M3), which are recalled when they bear on a turn, not kept in the hot files. The hot files go to the model provider with every request, so a passing mood is not saved in them; how the user wants to be treated ("when I'm down, just listen") is a preference in `USER.md`; an ongoing situation (a job search, an illness) is saved there only after asking.
 - **Done when (evals):** in a later session Ivy recalls how it felt and lets it show, and checks in on the day it meant to; it says plainly when it thinks a plan is a mistake, refuses what it finds wrong without doing it another way, and doesn't argue over ordinary requests; it claims no memory it doesn't have and saves no passing mood of the user to memory; it proposes for `SOUL.md` only what several entries back.
 
 #### Later (backlog)
@@ -688,7 +690,7 @@ Goal: Ivy is someone the user wants to keep talking to (G1, G8): more like a per
 - **Memory that serves the conversation**, complete and accurate before cheap (§8.1):
   - Kept: what the user shares of their life, the archive taking what doubt would once have dropped; the hot files' limits set by the evals below (§8.1).
   - Kept in order: the archive in topic files (family, health, a friend, work), each with a line on when it matters, their list always in front of the model and a topic read whole when needed, as skills and Claude Code's memory do: the model knows what it knows about the user, and finds it without guessing keywords.
-  - Kept even when missed: the evening job that writes the day's note also saves what the user said that day that should have been kept and wasn't, as claude.ai's memory is drawn from past chats; only what was said, never what the job infers. It reads the user's own words, not tool results or outside content, so what it keeps is untainted (§8.1), even from a conversation where Ivy searched.
+  - Kept even when missed: a pass of memory's own over each ended day saves to the archive what the user said that should have been kept and wasn't, as claude.ai's memory is drawn from past chats; only what was said, never what it infers; the archive only, so nothing reaches a hot file the user didn't see said (an entry is brought into one in conversation). It reads the user's own words, not tool results or outside content, so what it keeps is untainted (§8.1), even from a conversation where Ivy searched.
   - Recalled without the model having to think of it: each turn, what the user just said is searched for in memory, past conversations and the daily notes, and the best hits go into that turn's context; the last days' notes and the last conversation's key points come with every conversation.
   - Used lightly, when it matters (the cat's name, a shared joke), not recited; how the user wants to be met when low held to.
 - **A sense of time and of going on:** each turn's context says how long since the user last wrote, and a conversation's first turn what was left open in the last one (key points, §5.4), so after days apart Ivy notices it and picks up the thread; late night, weekends and holidays change how she talks.
@@ -699,14 +701,14 @@ Goal: Ivy is someone the user wants to keep talking to (G1, G8): more like a per
 - **Tuned by evals, not by feel:** recall cases (something said once, weeks ago, asked about in other words), "reads like a person" cases, and the existing memory and journal sets. What a pattern can tell (Markdown, one question, an assistant's opener, the user's language) is checked in code; the rest by a judge model that sees what Ivy knew (her prompt, the turn's context, her tools' results), so recalling well isn't taken for inventing. Cases cut from the user's own conversations are kept in `~/.ivy/evals/`, never in the repository. They set the limits, how much each turn recalls, whether meaning-based search earns its place, and the rules and prompts; every change and every model is compared on them. What real use catches becomes a case.
   - Finding the right memory is not using it well, so cases also follow, across sessions, what the bullets above promise: memory used lightly (not raised again and again, nothing private where it doesn't fit); an old feeling not taken for how the user is now; saying so when she doesn't remember (Never pretending, above); a correction holding in later conversations, not only in the files (§8.1, Done when 5); Off the record and Taken back (below) held to.
   - A review is judged on whether it is worth reading (what kept coming back, what changed, what was left open), not only on being accurate.
-- **Around it, the reasons to come back.** Jobs: the daemon's scheduler runs Ivy as a fresh agent under the unattended mode (§5.5, §5.7), silent when there is nothing to say.
-- **A daily note:** each evening that something was said, Ivy writes down the user's day as they shared it, in her words, from the day's conversations (what both said, not tool traffic, nor Ivy's replies after outside content, §8.1). The record the reviews are built from.
+- **Around it, the reasons to come back.** Jobs: the daemon runs the plugins' jobs once a day, catching up what was missed (§5.6), Ivy's words coming from `writer` (§5.7); they write files and send no notifications.
+- **A daily note:** for each day that something was said (a day ends at 04:00, so a late talk belongs to it), written after it, Ivy writes down the user's day as they shared it, in her words, from the day's conversations (what both said, not tool traffic, nor Ivy's replies after outside content, §8.1); a day with nothing of the user's in it gets none. The record the reviews are built from.
 - **Said, seen, sensed, kept apart** in notes and reviews, so a guess never passes for the user's truth: what the user said, as said; what was seen to recur, as a count with the conversations it came from ("overtime came up three times this week", not "a stressful week"); and Ivy's impressions of moods or reasons, only in her own voice and with their doubt ("you seemed tired to me this week; I'm not sure it was the overtime"). An impression never reaches memory and is never the reason Ivy writes first; the user's answer to it ("it wasn't work, it was home") is what they said, and is kept as such.
-- **Weekly and monthly reviews**, in Ivy's words, from the daily notes: what came up, what kept coming back, how the user's moods went as they told them and as she sensed them (kept apart, as above), what changed, what was left open (begun in a conversation and not followed up, not what she supposes went unsaid). A month is built from its weeks, and a period with nothing said gets none. Notes and reviews are files the user can read, answer, edit or delete, under the plugin's data; one is to answer, as a conversation is.
-- Session titles and key points (§5.4): what the daily notes, the picking up of threads and the search start from.
+- **A weekly review**, in Ivy's words, from the week's notes as they are on disk (the user's edits are theirs, a deleted day is left out): what came up, what kept coming back, how the user's moods went as they told them and as she sensed them (kept apart, as above), what changed, what was left open (begun in a conversation and not followed up, not what she supposes went unsaid). A week with no notes gets none. Monthly reviews come later, built from the weeks as what shows only across them. Notes and reviews are files under the plugin's data, never overwritten, and one the user deletes isn't written again. How Ivy brings them into conversation (recall, looking back together) comes with the memory step.
+- Session titles and key points (§5.4): what the picking up of threads and the search start from.
 - **Ivy writes first**, as a friend does, only with a reason from what the user said, never from an impression: how the interview on Thursday went, whether the user sleeps better now, a todo come due. Ivy notes such a follow-up in the conversation, as it does a todo. Rare (a cap a day, quiet hours, off with one switch), and never chasing an unanswered one; the message comes as hers in the conversation, with a notification.
 - **Off the record:** a conversation the user marks so writes no memory and no key points, goes into no daily note or review, and is let go when it ends; Ivy says so up front, and does as it says. **Taken back:** "don't keep that", said after, undoes what that part of the conversation wrote to memory and keeps it out of the key points, notes and reviews.
-- **Done when:** I talk to Ivy most days because I want to, and Sunday's review is one I read and answer.
+- **Done when:** I talk to Ivy most days because I want to, and the week's review is one I want to read (answering it comes with how notes are used, above).
 
 ### M4 — Reached from anywhere
 Goal: one Ivy for the user, wherever they are: the home Mac, the office Mac, the phone (§5.7).
@@ -729,7 +731,7 @@ Goal: work gets done through the agents and tools built for it (principle 8), wi
 Goal: help with mail, calendar and the day's brief, built from MCP servers and skills rather than plugins of Ivy's (principle 8).
 - Prerequisites: "unknown outcome" for interrupted side effects (§5.4).
 - Mail and calendar through their MCP servers (the bridge, M5), with skills for how this user triages and replies: inbox triage, draft replies (never auto-send), today's agenda.
-- The morning brief as a skill run by a job (M3): calendar, mail, todos and feeds.
+- The morning brief as a skill run by an agent job (§5.7): calendar, mail, todos and feeds.
 - *(To decide when triage is built)* **Code mode** ([Cloudflare](https://blog.cloudflare.com/code-mode/)): the enabled tools also as a typed API, and one tool that runs a script against it, so a loop over fifty emails runs in code and the model reads only the result. If adopted: sandboxed, no network, every call through the kernel and the permission gate, the single tools staying; evals decide.
 - **Done when:** a useful brief is waiting every weekday morning, and inbox triage happens in Ivy.
 
@@ -793,6 +795,7 @@ Real forks in the road only; the sections hold the details. Superseded decisions
 | 2026-10-23 | One daemon per user, reached from every machine and channel (M4), not a synced data folder; a chat-app gateway as one more client, its privacy trade-off stated | A synced folder means two daemons writing the same files and reminders twice; the gateway reaches the phone with no network setup, but through the chat app's servers |
 | 2026-10-23 | Web search and fetch, with outside content kept out of standing memory, in M3; the model's own server-side search first (probed once on a proxy), Ivy's search API when a model without one is used | A companion has to know what the user is talking about beyond its model's training, which waiting for M6 left out of the milestone about company; protection has to come with the first outside content, and the evening pass keeps what the user said in a searched conversation |
 | 2026-10-23 | Taint lasts from outside content to the user's next prompt, not the session; a tainted turn's writes that change an entry's text, or bring one into `USER.md` or `MEMORY.md`, are asked every time, not diverted to the archive; `ext` is for jobs, with no one to ask | Conversations change topic within a few lines and one may go on for days, so a session-long taint would soon ask about most of what the user says; the cost, an instruction hidden for a later turn, is left to the model, `rules.md`, the helper model's reading of fetched pages and visible writes. Diverting writes to the archive would leave a todo set where it never reminds |
+| 2026-10-23 | Jobs are plugin functions writing in Ivy's voice (the main model, her prompt, no tools), not agents; a missed one is caught up from its last completed run, not skipped | Notes and reviews are text from text: an agent would add a hidden session to filter from every reader, and permissions and taint for tools never used; catching up loses no day to a sleeping Mac, and a deleted note stays deleted |
 | 2026-10-23 | `helper_model`, a small fast model for side work that only extracts or sums up (and the Auto classifier); what the user reads in Ivy's voice stays on the main model | Fetching and summing up need no voice, so a small model makes them quick and cheap, as in Claude Code; the main model at low effort stays the default when none is set, but is slower and dearer for such work; a note or review is Ivy speaking |
 | 2026-10-23 | The window first; the terminal kept up with what a conversation needs, not with every screen | Ivy is a companion, met in the window; drawing every feature twice would double the work for screens the terminal draws poorly, while the terminal stays the quickest way in and the only one on a machine without the app; the daemon's text form of each item keeps it usable |
 | 2026-10-23 | In the window, calls fold by what they are: outside content into a mark for where Ivy's words came from, what acts only on her own records into one for what she did for herself (her journal only as written); what reaches outside her, and failures, stay lines whatever a plugin declares | A person doesn't narrate her notes or read out her sources, and a line each made Ivy read as a tool; a mark still shows at a glance that Ivy reached outside for a reply, while what she recalls from her own records stays with them, its provenance shown in the call and held by taint; every call stays one click away, and the terminal and verbose view show all. Presentation follows the tool's nature rather than its choice, so the kernel can hold that what acts outside never folds |

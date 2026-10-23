@@ -2,7 +2,12 @@
 // mattered and what was left open, by the helper model, kept beside the session as metadata,
 // not memory. The next conversation starts from it.
 
-import { type ConversationHistory, localDate, type SessionPoints } from "@ivy/plugin-api";
+import {
+  type ConversationHistory,
+  localDate,
+  localTime,
+  type SessionPoints,
+} from "@ivy/plugin-api";
 import type { Helper } from "./helper.ts";
 import { createLogger, errorMessage } from "./log.ts";
 import POINTS from "./prompts/points.md" with { type: "text" };
@@ -63,7 +68,7 @@ export class Points {
           const text = m.outside
             ? "[a reply from what a web page or search said, left out]"
             : m.text;
-          return `${m.role === "user" ? "User" : "Ivy"} (${localTime(new Date(m.ts))}): ${text}`;
+          return `${m.role === "user" ? "User" : "Ivy"} (${stamp(new Date(m.ts))}): ${text}`;
         })
         .join("\n\n")
         .slice(-MAX_CHARS);
@@ -86,8 +91,8 @@ export class Points {
 }
 
 /** "2026-10-23 21:40", in the user's time, as the conversation happened. */
-function localTime(d: Date): string {
-  return `${localDate(d)} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+function stamp(d: Date): string {
+  return `${localDate(d)} ${localTime(d)}`;
 }
 
 /** The helper's JSON, checked, or undefined. */

@@ -13,6 +13,7 @@
     "@ivy/plugin-journal": "workspace:*",
     "@ivy/plugin-api": "workspace:*",
     "@ivy/plugin-memory": "workspace:*",
+    "@ivy/plugin-reflection": "workspace:*",
     "@ivy/plugin-web": "workspace:*",
     "@ivy/protocol": "workspace:*",
     "ink": "^8.0.0",
