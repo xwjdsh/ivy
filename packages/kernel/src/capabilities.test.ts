@@ -289,3 +289,13 @@ test("a search block the endpoint didn't like in the history isn't the tool refu
     rejectedFeature("messages.3.content.1: web_search_tool_result: invalid encrypted_content"),
   ).toBeNull();
 });
+
+test("a cache saved under another spelling of an endpoint's URL is still found", () => {
+  const file = tempFile();
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(
+    file,
+    JSON.stringify({ [`${PROXY}/`]: { models: {}, unsupported: { "vendor/m": ["effort"] } } }),
+  );
+  expect(caps(file).for(on("vendor/m", proxy)).effort).toBeUndefined();
+});

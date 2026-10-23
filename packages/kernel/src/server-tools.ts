@@ -1,5 +1,9 @@
+// The vendor's own tools (DESIGN.md §5.2): what Ivy knows of each, in one place. Today that
+// is web search, which a plugin asks for (`serverTools`) and the model may have.
+
 import type Anthropic from "@anthropic-ai/sdk";
-import { normalUrl } from "@ivy/plugin-api";
+import { normalUrl, type ServerTool } from "@ivy/plugin-api";
+import type { ResolvedCapabilities } from "./capabilities.ts";
 import { promptText } from "./turn-context.ts";
 
 type MessageParam = Anthropic.Beta.BetaMessageParam;
@@ -18,12 +22,47 @@ const SERVER_BLOCKS = new Set([
   "text_editor_code_execution_tool_result",
 ]);
 
+/** Searches the model may run in one request (a continued reply gets as many again). */
+const MAX_SEARCHES = 5;
+
+/** The vendor's tools to offer: those plugins ask for, the model has, and no rule denies. */
+export function serverToolDefs(
+  wanted: ReadonlySet<ServerTool>,
+  caps: ResolvedCapabilities,
+  allowed: (name: ServerTool) => boolean,
+): Anthropic.Beta.BetaToolUnion[] {
+  return caps.webSearch && wanted.has("web_search") && allowed("web_search")
+    ? [{ type: caps.webSearch, name: "web_search", max_uses: MAX_SEARCHES }]
+    : [];
+}
+
 /**
- * Whether a reply holds what the vendor's tools brought back (search results, and the pages
- * its filtering code read): outside content (DESIGN.md §8.1).
+ * The vendor's tool whose results a reply holds (search results, and the pages its
+ * filtering code read), if any: outside content (DESIGN.md §8.1).
  */
-export function searched(content: ReadonlyArray<{ type: string }>): boolean {
-  return content.some((b) => b.type !== "server_tool_use" && SERVER_BLOCKS.has(b.type));
+export function readsOutside(content: ReadonlyArray<{ type: string }>): string | undefined {
+  const found = content.find((b) => b.type !== "server_tool_use" && SERVER_BLOCKS.has(b.type));
+  return found?.type.replace(/_tool_result$/, "");
+}
+
+/** A vendor tool's call, for the transcript; its filtering code's own calls aren't shown. */
+export function serverToolCall(block: {
+  type: string;
+}): { id: string; name: string; input: unknown } | undefined {
+  if (block.type !== "server_tool_use") return undefined;
+  const call = block as Anthropic.Beta.BetaServerToolUseBlock;
+  return call.name === "web_search"
+    ? { id: call.id, name: call.name, input: call.input }
+    : undefined;
+}
+
+/** A vendor tool's result, for the transcript, paired with its call by `id`. */
+export function serverToolResult(block: {
+  type: string;
+}): { id: string; name: string; content: string; isError: boolean } | undefined {
+  if (block.type !== "web_search_tool_result") return undefined;
+  const result = block as Anthropic.Beta.BetaWebSearchToolResultBlock;
+  return { id: result.tool_use_id, name: "web_search", ...searchResultText(result) };
 }
 
 /**
@@ -49,7 +88,7 @@ export function serverToolLabel(name: string, input: unknown): string | undefine
 }
 
 /** What a search found, a line a page, as the transcript shows it. */
-export function searchResultText(block: {
+function searchResultText(block: {
   content: Array<{ title: string; url: string }> | { error_code: string };
 }): {
   content: string;

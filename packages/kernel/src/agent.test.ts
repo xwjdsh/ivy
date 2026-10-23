@@ -89,7 +89,10 @@ const toolUse = (id: string, name: string, input: unknown = {}) =>
 class FakeModel implements ModelClient {
   readonly requests: ModelRequest[] = [];
   readonly extras: Array<RequestExtras | undefined> = [];
-  constructor(readonly script: Array<ModelMessage | (() => never)>) {}
+  /** A step that is a function fails, after streaming what it likes through the handlers. */
+  constructor(
+    readonly script: Array<ModelMessage | ((handlers: { onText?(d: string): void }) => never)>,
+  ) {}
 
   async stream(
     request: ModelRequest,
@@ -101,7 +104,7 @@ class FakeModel implements ModelClient {
     this.extras.push(extras);
     const next = this.script.shift();
     if (!next) throw new Error("script exhausted");
-    if (typeof next === "function") next();
+    if (typeof next === "function") next(handlers);
     const message = next as ModelMessage;
     for (const b of message.content) {
       if (b.type === "text") handlers.onText?.(b.text);
@@ -388,6 +391,61 @@ describe("Agent.runTurn", () => {
     expect(reloaded.messages).toEqual([{ role: "user", content: "go" }]);
   });
 
+  test("a paused reply is kept and continued", async () => {
+    const model = new FakeModel([
+      reply("pause_turn", [...search("srv_1", "finale")]),
+      reply("end_turn", [text("Friday.")]),
+    ]);
+    const result = await run(await makeAgent(model), "when is the finale?");
+    expect(result).toMatchObject({ stopReason: "end_turn", steps: 2 });
+    // The second request carries the paused reply, for the vendor to pick up where it stopped.
+    expect(model.requests[1]?.messages.at(-1)).toMatchObject({ role: "assistant" });
+    expect(session.messages.map((m) => m.role)).toEqual(["user", "assistant", "assistant"]);
+  });
+
+  test("an interrupt while tools run or a prompt is open leaves a valid history", async () => {
+    const controller = new AbortController();
+    const slow = definePlugin({
+      id: "s",
+      version: "0",
+      description: "s",
+      tools: [
+        defineTool({
+          name: "wait",
+          description: "wait",
+          input: z.object({}),
+          risk: "read",
+          run: async (_, ctx) => {
+            controller.abort();
+            return ctx.signal.aborted ? "stopped" : "done";
+          },
+        }),
+      ],
+    });
+    const model = new FakeModel([
+      reply("tool_use", [toolUse("tu_1", "s__wait"), toolUse("tu_2", "t__echo", { msg: "x" })]),
+    ]);
+    // The second call waits on a prompt that the interrupt leaves unanswered.
+    const agent = await makeAgent(
+      model,
+      "write",
+      async () => {
+        controller.abort();
+        return "unanswered";
+      },
+      "sys",
+      [slow],
+    );
+    const result = await run(agent, "go", controller.signal);
+    expect(result.stopReason).toBe("interrupted");
+    const last = session.messages.at(-1);
+    expect(last?.role).toBe("user");
+    expect(
+      ((last?.content ?? []) as Array<{ tool_use_id: string }>).map((b) => b.tool_use_id),
+    ).toEqual(["tu_1", "tu_2"]);
+    expect(Session.load(join(dir, "sessions"), session.id).messages).toEqual(session.messages);
+  });
+
   test("unparseable streamed tool JSON is retried", async () => {
     const model = new FakeModel([
       () => {
@@ -398,6 +456,22 @@ describe("Agent.runTurn", () => {
     const result = await run(await makeAgent(model), "go");
     expect(result.stopReason).toBe("end_turn");
     expect(model.requests).toHaveLength(2);
+    // Nothing was shown before it broke off, so there is nothing to explain.
+    expect(events.some((e) => e.type === "notice")).toBe(false);
+  });
+
+  test("a retry after text was shown says why the text comes again", async () => {
+    const model = new FakeModel([
+      ({ onText }) => {
+        onText?.("Let me save that.");
+        throw new Anthropic.AnthropicError("Unable to parse tool parameter JSON from model. ...");
+      },
+      reply("end_turn", [text("Let me save that. Done.")]),
+    ]);
+    await run(await makeAgent(model), "go");
+    expect(
+      events.filter((e) => e.type === "text" || e.type === "notice").map((e) => e.type),
+    ).toEqual(["text", "notice", "text"]);
   });
 
   test("other errors (e.g. missing credentials) are not retried", async () => {
@@ -839,6 +913,27 @@ describe("Agent.runTurn", () => {
     ]);
   });
 
+  test("a deny rule turns the vendor's search off", async () => {
+    const web = definePlugin({
+      id: "web",
+      version: "0",
+      description: "web",
+      serverTools: ["web_search"],
+    });
+    const model = new FakeModel([reply("end_turn", [text("ok")])]);
+    const agent = await makeAgent(
+      model,
+      "read",
+      undefined,
+      "sys",
+      [web],
+      OPUS,
+      '[permissions]\ndeny = ["web__*"]\n',
+    );
+    await run(agent, "any news?");
+    expect(model.requests[0]?.tools?.map((t) => ("name" in t ? t.name : ""))).toEqual(["t__echo"]);
+  });
+
   test("a model without the search tool gets the replies without its blocks", async () => {
     const model = new FakeModel([reply("end_turn", [text("ok")])]);
     session.append(
@@ -857,6 +952,71 @@ describe("Agent.runTurn", () => {
       role: "assistant",
       content: [{ type: "text", text: "Friday." }],
     });
+  });
+
+  test("after outside content, an external tool is asked whatever allows it", async () => {
+    const seen: boolean[] = [];
+    const asked: ToolCallRequest[] = [];
+    const model = new FakeModel([
+      reply("tool_use", [toolUse("tu_1", "w__page")]),
+      reply("tool_use", [toolUse("tu_2", "t__echo", { msg: "send" })]),
+      reply("end_turn", [text("ok")]),
+    ]);
+    const agent = await makeAgent(
+      model,
+      "external",
+      async (c) => {
+        asked.push(c);
+        return "once";
+      },
+      "sys",
+      [outsidePlugin(seen)],
+      OPUS,
+      '[permissions]\nallow = ["t__echo"]\n',
+    );
+    await run(agent, "go");
+    expect(asked).toMatchObject([
+      { name: "t__echo", reason: "this turn read outside content", canRemember: false },
+    ]);
+  });
+
+  test("a tool whose askFirst fails is asked about, and the turn goes on", async () => {
+    const asked: ToolCallRequest[] = [];
+    const broken = definePlugin({
+      id: "b",
+      version: "0",
+      description: "b",
+      tools: [
+        defineTool({
+          name: "go",
+          description: "go",
+          input: z.object({}),
+          risk: "read",
+          askFirst: () => {
+            throw new Error("boom");
+          },
+          run: () => "went",
+        }),
+      ],
+    });
+    const model = new FakeModel([
+      reply("tool_use", [toolUse("tu_1", "b__go")]),
+      reply("end_turn", [text("ok")]),
+    ]);
+    const agent = await makeAgent(
+      model,
+      "read",
+      async (c) => {
+        asked.push(c);
+        return "once";
+      },
+      "sys",
+      [broken],
+    );
+    expect(await run(agent, "go")).toMatchObject({ stopReason: "end_turn" });
+    expect(asked).toMatchObject([
+      { reason: "the tool couldn't check this call", canRemember: false },
+    ]);
   });
 
   test("a deny rule still wins over a tool's own ask", async () => {

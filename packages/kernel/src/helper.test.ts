@@ -2,17 +2,18 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import Anthropic from "@anthropic-ai/sdk";
 import { saveHelperModel } from "./config-edit.ts";
 import { createIvy, MemoryKeyStore, resolvePaths } from "./index.ts";
-import { ScriptedModel, text } from "./testing.ts";
+import { ScriptedModel, type Step, text } from "./testing.ts";
 
 // A local endpoint, so the background model-list refresh never reaches the network.
 const CONFIG = `[agent]\nmodel = "proxy/main-model"\n[providers.proxy]\napi_key = "k"\nbase_url = "http://127.0.0.1:9"\n`;
 
-async function ivyWith(extra = "") {
+async function ivyWith(extra = "", script: Step[] = [{ content: [text("the answer")] }]) {
   const paths = resolvePaths(mkdtempSync(join(tmpdir(), "ivy-helper-")));
   writeFileSync(paths.config, CONFIG.replace("[agent]\n", `[agent]\n${extra}`));
-  const model = new ScriptedModel([{ content: [text("the answer")] }]);
+  const model = new ScriptedModel(script);
   const ivy = await createIvy({ plugins: [], paths, keys: new MemoryKeyStore(), model });
   return { ivy, model, paths };
 }
@@ -33,6 +34,22 @@ test("without a helper model, side work runs on the main model at low effort", a
   await ivy.helper.complete({ system: "Sum up.", prompt: "A long page" });
   expect(model.requests[0]?.model).toBe("main-model");
   expect(model.requests[0]?.output_config).toEqual({ effort: "low" });
+});
+
+test("an endpoint that refuses the effort is asked again without it, and that is learned", async () => {
+  const refuse: Step = async () => {
+    throw Anthropic.APIError.generate(
+      400,
+      { error: { message: "output_config.effort: Extra inputs are not permitted" } },
+      "output_config.effort: Extra inputs are not permitted",
+      new Headers(),
+    );
+  };
+  const { ivy, model } = await ivyWith("", [refuse, { content: [text("the answer")] }]);
+  expect(await ivy.helper.complete({ system: "Sum up.", prompt: "A page" })).toBe("the answer");
+  expect(model.requests.map((r) => r.output_config)).toEqual([{ effort: "low" }, undefined]);
+  const main = ivy.agent.modelRef;
+  expect(main && ivy.capabilities.for(main).effort).toBeUndefined();
 });
 
 test("the helper model is saved, taken out, and checked against the providers", async () => {

@@ -300,6 +300,9 @@ export class ReplyBuilder {
         try {
           input = JSON.parse(call.args);
         } catch {
+          // Cut off by the length limit: the reply ends at max_tokens, whose calls never run;
+          // asking again would only be cut off again.
+          if (this.finishReason === "length") continue;
           // As the Anthropic SDK words it, so the loop retries as it does there.
           throw new Anthropic.AnthropicError(
             `Unable to parse tool parameter JSON from model. Please retry your request or adjust your prompt. Error: ${call.name}: ${call.args.slice(0, 200)}`,

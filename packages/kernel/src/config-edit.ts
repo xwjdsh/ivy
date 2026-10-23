@@ -1,4 +1,12 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname } from "node:path";
 import { type Config, type Effort, loadConfig, type Paths } from "./config.ts";
 import { errorMessage } from "./log.ts";
@@ -142,15 +150,23 @@ function saveEdit(
   const existed = existsSync(paths.config);
   const original = existed ? readFileSync(paths.config, "utf8") : "";
   mkdirSync(dirname(paths.config), { recursive: true });
-  writeFileSync(paths.config, edit(original));
+  // Written beside it and checked first, then put in its place in one step: a crash or a bad
+  // edit never leaves a config.toml that keeps Ivy from starting. Edits run synchronously, so
+  // two never interleave. The file keeps its permissions (it may hold keys).
+  const next = `${paths.config}.new`;
+  const mode = existed ? statSync(paths.config).mode & 0o777 : 0o600;
+  // One left by a crash would keep its own permissions: written afresh.
+  rmSync(next, { force: true });
+  writeFileSync(next, edit(original), { mode });
   try {
-    const config = loadConfig(paths);
+    const config = loadConfig({ ...paths, config: next });
     if (!applied(config)) throw new Error("the edit did not take effect");
+    renameSync(next, paths.config);
     return config;
   } catch (err) {
-    if (existed) writeFileSync(paths.config, original);
-    else rmSync(paths.config, { force: true });
-    throw new Error(`Could not save ${what}: ${errorMessage(err)}`);
+    rmSync(next, { force: true });
+    // Named as the file it was meant to become.
+    throw new Error(`Could not save ${what}: ${errorMessage(err).replaceAll(next, paths.config)}`);
   }
 }
 

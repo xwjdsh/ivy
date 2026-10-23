@@ -290,6 +290,11 @@ export class PluginHost {
     return { plugin: tool.pluginId, text };
   }
 
+  /** The plugins that ask for a vendor-run tool, by id. */
+  serverToolOwners(name: ServerTool): string[] {
+    return this.list().flatMap((p) => (p.serverTools?.includes(name) ? [p.id] : []));
+  }
+
   /** The vendor-run tools enabled plugins ask for. */
   serverTools(): Set<ServerTool> {
     return new Set(this.list().flatMap((p) => p.serverTools ?? []));
@@ -301,10 +306,21 @@ export class PluginHost {
 
   /** Why a call needs the user's OK whatever the rules allow (the tool's `askFirst`), if it does. */
   askFirst(fullName: string, input: unknown, call: CallInfo): string | undefined {
-    const def = this.tools.get(fullName)?.def;
+    const tool = this.tools.get(fullName);
+    const def = tool?.def;
     if (!def?.askFirst) return undefined;
     const parsed = def.input.safeParse(input);
-    return parsed.success ? def.askFirst(parsed.data, call) : undefined;
+    if (!parsed.success) return undefined;
+    try {
+      return def.askFirst(parsed.data, call);
+    } catch (err) {
+      // A tool that can't tell is asked about: a plugin's failure never fails the turn.
+      createLogger(tool?.pluginId ?? fullName).warn(
+        `askFirst failed for ${fullName}`,
+        errorMessage(err),
+      );
+      return "the tool couldn't check this call";
+    }
   }
 
   /** Tool definitions for the API, sorted so the request prefix stays byte-stable for caching. */

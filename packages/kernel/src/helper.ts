@@ -5,12 +5,15 @@
 // its caller marks.
 
 import type { HelperModel } from "@ivy/plugin-api";
-import type { Capabilities } from "./capabilities.ts";
+import { type Capabilities, downgradable } from "./capabilities.ts";
 import { type Config, type ModelRef, type ProviderConfig, resolveModel } from "./config.ts";
 import type { ModelClient, ModelRequest } from "./model.ts";
 
 /** One piece of side work: its own system prompt, and what it works on (see HelperModel). */
 export type HelperCall = Parameters<HelperModel["complete"]>[0];
+
+/** How long side work may take, whatever the caller's own signal allows. */
+const TIMEOUT_MS = 120_000;
 
 export class Helper {
   constructor(
@@ -48,8 +51,22 @@ export class Helper {
     if (!this.separate && this.opts.capabilities.for(target).effort) {
       request.output_config = { effort: "low" };
     }
-    const signal = call.signal ?? AbortSignal.timeout(120_000);
-    const message = await this.opts.clientFor(target.provider).stream(request, {}, signal);
+    const client = this.opts.clientFor(target.provider);
+    const ask = (sent: ModelRequest) => {
+      const timeout = AbortSignal.timeout(TIMEOUT_MS);
+      const signal = call.signal ? AbortSignal.any([call.signal, timeout]) : timeout;
+      return client.stream(sent, {}, signal);
+    };
+    let message: Awaited<ReturnType<typeof ask>>;
+    try {
+      message = await ask(request);
+    } catch (err) {
+      // An endpoint that refuses the effort, as the turn loop learns it (agent.ts).
+      if (downgradable(err, request) !== "effort") throw err;
+      this.opts.capabilities.markUnsupported(target, "effort");
+      const { output_config: _, ...withoutEffort } = request;
+      message = await ask(withoutEffort);
+    }
     return message.content
       .flatMap((b) => (b.type === "text" ? [b.text] : []))
       .join("")

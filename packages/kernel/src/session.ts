@@ -309,21 +309,29 @@ function parseRecords(content: string): SessionRecord[] {
 }
 
 /**
- * Drop assistant messages whose tool calls never got results (a crash between
- * the two writes, or a skipped corrupt line). The API rejects such histories.
+ * Keep tool calls and their results in pairs, as the API requires: drop an assistant message
+ * whose tool calls never got results (a crash between the two writes), and results whose
+ * call is gone (its line skipped as corrupt), which would otherwise fail every later request.
  */
 function withoutDanglingToolUse(messages: MessageParam[]): MessageParam[] {
-  return messages.filter((m, i) => {
-    if (m.role !== "assistant" || typeof m.content === "string") return true;
-    const ids = m.content.flatMap((b) => (b.type === "tool_use" ? [b.id] : []));
-    if (ids.length === 0) return true;
-    const next = messages[i + 1];
-    const answered = new Set(
-      next?.role === "user" && typeof next.content !== "string"
-        ? next.content.flatMap((b) => (b.type === "tool_result" ? [b.tool_use_id] : []))
-        : [],
-    );
-    return ids.every((id) => answered.has(id));
+  const callIds = (m: MessageParam | undefined) =>
+    m?.role === "assistant" && typeof m.content !== "string"
+      ? m.content.flatMap((b) => (b.type === "tool_use" ? [b.id] : []))
+      : [];
+  const resultIds = (m: MessageParam | undefined) =>
+    m?.role === "user" && typeof m.content !== "string"
+      ? m.content.flatMap((b) => (b.type === "tool_result" ? [b.tool_use_id] : []))
+      : [];
+  const answered = messages.filter((m, i) => {
+    const ids = callIds(m);
+    const results = new Set(resultIds(messages[i + 1]));
+    return ids.every((id) => results.has(id));
+  });
+  return answered.filter((m, i) => {
+    const results = resultIds(m);
+    if (results.length === 0) return true;
+    const calls = new Set(callIds(answered[i - 1]));
+    return results.every((id) => calls.has(id));
   });
 }
 

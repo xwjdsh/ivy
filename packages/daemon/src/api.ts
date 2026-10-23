@@ -241,6 +241,10 @@ export function api(ivy: Ivy, sessions: Sessions): Routes {
         if (ivy.agent.modelRef?.provider.name === id) {
           return fail(409, `The model in use is one of ${id}'s: switch models first`);
         }
+        // config.toml naming a model on no provider would keep Ivy from starting.
+        if (ivy.config.agent.helper_model?.startsWith(`${id}/`)) {
+          return fail(409, `The helper model is one of ${id}'s: choose another first`);
+        }
         return changeProviders(() => {
           removeProvider(ivy.paths, id);
           if (ivy.keys.available) ivy.keys.remove(id);

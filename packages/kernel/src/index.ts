@@ -191,8 +191,7 @@ export async function createIvy(opts: IvyOptions): Promise<Ivy> {
     Object.assign(config.providers, fresh.providers);
     clients.clear();
     upstream.clear();
-    // The model in use now points at its provider as it is now.
-    if (agent.model) agent.setModel(agent.model);
+    agent.refreshModel();
   };
 
   const tracer = (sessionId: string) =>

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resolvePaths } from "./config.ts";
@@ -79,6 +79,18 @@ test("if the result doesn't validate, the file is restored", () => {
   writeFileSync(paths.config, CONFIG);
   expect(() => saveModel(paths, "nope/model")).toThrow("Could not save the model");
   expect(readFileSync(paths.config, "utf8")).toBe(CONFIG);
+  // Checked beside it, nothing left behind, and the error names config.toml itself.
+  expect(existsSync(`${paths.config}.new`)).toBe(false);
+  expect(() => saveModel(paths, "nope/model")).toThrow(`Invalid ${paths.config}:`);
+});
+
+test("an edit keeps the file's permissions: it may hold keys", () => {
+  const paths = tempPaths();
+  writeFileSync(paths.config, CONFIG, { mode: 0o600 });
+  // Even past a file a crash left behind with looser ones.
+  writeFileSync(`${paths.config}.new`, "", { mode: 0o644 });
+  saveEffort(paths, "high");
+  expect(statSync(paths.config).mode & 0o777).toBe(0o600);
 });
 
 test("saveEffort replaces [generation] effort in place", () => {

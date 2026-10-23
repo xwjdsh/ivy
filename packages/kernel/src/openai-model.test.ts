@@ -195,6 +195,22 @@ test("a reply without a finish reason is told by what it holds; unparseable tool
     chunk({ tool_calls: [{ index: 0, id: "c", function: { name: "t", arguments: '{"a":' } }] }),
   );
   expect(() => broken.finish()).toThrow(/^Unable to parse tool parameter JSON/);
+
+  // Cut off by the length limit: it ends at max_tokens, the half-written call dropped.
+  const cut = new ReplyBuilder("m", {});
+  cut.add(chunk({ content: "Let me save that." }));
+  cut.add(
+    chunk({ tool_calls: [{ index: 0, id: "c", function: { name: "t", arguments: '{"a":' } }] }),
+  );
+  cut.add({
+    ...chunk({}),
+    choices: [{ index: 0, delta: {}, finish_reason: "length" }],
+  } as ChatCompletionChunk);
+  const message = cut.finish();
+  expect(message.stop_reason).toBe("max_tokens");
+  expect(message.content).toEqual([
+    { type: "text", text: "Let me save that.", citations: null },
+  ] as never);
 });
 
 test("usage is counted as Anthropic counts it: input without the cached tokens", () => {

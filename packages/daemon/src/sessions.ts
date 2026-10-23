@@ -18,7 +18,8 @@ import {
   type PermissionChoice,
   promptText,
   Session,
-  searchResultText,
+  serverToolCall,
+  serverToolResult,
   summarizeUsage,
   type ToolCallRequest,
   type Tracer,
@@ -441,10 +442,11 @@ export class Sessions {
     const results = new Map<string, { content: string; isError: boolean }>();
     for (const m of messages) {
       if (typeof m.content === "string") continue;
-      // The vendor's searches have their results in a reply, maybe the next one (pause_turn).
+      // The vendor's tools have their results in a reply, maybe the next one (pause_turn).
       if (m.role === "assistant") {
         for (const b of m.content) {
-          if (b.type === "web_search_tool_result") results.set(b.tool_use_id, searchResultText(b));
+          const result = serverToolResult(b);
+          if (result) results.set(result.id, result);
         }
         continue;
       }
@@ -472,17 +474,16 @@ export class Sessions {
         for (const b of m.content) {
           if (b.type === "text" && b.text.trim()) {
             entries.push({ kind: "assistant", markdown: b.text });
-          } else if (
-            b.type === "tool_use" ||
-            (b.type === "server_tool_use" && b.name === "web_search")
-          ) {
-            const result = results.get(b.id) ?? { content: "(no result)", isError: true };
+          } else {
+            const call = b.type === "tool_use" ? b : serverToolCall(b);
+            if (!call) continue;
+            const result = results.get(call.id) ?? { content: "(no result)", isError: true };
             entries.push({
               kind: "tool",
-              id: b.id,
-              name: b.name,
-              label: this.ivy.plugins.toolLabel(b.name, b.input),
-              input: b.input,
+              id: call.id,
+              name: call.name,
+              label: this.ivy.plugins.toolLabel(call.name, call.input),
+              input: call.input,
               result: result.content,
               isError: result.isError,
             });

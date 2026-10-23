@@ -3,10 +3,17 @@ import { dirname } from "node:path";
 import Anthropic from "@anthropic-ai/sdk";
 import { EFFORT_LEVELS, type Effort } from "./config.ts";
 import { createLogger, errorMessage } from "./log.ts";
-import { isOfficialAnthropicApi, isOfficialApi, type ModelClient } from "./model.ts";
+import {
+  endpointKey,
+  isOfficialAnthropicApi,
+  isOfficialApi,
+  type ModelClient,
+  type ModelRequest,
+  type RequestExtras,
+} from "./model.ts";
 
 /**
- * What a model supports on its provider's endpoint, resolved from three sources:
+ * What a model supports on its provider's endpoint, resolved from four sources:
  *
  * 1. The Models API (official endpoint only), cached on disk for a day: effort and its
  *    levels, max output tokens. New models need no code change.
@@ -100,7 +107,7 @@ export class Capabilities {
   private readonly log = createLogger("capabilities");
 
   constructor(
-    /** One file for all endpoints, keyed by base URL. */
+    /** One file for all endpoints, keyed by base URL (endpointKey). */
     private readonly cacheFile: string,
     /** The configured effort, for every model (adjusted per model in `for`). */
     private configuredEffort: Effort,
@@ -109,8 +116,12 @@ export class Capabilities {
       if (existsSync(cacheFile)) {
         const data: unknown = JSON.parse(readFileSync(cacheFile, "utf8"));
         // Anything but an object (null, an array, a number) is a broken cache: start over.
-        if (data && typeof data === "object" && !Array.isArray(data))
-          this.cache = data as typeof this.cache;
+        if (data && typeof data === "object" && !Array.isArray(data)) {
+          // Kept by endpointKey; one saved under another spelling of its URL joins it.
+          for (const [url, entry] of Object.entries(data as Record<string, EndpointCache>)) {
+            this.cache[endpointKey(url)] ??= entry;
+          }
+        }
       }
     } catch {
       this.cache = {};
@@ -118,10 +129,12 @@ export class Capabilities {
   }
 
   private entry(endpoint: Endpoint): EndpointCache {
-    let entry = this.cache[endpoint.base_url];
+    // Keyed as replies record their origin, so `https://x/` and `https://x` are one endpoint.
+    const key = endpointKey(endpoint.base_url);
+    let entry = this.cache[key];
     if (!entry) {
       entry = { models: {}, unsupported: {} };
-      this.cache[endpoint.base_url] = entry;
+      this.cache[key] = entry;
     }
     return entry;
   }
@@ -382,6 +395,38 @@ function nearestLevel(wanted: Effort, supported: Effort[]): Effort | undefined {
     if (level && supported.includes(level)) return level;
   }
   return EFFORT_LEVELS.find((level) => supported.includes(level));
+}
+
+/** The optional features a request carries. */
+function optionalUsed(request: ModelRequest, extras: RequestExtras = {}): OptionalFeature[] {
+  const isImage = (b: { type: string }) => b.type === "image";
+  const used: OptionalFeature[] = [];
+  if (request.output_config?.effort !== undefined) used.push("effort");
+  if (request.fallbacks !== undefined) used.push("fallbacks");
+  if (request.messages.some((m) => m.role === "system")) used.push("systemMessages");
+  if (extras.streamUsage) used.push("streamUsage");
+  if (extras.cacheKey) used.push("cacheKey");
+  if (request.tools?.some((t) => "type" in t && t.type?.startsWith("web_search"))) {
+    used.push("webSearch");
+  }
+  if (request.messages.some((m) => typeof m.content !== "string" && m.content.some(isImage))) {
+    used.push("images");
+  }
+  return used;
+}
+
+/**
+ * A 400 about an optional feature this request actually used: the feature to turn off for
+ * the model before asking again.
+ */
+export function downgradable(
+  err: unknown,
+  request: ModelRequest,
+  extras?: RequestExtras,
+): OptionalFeature | null {
+  if (!(err instanceof Anthropic.BadRequestError)) return null;
+  const feature = rejectedFeature(err.message);
+  return feature && optionalUsed(request, extras).includes(feature) ? feature : null;
 }
 
 /**

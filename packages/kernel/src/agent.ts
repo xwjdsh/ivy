@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { RiskLevel } from "@ivy/plugin-api";
-import { type Capabilities, type OptionalFeature, rejectedFeature } from "./capabilities.ts";
+import { type Capabilities, downgradable, type OptionalFeature } from "./capabilities.ts";
 import { type Config, type ModelRef, type ProviderConfig, resolveModel } from "./config.ts";
 import { createLogger, errorMessage } from "./log.ts";
 import {
@@ -13,7 +13,14 @@ import {
 } from "./model.ts";
 import type { PermissionChoice, Permissions } from "./permissions.ts";
 import type { PluginHost } from "./plugins.ts";
-import { namedUrls, searched, searchResultText, withoutServerTools } from "./server-tools.ts";
+import {
+  namedUrls,
+  readsOutside,
+  serverToolCall,
+  serverToolDefs,
+  serverToolResult,
+  withoutServerTools,
+} from "./server-tools.ts";
 import type { Origin, Session } from "./session.ts";
 import type { Tracer } from "./trace.ts";
 import {
@@ -148,6 +155,20 @@ export class Agent {
   }
 
   /**
+   * After the providers changed: the model in use points at its provider as it is now, or at
+   * none if it is gone (config.toml edited by hand while Ivy runs; the settings refuse it). No client is made here: a missing key is said by the next turn, as
+   * on startup.
+   */
+  refreshModel(): void {
+    if (!this.current) return;
+    try {
+      this.current = resolveModel(this.opts.config.providers, this.current.ref);
+    } catch {
+      this.current = undefined;
+    }
+  }
+
+  /**
    * Run one user turn: call the model, execute tools, repeat until the model ends the turn.
    *
    * History invariant: an assistant message containing tool_use blocks is only appended
@@ -180,6 +201,7 @@ export class Agent {
 
     let costUsd = 0;
     let parseRetries = 0;
+    const downgraded = new Set<OptionalFeature>();
 
     const origin: Origin = { endpoint: endpointKey(target.provider.base_url), model: target.id };
     for (let step = 1; step <= config.agent.max_steps; step++) {
@@ -187,13 +209,24 @@ export class Agent {
       turn.onEvent({ type: "request", step, info: this.describe(request, context !== "") });
       const startedAt = new Date();
       let message: ModelMessage;
+      /** Whether this step's text reached the user before it failed. */
+      let shown = false;
 
       try {
         message = await client.stream(
           request,
           {
-            onText: (delta) => turn.onEvent({ type: "text", delta }),
-            onBlock: (block) => showSearch(block, turn.onEvent),
+            onText: (delta) => {
+              shown = true;
+              turn.onEvent({ type: "text", delta });
+            },
+            // The vendor's tools run within the reply: shown as each block completes.
+            onBlock: (block) => {
+              const call = serverToolCall(block);
+              if (call) turn.onEvent({ type: "tool_call", ...call });
+              const result = serverToolResult(block);
+              if (result) turn.onEvent({ type: "tool_result", ...result });
+            },
           },
           turn.signal,
           extras,
@@ -210,7 +243,9 @@ export class Agent {
         // The endpoint rejected an optional feature (compatibility first): turn it off for
         // this model, remember that, and resend. Nothing was appended, so this is safe.
         const feature = downgradable(err, request, extras);
-        if (feature) {
+        // Once per feature a turn: one whose removal didn't take would loop, paying each time.
+        if (feature && !downgraded.has(feature)) {
+          downgraded.add(feature);
           this.opts.capabilities.markUnsupported(target, feature);
           turn.onEvent({
             type: "notice",
@@ -223,6 +258,13 @@ export class Agent {
         // Nothing was appended, so re-issuing the same request is safe.
         if (isToolJsonParseError(err) && parseRetries++ < MAX_PARSE_RETRIES) {
           log.warn("tool input JSON could not be parsed, retrying", errorMessage(err));
+          // What was already shown comes again: say why, rather than leave it unexplained.
+          if (shown) {
+            turn.onEvent({
+              type: "notice",
+              text: "The reply broke off while writing a tool call; it is written again below.",
+            });
+          }
           step--;
           continue;
         }
@@ -265,7 +307,8 @@ export class Agent {
 
       // The vendor searched within this reply, so what follows in it was written after
       // reading the results, the reply's own tool calls included (DESIGN.md §8.1).
-      if (searched(message.content)) session.markOutside("web_search");
+      const read = readsOutside(message.content);
+      if (read) session.markOutside(read);
 
       if (message.stop_reason === "pause_turn") {
         session.appendFrom(origin, { role: "assistant", content: message.content });
@@ -306,7 +349,16 @@ export class Agent {
   ): { request: ModelRequest; extras: RequestExtras } {
     const { config, plugins } = this.opts;
     const caps = this.opts.capabilities.for(target);
-    const search = plugins.serverTools().has("web_search") ? caps.webSearch : undefined;
+    // A deny rule turns a vendor tool off too: it never passes through the permission gate.
+    const serverTools = serverToolDefs(
+      plugins.serverTools(),
+      caps,
+      // Named bare, or under its plugin's prefix: `deny = ["web__*"]` turns the web plugin off.
+      (name) =>
+        [name, ...plugins.serverToolOwners(name).map((id) => `${id}__${name}`)].every(
+          (n) => this.opts.permissions.decide(n, "read", session.id).decision !== "deny",
+        ),
+    );
     const request: ModelRequest = {
       model: target.id,
       max_tokens: Math.min(
@@ -315,15 +367,16 @@ export class Agent {
       ),
       tools: [
         ...plugins.apiTools(),
-        // After the plugins' tools, so their part of the cached prefix stays as it was.
-        ...(search ? [{ type: search, name: "web_search" as const, max_uses: MAX_SEARCHES }] : []),
+        // Last: a change in the vendor's tools (a model with or without search) costs one cache
+        // miss; the plugins' tools come first, unchanged.
+        ...serverTools,
       ],
       // System messages for context where the model and endpoint support them, else text blocks.
       messages: renderMessages(
         session.messages.map((m) => {
           const seen = forModel(m, session.originOf(m), target, caps.images);
           // Without the tool, an endpoint may refuse its blocks.
-          return search ? seen : withoutServerTools(seen);
+          return serverTools.length ? seen : withoutServerTools(seen);
         }),
         (m) => session.contextOf(m),
         caps.systemMessages ? "system" : "block",
@@ -412,9 +465,11 @@ export class Agent {
       const ruled = permissions.decide(use.name, risk, sessionId);
       // A tool may need the user's OK for this call whatever allows it; a deny rule still wins.
       const askFirst = ruled.decision !== "deny" && plugins.askFirst(use.name, use.input, call);
-      const decided = askFirst
-        ? { decision: "ask" as const, reason: askFirst, canRemember: false }
-        : ruled;
+      // A turn that read outside content asks before anything goes out, whatever allows it:
+      // an injected instruction must not reach the world unseen, if a tool forgot to ask.
+      const outward = ruled.decision === "allow" && tainted && risk === "external";
+      const reason = askFirst || (outward ? "this turn read outside content" : undefined);
+      const decided = reason ? { decision: "ask" as const, reason, canRemember: false } : ruled;
       if (decided.decision !== "ask") {
         verdicts.push(decided.decision === "allow" ? "run" : "denied by rule");
         continue;
@@ -472,23 +527,6 @@ export class Agent {
   }
 }
 
-/** Searches the model may run in one request (a continued reply gets as many again). */
-const MAX_SEARCHES = 5;
-
-/** The vendor's search as a tool call and its result in the transcript, as each block completes. */
-function showSearch(block: ModelMessage["content"][number], onEvent: TurnOptions["onEvent"]): void {
-  if (block.type === "server_tool_use" && block.name === "web_search") {
-    onEvent({ type: "tool_call", id: block.id, name: block.name, input: block.input });
-  } else if (block.type === "web_search_tool_result") {
-    onEvent({
-      type: "tool_result",
-      id: block.tool_use_id,
-      name: "web_search",
-      ...searchResultText(block),
-    });
-  }
-}
-
 const FEATURE_NAMES: Record<OptionalFeature, string> = {
   effort: "the effort setting",
   fallbacks: "server-side refusal fallback",
@@ -498,34 +536,6 @@ const FEATURE_NAMES: Record<OptionalFeature, string> = {
   images: "images (each is left out, and kept in the conversation)",
   webSearch: "web search",
 };
-
-/** The optional features a request carries. */
-function optionalUsed(request: ModelRequest, extras: RequestExtras): OptionalFeature[] {
-  const used: OptionalFeature[] = [];
-  if (request.output_config?.effort !== undefined) used.push("effort");
-  if (request.fallbacks !== undefined) used.push("fallbacks");
-  if (request.messages.some((m) => m.role === "system")) used.push("systemMessages");
-  if (extras.streamUsage) used.push("streamUsage");
-  if (extras.cacheKey) used.push("cacheKey");
-  if (request.tools?.some((t) => "type" in t && t.type?.startsWith("web_search"))) {
-    used.push("webSearch");
-  }
-  if (request.messages.some((m) => typeof m.content !== "string" && m.content.some(isImage))) {
-    used.push("images");
-  }
-  return used;
-}
-
-/** A 400 about an optional feature this request actually used. */
-function downgradable(
-  err: unknown,
-  request: ModelRequest,
-  extras: RequestExtras,
-): OptionalFeature | null {
-  if (!(err instanceof Anthropic.BadRequestError)) return null;
-  const feature = rejectedFeature(err.message);
-  return feature && optionalUsed(request, extras).includes(feature) ? feature : null;
-}
 
 /**
  * A message as `target` may see it: a reply's thinking goes back only to the model that wrote

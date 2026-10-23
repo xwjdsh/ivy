@@ -69,6 +69,24 @@ test("a tool call without its results is dropped on load", () => {
   expect(Session.load(dir, s.id).messages).toEqual([{ role: "user", content: "what time is it" }]);
 });
 
+test("results whose tool call was lost to a corrupt line are dropped on load", () => {
+  const dir = mkdtempSync(join(tmpdir(), "ivy-sessions-"));
+  const s = Session.create(dir, "m");
+  s.append({ role: "user", content: "what time is it" });
+  // The call's line was cut off; its results' line survived.
+  appendFileSync(s.file, '{"type":"message","ts":"x","message":{"role":"assistant","con\n');
+  const result = {
+    role: "user",
+    content: [{ type: "tool_result", tool_use_id: "tu_1", content: "9:00" }],
+  };
+  appendFileSync(s.file, `${JSON.stringify({ type: "message", ts: "x", message: result })}\n`);
+  s.append({ role: "assistant", content: "It's nine." });
+  expect(Session.load(dir, s.id).messages).toEqual([
+    { role: "user", content: "what time is it" },
+    { role: "assistant", content: "It's nine." },
+  ]);
+});
+
 test("listing ignores the <context> block when counting turns and building the preview", () => {
   const dir = mkdtempSync(join(tmpdir(), "ivy-sessions-"));
   const s = Session.create(dir, "m");

@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { z } from "zod";
+import { errorMessage } from "./log.ts";
 
 export const EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const;
 const Effort = z.enum(EFFORT_LEVELS);
@@ -187,7 +188,7 @@ export function loadConfig(paths: Paths): Config {
     try {
       resolveModel(providers, helper);
     } catch (err) {
-      throw new Error(`Invalid ${paths.config}: agent.helper_model: ${(err as Error).message}`);
+      throw new Error(`Invalid ${paths.config}: agent.helper_model: ${errorMessage(err)}`);
     }
   }
   const ref = parsed.data.agent.model;
@@ -195,7 +196,7 @@ export function loadConfig(paths: Paths): Config {
   try {
     return { ...parsed.data, providers, model: resolveModel(providers, ref) };
   } catch (err) {
-    throw new Error(`Invalid ${paths.config}: agent.model: ${(err as Error).message}`);
+    throw new Error(`Invalid ${paths.config}: agent.model: ${errorMessage(err)}`);
   }
 }
 

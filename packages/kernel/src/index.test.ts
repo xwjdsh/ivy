@@ -41,6 +41,23 @@ test("providers added to config.toml are used after a reload", async () => {
   expect(ivy.agent.model).toBe("proxy/m");
 });
 
+test("a reload after the model's provider lost its key or moved keeps Ivy up and on it as it is now", async () => {
+  const paths = resolvePaths(mkdtempSync(join(tmpdir(), "ivy-key-")));
+  writeFileSync(paths.config, `[agent]\nmodel = "proxy/m"\n[providers.proxy]\n${LOCAL}\n`);
+  const keys = new MemoryKeyStore();
+  keys.set("proxy", "sk");
+  const ivy = await createIvy({ plugins: [], paths, keys });
+  keys.remove("proxy");
+  writeFileSync(
+    paths.config,
+    '[agent]\nmodel = "proxy/m"\n[providers.proxy]\nbase_url = "http://127.0.0.1:8"\n',
+  );
+  ivy.reloadProviders();
+  expect(ivy.agent.modelRef?.provider.base_url).toBe("http://127.0.0.1:8");
+  // The next turn says what is missing, as on startup.
+  expect(() => ivy.clientFor(ivy.config.providers.proxy as never)).toThrow("No API key for proxy");
+});
+
 test("a failed connection test reads as a sentence, not the API's error body", () => {
   const body = (message: string) => ({ type: "error", error: { type: "x", message } });
   const fromApi = (status: number, message: string) =>
