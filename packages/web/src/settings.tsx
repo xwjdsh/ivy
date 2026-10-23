@@ -162,6 +162,7 @@ function Models(props: {
           <ModelSettings
             // Asked again for the models when the providers change.
             key={JSON.stringify(settings?.providers)}
+            helper
             state={props.state}
             onState={props.onState}
             onError={onError}

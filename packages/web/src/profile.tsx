@@ -148,6 +148,8 @@ const EFFORTS: Record<string, string> = {
 /** The model and the effort, both the daemon's: a change applies to every session. */
 export function ModelSettings(props: {
   state: DaemonState;
+  /** Also the helper model, for side work (the settings page; her card keeps to the two). */
+  helper?: boolean;
   onState(state: DaemonState): void;
   onError(err: unknown): void;
 }) {
@@ -198,6 +200,28 @@ export function ModelSettings(props: {
           onChange={(e) => api.setEffort(e).then(props.onState, onError)}
         />
       </div>
+      {/* Apart from the pair above: the effort is the model's, the helper has its own. */}
+      {props.helper && (
+        <>
+          <div className="row apart">
+            <span className="key">Helper</span>
+            <Pick
+              className="model"
+              below
+              value={state.helperModel}
+              title="A small, fast model for side work: reading a page, summing up a conversation"
+              disabled={!state.model}
+              search="Search models"
+              options={[
+                { value: "", label: "The model, at low effort" },
+                ...choices.map((m) => ({ value: m, label: modelName(m), group: groups.get(m) })),
+              ]}
+              onChange={(m) => api.setHelperModel(m).then(props.onState, onError)}
+            />
+          </div>
+          <p className="note">For side work: reading a page, summing up a conversation.</p>
+        </>
+      )}
     </div>
   );
 }

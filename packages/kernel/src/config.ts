@@ -61,6 +61,11 @@ const ConfigSchema = z.strictObject({
     .strictObject({
       /** The model to use, as "<provider>/<model id>" (see resolveModel). None until one is chosen. */
       model: z.string().min(1).optional(),
+      /**
+       * A small fast model for side work that only extracts or sums up (helper.ts), named like
+       * `model`; unset, side work runs on the main model at low effort.
+       */
+      helper_model: z.string().min(1).optional(),
       /** Max model calls per user turn before the loop stops. */
       max_steps: z.number().int().positive().default(25),
     })
@@ -176,6 +181,14 @@ export function loadConfig(paths: Paths): Config {
       base_url: p.base_url ?? DEFAULT_BASE_URLS[p.type],
       models: [...new Set(p.models)],
     };
+  }
+  const helper = parsed.data.agent.helper_model;
+  if (helper) {
+    try {
+      resolveModel(providers, helper);
+    } catch (err) {
+      throw new Error(`Invalid ${paths.config}: agent.helper_model: ${(err as Error).message}`);
+    }
   }
   const ref = parsed.data.agent.model;
   if (!ref) return { ...parsed.data, providers };

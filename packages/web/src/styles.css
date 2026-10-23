@@ -2192,6 +2192,18 @@ kbd {
   border-bottom: 1px solid var(--line);
 }
 
+/* The helper, apart from the model and its effort. */
+.st-body .settings .row.apart {
+  margin-top: 10px;
+}
+
+.st-body .settings .note {
+  margin: 0;
+  padding-left: 8px;
+  color: var(--faint);
+  font-size: 11.5px;
+}
+
 /* On the settings page a menu hangs from its button's right edge, at a menu's width. */
 .st-body .settings .menu {
   right: -4px;

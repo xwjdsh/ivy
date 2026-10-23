@@ -6,6 +6,8 @@
 [agent]
 model = "anthropic/claude-opus-5-5"  # "<provider>/<model id>", split at the first "/"; without one, Ivy asks for it
 max_steps = 25                    # model calls per turn
+# helper_model = "anthropic/claude-haiku-5-5"  # a small, fast model for side work (reading a page,
+                                  # summing up a conversation); left out, the model at low effort
 
 [providers.anthropic]
 type = "anthropic"                # the protocol: "anthropic" (Messages API) or "openai" (Chat Completions)

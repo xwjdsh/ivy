@@ -14,6 +14,7 @@ import {
 } from "./config.ts";
 import { saveAllowRule } from "./config-edit.ts";
 import { SystemPrompt } from "./context.ts";
+import { Helper } from "./helper.ts";
 import { defaultKeyStore, type KeyStore } from "./keychain.ts";
 import { AnthropicModelClient, type ModelClient } from "./model.ts";
 import { OpenAIChatClient } from "./openai-model.ts";
@@ -27,6 +28,7 @@ export * from "./capabilities.ts";
 export * from "./config.ts";
 export * from "./config-edit.ts";
 export { type PromptPart, SystemPrompt } from "./context.ts";
+export * from "./helper.ts";
 export * from "./images.ts";
 export * from "./keychain.ts";
 
@@ -77,6 +79,8 @@ export interface Ivy {
    * requests use them, with new clients and model lists.
    */
   reloadProviders(): void;
+  /** Side work that only extracts or sums up, on the helper model (helper.ts). */
+  helper: Helper;
   /** The client for a provider (one per provider), e.g. for a model ref other than the agent's. */
   clientFor(provider: ProviderConfig): ModelClient;
   /** The models an endpoint lists with this key: a connection test, nothing saved. */
@@ -142,6 +146,7 @@ export async function createIvy(opts: IvyOptions): Promise<Ivy> {
     plugins,
     systemPrompt: (sessionId) => systemPrompt.textFor(sessionId),
   });
+  const helper = new Helper({ config, clientFor, capabilities, main: () => agent.modelRef });
   const upstream = new Map<string, Promise<string[]>>();
   const listUpstream = (provider: ProviderConfig): Promise<string[]> => {
     let list = upstream.get(provider.name);
@@ -200,6 +205,7 @@ export async function createIvy(opts: IvyOptions): Promise<Ivy> {
       return p?.api_key ? "config" : keys.available && keys.get(name) ? "keychain" : "none";
     },
     reloadProviders,
+    helper,
     clientFor,
     async listModelsAt({ type, base_url, key }) {
       const kind = type as ProviderConfig["type"];

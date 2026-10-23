@@ -47,6 +47,8 @@ export const api = {
   state: () => request<DaemonState>("GET", "/state"),
   models: () => request<{ models: string[]; errors: string[] }>("GET", "/models"),
   setModel: (model: string) => request<Switched>("PUT", "/model", { model }),
+  /** "" for none: side work then runs on the model. */
+  setHelperModel: (model: string) => request<Switched>("PUT", "/helper-model", { model }),
   setEffort: (effort: string) => request<Switched>("PUT", "/effort", { effort }),
   sessions: () => request<SessionSummary[]>("GET", "/sessions"),
   createSession: async () => (await request<{ id: string }>("POST", "/sessions", {})).id,

@@ -19,6 +19,19 @@ export function saveModel(paths: Paths, model: string): Config {
   );
 }
 
+/** Save the helper model, `[agent] helper_model`; none takes it out, so side work runs on the main model. */
+export function saveHelperModel(paths: Paths, model: string | undefined): Config {
+  return saveEdit(
+    paths,
+    (toml) =>
+      model
+        ? withValue(toml, ["agent"], "helper_model", model, { createSection: true })
+        : withoutKey(toml, ["agent"], "helper_model"),
+    (c) => c.agent.helper_model === model,
+    "the helper model",
+  );
+}
+
 /** Save `/effort`'s choice as `[generation] effort`. */
 export function saveEffort(paths: Paths, effort: Effort): Config {
   return saveEdit(

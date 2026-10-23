@@ -399,6 +399,20 @@ test("an endpoint that takes the key but lists nothing is told apart: its models
   expect(tested).toMatchObject({ status: 200, body: { models: [], unlisted: expect.any(String) } });
 });
 
+test("the helper model is set, saved and taken out; one on no provider is refused", async () => {
+  const { call, paths } = await start([]);
+  expect((await call("GET", "/state")).body.helperModel).toBe("");
+  const set = await call("PUT", "/helper-model", { model: "anthropic/claude-haiku-5-5" });
+  expect(set.body).toMatchObject({ helperModel: "anthropic/claude-haiku-5-5", saved: true });
+  expect(readFileSync(paths.config, "utf8")).toContain(
+    'helper_model = "anthropic/claude-haiku-5-5"',
+  );
+  expect((await call("PUT", "/helper-model", { model: "nowhere/m" })).status).toBe(400);
+  const cleared = await call("PUT", "/helper-model", { model: "" });
+  expect(cleared.body).toMatchObject({ helperModel: "", saved: true });
+  expect(readFileSync(paths.config, "utf8")).not.toContain("helper_model");
+});
+
 test("settings: providers added, keyed, changed and removed; keys never shown", async () => {
   const { call, keys, paths } = await start([], undefined, ["m1", "m2"]);
   const settings = await call("GET", "/settings");

@@ -270,6 +270,8 @@ export interface DaemonState {
   effortUsed?: string;
   /** Whether /model has anything to switch to. */
   canSwitchModel: boolean;
+  /** The helper model for side work, "<provider>/<model id>"; "" when side work runs on `model`. */
+  helperModel: string;
   /** The effort levels /effort offers. */
   efforts: string[];
   /** Plugins loaded, and the tools they offer. */
@@ -390,6 +392,8 @@ export const AnswerPermission = z.object({ choice: z.enum(PERMISSION_ANSWERS) })
  * only one provider has a model by that id.
  */
 export const SetModel = z.object({ model: z.string().min(1) });
+/** PUT /helper-model: "" for none, side work then running on the main model. */
+export const SetHelperModel = z.object({ model: z.string() });
 
 /** Why /model has nothing to offer: one model, and how to get more. */
 export const onlyOneModel = (current: string) =>

@@ -13,7 +13,9 @@ import {
   isOfficialApi,
   removeApiKey,
   removeProvider,
+  resolveModel,
   saveEffort,
+  saveHelperModel,
   saveModel,
   saveUpload,
   UnlistedModels,
@@ -33,6 +35,7 @@ import {
   RunCommand,
   SendPrompt,
   SetEffort,
+  SetHelperModel,
   SetKey,
   SetModel,
   type Settings,
@@ -79,6 +82,7 @@ export function api(ivy: Ivy, sessions: Sessions): Routes {
     effort: ivy.capabilities.effort,
     effortUsed: ivy.agent.modelRef && ivy.capabilities.for(ivy.agent.modelRef).effort,
     canSwitchModel: canSwitchModel(ivy.config),
+    helperModel: ivy.config.agent.helper_model ?? "",
     efforts: [...EFFORT_LEVELS],
     plugins: ivy.plugins.list().length,
     tools: ivy.plugins.apiTools().length,
@@ -189,6 +193,19 @@ export function api(ivy: Ivy, sessions: Sessions): Routes {
           return fail(400, `Can't switch to ${model}: ${errorMessage(err)}`);
         }
         return Response.json(switched(() => saveModel(ivy.paths, model)));
+      }
+      case "PUT /helper-model": {
+        const { model } = await body(req, SetHelperModel);
+        if (model) {
+          try {
+            resolveModel(ivy.config.providers, model);
+          } catch (err) {
+            return fail(400, `Can't use ${model} as the helper: ${errorMessage(err)}`);
+          }
+        }
+        // Applies at once, saved or not, as a model switch does.
+        ivy.config.agent.helper_model = model || undefined;
+        return Response.json(switched(() => saveHelperModel(ivy.paths, model || undefined)));
       }
       case "PUT /effort": {
         const { effort } = await body(req, SetEffort);
