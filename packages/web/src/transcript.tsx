@@ -172,7 +172,7 @@ export function ShownView({
  * came from (what she looked up and read), and what she did for herself (a memory saved, her
  * journal written; the journal only as written). There to see, not in the way of the talk.
  */
-const MARKS = { sources: "Where this came from", aside: "From her own records" } as const;
+const MARKS = { sources: "Where this came from", aside: "From Ivy's own records" } as const;
 
 function Marks({
   sources,
@@ -215,7 +215,7 @@ function Marks({
           {shown.map((t) =>
             t.label.own === "journal" ? (
               <div key={t.id} className="private">
-                <span className="plugin">{t.label.plugin}</span> an entry, hers to keep
+                <span className="plugin">{t.label.plugin}</span> an entry, Ivy's own
               </div>
             ) : (
               <div key={t.id} className="call">
@@ -281,7 +281,7 @@ export function ItemView({
   }
 }
 
-function Markdown({ text, className }: { text: string; className: string }) {
+export function Markdown({ text, className }: { text: string; className: string }) {
   const highlighted = useHighlight();
   // Bumped when an image is shown, to render it in.
   const [shown, setShown] = useState(0);

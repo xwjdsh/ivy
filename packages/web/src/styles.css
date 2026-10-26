@@ -1944,6 +1944,7 @@ main {
   left: 50%;
   z-index: 30;
   width: min(288px, calc(100% - 32px));
+  transition: width 0.24s cubic-bezier(0.2, 0.8, 0.2, 1);
   padding: 18px 12px 8px;
   border-radius: 18px;
   background: var(--menu);
@@ -1985,6 +1986,101 @@ main {
   box-shadow:
     0 0 0 6px var(--accent-soft),
     0 14px 40px -10px color-mix(in srgb, var(--accent) 60%, transparent);
+}
+
+/* A way a level further in: what she remembers about the user. */
+.card .flip {
+  height: 36px;
+  display: flex;
+  align-items: center;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.card .flip svg {
+  color: var(--faint);
+}
+
+.card .flip:hover {
+  background: var(--hover);
+}
+
+.card .remembered {
+  width: 100%;
+  justify-content: space-between;
+  padding: 0 8px;
+}
+
+/* Her card turned to what she remembers about the user, wider to read: her face stays, and
+   only the list scrolls. */
+.card.wide {
+  width: min(420px, calc(100% - 32px));
+}
+
+.card .memory {
+  border-top: 1px solid var(--line);
+  animation: rise 0.2s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.card .flip.back {
+  gap: 4px;
+  padding: 0 8px 0 4px;
+}
+
+.card .memory-list {
+  max-height: max(160px, calc(100vh - 340px));
+  overflow-y: auto;
+  padding: 0 8px 8px;
+}
+
+.card .memory-list .assistant {
+  font-size: 13px;
+}
+
+/* "About you", "Kept in mind": a header for each list, staying at the top while its list
+   scrolls under it, so where one ends and the next begins shows. After .assistant h2, which
+   it overrides. */
+.memory-list h2 {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin: 18px 0 0;
+  padding: 8px 0 6px;
+  border-bottom: 1px solid var(--line-strong);
+  background: var(--menu);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.card .memory-list ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.card .memory-list li {
+  margin: 0;
+  padding: 6px 0;
+  border-top: 1px solid var(--line);
+}
+
+.card .memory-list li:first-child {
+  border-top: none;
+}
+
+.card .memory-list p {
+  margin-top: 10px;
+  color: var(--faint);
+  font-size: 12px;
+}
+
+.card .memory-list .hint {
+  margin: 12px 0 0;
 }
 
 .profile .name {

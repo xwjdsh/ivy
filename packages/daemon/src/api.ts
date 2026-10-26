@@ -136,7 +136,7 @@ export function api(ivy: Ivy, sessions: Sessions): Routes {
     ivy.config.providers[name] ?? fail(404, `No provider named ${name}`);
 
   /** Run a plugin command, keeping what it logs for the client's verbose view. */
-  const runCommand = async (sessionId: string, name: string, args: string) => {
+  const runCommand = async (sessionId: string | undefined, name: string, args: string) => {
     const command = ivy.plugins.getCommand(name);
     if (!command) return fail(404, `Unknown command ${name}. Try /help.`);
     const logs: string[] = [];
@@ -150,7 +150,7 @@ export function api(ivy: Ivy, sessions: Sessions): Routes {
         );
       };
     const ctx = {
-      sessionId,
+      ...(sessionId && { sessionId }),
       log: { debug: keep("debug"), info: keep("info"), warn: keep("warn"), error: keep("error") },
     };
     try {
@@ -295,6 +295,11 @@ export function api(ivy: Ivy, sessions: Sessions): Routes {
           ...(def.args && { args: def.args }),
         }));
         return Response.json(commands);
+      }
+      // Outside a conversation: what the window shows from a plugin with none going on.
+      case "POST /commands": {
+        const { name, args } = await body(req, RunCommand);
+        return runCommand(undefined, name, args);
       }
       case "POST /sessions/:/commands": {
         const { name, args } = await body(req, RunCommand);

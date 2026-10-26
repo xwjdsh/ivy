@@ -362,7 +362,7 @@ export interface CommandInfo {
   description: string;
 }
 
-/** POST /sessions/:id/commands: what a plugin command printed, and what it logged. */
+/** POST /sessions/:id/commands, POST /commands: what a plugin command printed, and what it logged. */
 export interface CommandResult {
   output?: string;
   logs: string[];
@@ -408,7 +408,7 @@ export const onlyOneModel = (current: string) =>
   `Only one model is available (${current}). List more under \`models\` in a [providers.*] section, or leave \`models\` out to offer all the endpoint has.`;
 /** PUT /effort: likewise. */
 export const SetEffort = z.object({ effort: z.string().min(1) });
-/** POST /sessions/:id/commands: run a plugin command in a session. */
+/** POST /sessions/:id/commands: run a plugin command in a session; POST /commands, outside one. */
 export const RunCommand = z.object({
   name: z.string().startsWith("/"),
   args: z.string().default(""),

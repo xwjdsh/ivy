@@ -7,6 +7,7 @@ import { ChevronRight, Monitor, Moon, Sun } from "lucide-react";
 import {
   type ReactNode,
   type RefObject,
+  useCallback,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -16,6 +17,7 @@ import { type Appearance, api } from "./api.ts";
 import ivy from "./ivy.png"; // the app's icon (app/resources/icon.png), smaller
 import { Bars, Pick } from "./menu.tsx";
 import type { Presence } from "./presence.ts";
+import { Remembered } from "./remembered.tsx";
 
 /** Her face, cut round from the app's icon. */
 export function Portrait({ size, presence }: { size: number; presence?: Presence }) {
@@ -78,11 +80,31 @@ export function Card(props: {
   onState(state: DaemonState): void;
   onError(err: unknown): void;
   onClose(): void;
+  /** Whether there is what she remembers about the user to turn to (the memory plugin on). */
+  remembers: boolean;
 }) {
   const { from, presence, facts, state, onError, onClose } = props;
   const card = useRef<HTMLElement>(null);
   const toggle = useRef<HTMLButtonElement>(null);
+  const row = useRef<HTMLButtonElement>(null);
+  // Her side, or turned to what she remembers about the user (with how it was turned to).
+  const [side, setSide] = useState<{ keyboard: boolean }>();
   useMorph(card, from, props.closing, props.onClosed);
+  const turnBack = useCallback((keyboard: boolean) => {
+    setSide(undefined);
+    if (keyboard) requestAnimationFrame(() => row.current?.focus({ preventScroll: true }));
+  }, []);
+  // Esc turns her card back first, caught before the window's Esc (app.tsx) puts it away.
+  useEffect(() => {
+    if (!side) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented) return;
+      e.preventDefault();
+      turnBack(side.keyboard);
+    };
+    addEventListener("keydown", onKey, true);
+    return () => removeEventListener("keydown", onKey, true);
+  }, [side, turnBack]);
   useEffect(() => {
     const away = (e: PointerEvent) => {
       const t = e.target as Node;
@@ -106,7 +128,7 @@ export function Card(props: {
     };
   }, [from]);
   return (
-    <aside className="card" aria-label="Ivy" ref={card}>
+    <aside className={`card${side ? " wide" : ""}`} aria-label="Ivy" ref={card}>
       <button
         type="button"
         className="profile"
@@ -119,27 +141,45 @@ export function Card(props: {
         <span className="name">Ivy</span>
         <span className={`doing ${presence.tone}`}>{presence.text}</span>
       </button>
-      <Hood>
-        {state && <ModelSettings state={state} onState={props.onState} onError={onError} />}
-        <dl className="facts">
-          {state && (
-            <div>
-              <dt>Tools</dt>
-              <dd>
-                {state.tools} from {state.plugins} plugins
-              </dd>
-            </div>
+      {side ? (
+        <Remembered keyboard={side.keyboard} onBack={() => turnBack(side.keyboard)} />
+      ) : (
+        <>
+          {props.remembers && (
+            <button
+              type="button"
+              className="flip remembered"
+              ref={row}
+              // A click has a count; Enter or Space on a focused button, none.
+              onClick={(e) => setSide({ keyboard: e.detail === 0 })}
+            >
+              What I remember about you
+              <ChevronRight size={14} />
+            </button>
           )}
-          {facts.tokens && (
-            <div>
-              <dt>This chat</dt>
-              <dd title={formatTokens(facts.tokens)}>
-                {compact(facts.tokens.in)} in · {compact(facts.tokens.out)} out
-              </dd>
-            </div>
-          )}
-        </dl>
-      </Hood>
+          <Hood>
+            {state && <ModelSettings state={state} onState={props.onState} onError={onError} />}
+            <dl className="facts">
+              {state && (
+                <div>
+                  <dt>Tools</dt>
+                  <dd>
+                    {state.tools} from {state.plugins} plugins
+                  </dd>
+                </div>
+              )}
+              {facts.tokens && (
+                <div>
+                  <dt>This chat</dt>
+                  <dd title={formatTokens(facts.tokens)}>
+                    {compact(facts.tokens.in)} in · {compact(facts.tokens.out)} out
+                  </dd>
+                </div>
+              )}
+            </dl>
+          </Hood>
+        </>
+      )}
     </aside>
   );
 }

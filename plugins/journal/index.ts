@@ -49,7 +49,7 @@ import INSTRUCTIONS from "./instructions.md" with { type: "text" };
 
 const NAME = "IVY.md";
 const HEADER =
-  "# Ivy\nIvy's own journal: what Ivy has lived with you, in its own words. Written by Ivy; you can read, edit or delete it. One entry per line.\n\n";
+  "# Ivy\nIvy's own journal: what Ivy has lived with you, in Ivy's own words. Written by Ivy; you can read, edit or delete it. One entry per line.\n\n";
 /** A proposal for SOUL.md is one passage, not a new file. */
 const MAX_PASSAGE = 1500;
 

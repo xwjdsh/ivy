@@ -170,6 +170,16 @@ export function App() {
   const [card, setCard] = useState<{ from: HTMLElement; closing: boolean } | null>(null);
   const [searching, setSearching] = useState(false);
   const [settings, setSettings] = useState(false);
+  // Whether the memory plugin, on, has what she remembers to show on her card.
+  const [remembers, setRemembers] = useState(false);
+  useEffect(() => {
+    if (!connected) return;
+    api
+      .commands()
+      // Only a row on her card hangs on it: none, rather than an alarm.
+      .then((list) => setRemembers(list.some((c) => c.name === "/remembered")))
+      .catch(() => setRemembers(false));
+  }, [connected]);
   const openSettings = useCallback((open: boolean) => {
     setCard(null);
     setSearching(false);
@@ -228,6 +238,7 @@ export function App() {
 
   /** Go to a past conversation found, open above to carry on. */
   const pick = (id: string) => {
+    setSettings(false); // to be seen
     if (readingId.current !== id) read(id);
     setJump({});
   };
@@ -371,6 +382,7 @@ export function App() {
             onState={setState}
             onError={failed}
             onClose={closeCard}
+            remembers={remembers}
           />
         )}
         {settings && <SettingsPage state={state} onState={setState} onError={failed} />}

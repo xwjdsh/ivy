@@ -172,6 +172,23 @@ test("/memory shows usage and open todos, or searches", async () => {
   expect(await cmd?.run("taxes", { sessionId: "s", log })).toContain("MEMORY.md: - [todo");
 });
 
+test("/remembered shows the hot files' words, with when, and how many are put away", async () => {
+  const cmd = plugin.commands?.find((c) => c.name === "/remembered");
+  expect(await cmd?.run("", { log })).toBe("Nothing yet.");
+  await call("save", { file: "user", content: "Prefers short answers #style" });
+  await call("save", { file: "memory", content: "Dentist", due: "2999-01-01T15:00" });
+  await call("save", { file: "memory", content: "In Paris", ends: "2999-02-01" });
+  await call("save", { file: "memory", content: "Old flat" });
+  await call("move", { match: "Old flat", to: "archive" });
+  expect(await cmd?.run("", { log })).toBe(
+    [
+      "## About you\n\n- Prefers short answers",
+      "## Kept in mind\n\n- Dentist · due 2999-01-01 15:00\n- In Paris · until 2999-02-01",
+      "1 more put away, older or done. To change anything, tell me.",
+    ].join("\n\n"),
+  );
+});
+
 test("limits are configurable within bounds", async () => {
   expect(() => plugin.configSchema?.parse({ memory_limit: 10 })).toThrow();
   expect(() => plugin.configSchema?.parse({ typo: 1 })).toThrow();

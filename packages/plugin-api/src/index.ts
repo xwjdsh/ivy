@@ -216,7 +216,8 @@ export interface SessionInfo {
 }
 
 export interface CommandContext {
-  sessionId: string;
+  /** The conversation it was run in; none when run from outside one (her card's pages). */
+  sessionId?: string;
   log: Logger;
 }
 

@@ -337,6 +337,11 @@ export function createMemoryPlugin(): IvyPlugin {
           return overview(ctx, store());
         },
       },
+      {
+        name: "/remembered",
+        description: "What Ivy remembers about you",
+        run: () => remembered(context(store().read())),
+      },
     ],
   });
 }
@@ -412,6 +417,36 @@ function dueTodos(files: Files, today: string): string[] {
     out.push(`${e.text} (${when})`);
   }
   return out.slice(0, MAX_DUE);
+}
+
+/**
+ * The hot files' entries as the user reads them (what her card shows of what she remembers):
+ * the words alone, with an open todo's due date or a state's end, and a count of what is put
+ * away.
+ */
+function remembered(ctx: Context): string {
+  const { files } = screen(ctx.files);
+  const entries = (lines: Line[]) =>
+    lines.flatMap(({ entry: e }) => {
+      if (!e || e.fields.done) return []; // a done todo is on its way to the archive
+      const when = e.fields.due
+        ? ` · due ${e.fields.due.replace("T", " ")}`
+        : e.fields.ends
+          ? ` · until ${e.fields.ends}`
+          : "";
+      return [`- ${e.text}${when}`];
+    });
+  const user = entries(files.user);
+  const memory = entries(files.memory);
+  const archived = files.archive.filter((l) => l.entry).length;
+  if (user.length + memory.length + archived === 0) return "Nothing yet.";
+  return [
+    user.length && `## About you\n\n${user.join("\n")}`,
+    memory.length && `## Kept in mind\n\n${memory.join("\n")}`,
+    `${archived ? `${archived} more put away, older or done. ` : ""}To change anything, tell me.`,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 function overview(ctx: Context, store: MemoryFiles): string {

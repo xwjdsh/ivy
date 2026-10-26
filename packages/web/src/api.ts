@@ -2,6 +2,8 @@
 // own; its requests go to ivy://, a scheme the app forwards to the daemon's socket.
 
 import {
+  type CommandInfo,
+  type CommandResult,
   type DaemonState,
   type ErrorBody,
   type PermissionAnswer,
@@ -90,6 +92,10 @@ export const api = {
   setAppearance: async (appearance: Appearance) =>
     (await request<{ appearance: Appearance }>("PUT", "/app/appearance", { appearance }))
       .appearance,
+  /** What the plugins add to the command list. */
+  commands: () => request<CommandInfo[]>("GET", "/commands"),
+  /** A plugin command run outside a conversation, e.g. /remembered for her card's page. */
+  run: (name: string, args = "") => request<CommandResult>("POST", "/commands", { name, args }),
   send: (id: string, text: string, images: string[] = []) =>
     request<Prompt>("POST", `/sessions/${id}/prompts`, { text, images }),
   /** An image attached to a message, kept by the daemon until the message names it. */
