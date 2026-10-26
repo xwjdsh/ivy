@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+
 // Run eval cases against a real model:
 // `bun run eval [filter...] [--model provider/model] [--judge provider/model] [--no-judge]`.
 // The model is your config's unless `--model` says; the judge is `--judge`, else the one in
@@ -10,6 +11,7 @@
 // Besides the suites here, cases cut from your own conversations live in $IVY_HOME/evals/
 // as JSON (private.ts), never in the repository.
 
+import { setSystemTime } from "bun:test";
 import {
   existsSync,
   mkdirSync,
@@ -41,11 +43,13 @@ import {
   type Expect,
   type MemoryFile,
   type Pattern,
+  type Step,
   type StepRun,
   styleProblems,
 } from "./eval.ts";
 import journal from "./journal.ts";
 import { judge } from "./judge.ts";
+import keep from "./keep.ts";
 import memory from "./memory.ts";
 import { privateSuites } from "./private.ts";
 import recall from "./recall.ts";
@@ -54,6 +58,7 @@ const SUITES: Record<string, EvalCase[]> = {
   basics,
   company,
   journal,
+  keep,
   memory,
   recall,
   ...privateSuites(resolvePaths().home),
@@ -116,6 +121,8 @@ let passed = 0;
 let label = "";
 /** The judge's scores, one per judged step. */
 const scores: number[] = [];
+/** Every reply, for the counts that a judge's verdicts are too noisy to show. */
+const replies: string[] = [];
 for (const { id, case: c } of selected) {
   const started = Date.now();
   const failures = await runCase(c, join(root, id.replace("/", "-")));
@@ -128,9 +135,32 @@ const average = scores.length
   ? ` · judged ${(scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(2)}/5 over ${scores.length}`
   : "";
 console.log(`\n${passed}/${selected.length} passed${average} · ${label} · data in ${root}`);
+console.log(styleCounts(replies));
 process.exit(passed === selected.length ? 0 : 1);
 
+/**
+ * The case's clock: today at its time of day, going on as the case runs, so a reply never
+ * depends on when the evals happen to run (an after-work case at 11:00 got "already off?").
+ */
+function caseClock(at = "20:00"): () => void {
+  const [h = 20, m = 0] = at.split(":").map(Number);
+  const start = new Date();
+  start.setHours(h, m, 0, 0);
+  const began = performance.now();
+  return () => setSystemTime(new Date(start.getTime() + (performance.now() - began)));
+}
+
 async function runCase(c: EvalCase, home: string): Promise<string[]> {
+  const tick = caseClock(c.at);
+  try {
+    return await runSteps(c, home, tick);
+  } finally {
+    setSystemTime(); // the real clock again
+  }
+}
+
+async function runSteps(c: EvalCase, home: string, tick: () => void): Promise<string[]> {
+  tick();
   const paths = resolvePaths(home);
   for (const dir of ["memory", "journal"]) mkdirSync(join(paths.data, dir), { recursive: true });
   if (c.soul) writeFileSync(paths.soul, c.soul);
@@ -160,6 +190,7 @@ async function runCase(c: EvalCase, home: string): Promise<string[]> {
   // What the judge sees: the conversation before the step being judged, then what was said.
   const conversation = [...(c.history ?? [])];
   for (const [i, step] of c.steps.entries()) {
+    tick();
     if (step.clearMemory) {
       for (const f of ["USER.md", "MEMORY.md"] as const) writeFileSync(filePath(home, f), "");
       rmSync(archiveDir(home), { recursive: true, force: true });
@@ -172,10 +203,23 @@ async function runCase(c: EvalCase, home: string): Promise<string[]> {
       await ivy.systemPrompt.start(session.id, DISPLAY_INSTRUCTIONS.markdown);
       // The case's earlier conversation goes into its first session, as it was.
       if (i === 0) {
-        for (const m of c.history ?? []) session.append({ role: m.role, content: m.text });
+        for (const m of c.history ?? []) {
+          // As a turn would: what the user says starts a turn (and ends a taint); a reply
+          // after outside content is marked so.
+          if (m.role === "user") {
+            session.appendPrompt(m.text, "");
+          } else {
+            if (m.outside) session.markOutside("eval");
+            session.append({ role: m.role, content: m.text });
+          }
+        }
       } else {
         conversation.length = 0;
       }
+    }
+    if (step.job) {
+      failures.push(...(await runJob(ivy, step, home)));
+      continue;
     }
     const run: StepRun = { answer: "", tools: [], files: readFiles(home) };
     // What Ivy knew for this turn, for the judge: her system prompt (rules, SOUL.md, memory),
@@ -196,6 +240,7 @@ async function runCase(c: EvalCase, home: string): Promise<string[]> {
       },
     });
     run.files = readFiles(home);
+    replies.push(run.answer);
     if (values.verbose) printStep(i, step.say, run);
 
     const where = `step ${i + 1} "${step.say}"`;
@@ -223,6 +268,36 @@ async function runCase(c: EvalCase, home: string): Promise<string[]> {
   }
   await ivy.plugins.teardown();
   return failures;
+}
+
+/**
+ * A plugin's job run as at 05:00 the next day, over everything since 00:00 today: the case's
+ * day has ended and is the job's to look back on. A day starts at 04:00, so the window also
+ * takes in yesterday, where a case set before 04:00 has its talk.
+ */
+async function runJob(ivy: Ivy, step: Step, home: string): Promise<string[]> {
+  const job = ivy.plugins.jobs().find((j) => j.name === step.job);
+  if (!job) return [`no job "${step.job}"`];
+  const since = new Date();
+  since.setHours(0, 0, 0, 0);
+  const now = new Date(since.getTime() + 29 * 3_600_000); // 05:00 tomorrow
+  try {
+    await job.run({ now, since, signal: new AbortController().signal });
+  } catch (err) {
+    return [`job ${step.job} failed: ${errorMessage(err)}`];
+  }
+  const run: StepRun = { answer: "", tools: [], files: readFiles(home) };
+  return check(step.expect ?? {}, run, "").map((p) => `job ${step.job}: ${p}`);
+}
+
+/** Over every reply: how many asked more than one question or held a list, and how long. */
+function styleCounts(all: string[]): string {
+  if (all.length === 0) return "";
+  const questions = all.filter((r) => (r.match(/[?？]/g) ?? []).length > 1).length;
+  const lists = all.filter((r) => /^\s*([-*] |\d+\. )/m.test(r)).length;
+  const lengths = all.map((r) => [...r.trim()].length).sort((a, b) => a - b);
+  const median = lengths[Math.floor(lengths.length / 2)] ?? 0;
+  return `style: ${all.length} replies · ${questions} with 2+ questions · ${lists} with a list · median ${median} chars`;
 }
 
 /** The judge model, or the model under test. */

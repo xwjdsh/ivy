@@ -40,7 +40,9 @@ export default defineEvals([
       {
         say: "还记得上次我们一起笑了半天的那个梗吗？",
         expect: {
-          answer: [/不记得|想不起|没有.{0,6}(记录|印象)|不太确定|不确定|don't remember|not sure/i],
+          answer: [
+            /不记得|想不起|没有.{0,6}(记录|印象)|没找到|找不到|不太确定|不确定|don't remember|not sure/i,
+          ],
         },
       },
     ],

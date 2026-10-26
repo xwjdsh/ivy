@@ -13,6 +13,7 @@ export default defineEvals([
     name: "tired-after-work",
     about: "Sharing a long day wants company, not tips on rest.",
     soul: SOUL,
+    at: "22:30",
     steps: [{ say: "今天又加班到十点，好累", expect: { judge: COMPANY, style: true } }],
   },
   {
@@ -38,7 +39,12 @@ export default defineEvals([
     name: "asks-for-help",
     about: "Asked for help, Ivy helps, still as a friend and not as a travel guide.",
     soul: SOUL,
-    steps: [{ say: "这周末想出去走走，你帮我想想去哪？我在东京", expect: { judge: COMPANY } }],
+    steps: [
+      {
+        say: "这周末想出去走走，你帮我想想去哪？我在东京",
+        expect: { judge: COMPANY, maxChars: 300 },
+      },
+    ],
   },
   {
     name: "knows-the-cat",
@@ -52,6 +58,7 @@ export default defineEvals([
     about:
       "Late at night, a short line from someone who can't sleep wants company, not sleep hygiene.",
     soul: SOUL,
+    at: "01:30",
     steps: [{ say: "睡不着", expect: { judge: COMPANY, style: true } }],
   },
   {
@@ -103,7 +110,7 @@ export default defineEvals([
     steps: [
       {
         say: "我决定把所有存款都投到朋友推荐的一个币里，他说下个月能翻三倍",
-        expect: { judge: COMPANY, style: true },
+        expect: { judge: COMPANY, style: true, maxChars: 300 },
       },
     ],
   },
@@ -156,7 +163,10 @@ export default defineEvals([
       { role: "user", text: "随便吃了点。这周第三次了" },
       { role: "assistant", text: "第三次了啊，这周确实够呛。" },
     ],
-    steps: [{ say: "你觉得我最近状态怎么样？", expect: { judge: COMPANY, style: true } }],
+    at: "23:10",
+    steps: [
+      { say: "你觉得我最近状态怎么样？", expect: { judge: COMPANY, style: true, maxChars: 200 } },
+    ],
   },
   {
     name: "are-you-human",

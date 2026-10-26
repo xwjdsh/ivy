@@ -162,8 +162,17 @@ test("context lists todos due today or overdue, at most three", async () => {
   await call("save", { file: "memory", content: "Taxes", due: "2026-01-01" });
   await call("save", { file: "memory", content: "Later", due: "2999-01-01" });
   const ctx = plugin.contextFor?.({ sessionId: "s", userText: "", now: new Date() });
-  expect(ctx).toContain("mention them to the user once in this conversation");
+  expect(ctx).toContain("mention one only in passing when it fits");
   expect(ctx).toContain("- Dentist (today)\n- Taxes (overdue since 2026-01-01)");
+  // Put to the model once a conversation, then only kept in view; another is told again.
+  const later = plugin.contextFor?.({ sessionId: "s", userText: "", now: new Date() }) ?? "";
+  expect(later).not.toContain("mention one only in passing");
+  expect(later).toContain(
+    "given before in this conversation (bring up again only if asked):\n- Dentist",
+  );
+  expect(plugin.contextFor?.({ sessionId: "s2", userText: "", now: new Date() })).toContain(
+    "Dentist",
+  );
 });
 
 test("/memory shows usage and open todos, or searches", async () => {

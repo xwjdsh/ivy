@@ -376,15 +376,18 @@ function withoutDanglingToolUse(messages: MessageParam[]): MessageParam[] {
 export function sessionHistory(dir: string): ConversationHistory {
   // Read again only once a file changed: each turn's recall reads every past conversation.
   const read = new Map<string, { mtimeMs: number; size: number; messages: PastMessage[] }>();
-  return {
+  const history: ConversationHistory = {
     sessions() {
       if (!existsSync(dir)) return [];
       return readdirSync(dir)
         .filter((f) => f.endsWith(".jsonl"))
-        .map((f) => ({
-          id: f.replace(/\.jsonl$/, ""),
-          updatedAt: statSync(join(dir, f)).mtime.toISOString(),
-        }))
+        .map((f) => {
+          const id = f.replace(/\.jsonl$/, "");
+          // When the last thing was said, as Session.list has it: a file's time changes
+          // when it is copied or backed up.
+          const last = history.messages(id).at(-1)?.ts;
+          return { id, updatedAt: last ?? statSync(join(dir, f)).mtime.toISOString() };
+        })
         .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
     },
     messages(sessionId) {
@@ -424,6 +427,7 @@ export function sessionHistory(dir: string): ConversationHistory {
       }
     },
   };
+  return history;
 }
 
 function assistantText(message: MessageParam): string | null {

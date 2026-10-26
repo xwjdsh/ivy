@@ -91,15 +91,19 @@ export default defineEvals([
   {
     name: "due-todo-with-time",
     about:
-      "A todo's time is kept in `due` (the model used to drop it from the text), and the todo is brought up on its day even when the question is unrelated (§8.1 check 2).",
+      "A todo's time is kept in `due` (the model used to drop it from the text), and on its day the todo is mentioned where it fits (an open-ended hello), not tacked onto an unrelated question (§8.1 check 2).",
+    at: "11:00",
     steps: [
       {
         say: "提醒我今天下午 5 点去取快递。",
         expect: { files: { "MEMORY.md": { has: [/\[todo [^\]]*due:\d{4}-\d\d-\d\dT17:00\]/] } } },
       },
-      { say: "What's 17 times 23?", expect: { answer: [/391/] } },
-      // Repeat the key check separately: the reminder must be there too.
-      { say: "帮我想个周报的标题", expect: { answer: [/快递|parcel|package/i] } },
+      { say: "在吗？今天好无聊", expect: { answer: [/快递|parcel|package/i] } },
+      {
+        say: "What's 17 times 23?",
+        sameSession: true,
+        expect: { answer: [/391/], answerNot: [/快递|parcel/i] },
+      },
     ],
   },
   {
@@ -112,9 +116,10 @@ export default defineEvals([
     },
     steps: [
       {
-        say: "记一下：我下个月开始在新宿的公司上班，通勤坐 JR 山手线，每天大概 40 分钟。",
+        // A todo, which belongs in MEMORY.md whatever the model makes of it.
+        say: "记一下：下周三下午三点去区役所办在留卡更新。",
         expect: {
-          files: { "MEMORY.md": { has: ["山手线"] } },
+          files: { "MEMORY.md": { has: ["在留卡"] } },
           custom: ({ files }) => {
             const kept = `${files["MEMORY.md"]}\n${files["ARCHIVE.md"]}`;
             const lost = NEARLY_FULL.filter((t) => !kept.includes(t));

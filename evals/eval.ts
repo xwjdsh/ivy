@@ -40,8 +40,13 @@ export interface Expect {
 }
 
 export interface Step {
-  /** What the user says. */
+  /** What the user says; empty for a step that runs a job. */
   say: string;
+  /**
+   * Run a plugin's job (e.g. "keep") over the case's conversations instead of a turn, as at
+   * the rollover after the case's day; `expect` then checks the files.
+   */
+  job?: string;
   /** Continue the previous step's session instead of starting a new one. */
   sameSession?: boolean;
   /** Empty the memory files (not IVY.md) first: what was said then lives only in past sessions. */
@@ -67,7 +72,9 @@ export interface EvalCase {
    * The conversation before the first step, as it was: what the user said and what Ivy
    * answered then, put into the session as is, so a real exchange can be picked up.
    */
-  history?: Array<{ role: "user" | "assistant"; text: string }>;
+  history?: Array<{ role: "user" | "assistant"; text: string; outside?: boolean }>;
+  /** The time of day the case happens, "HH:MM", today; 20:00 when not given. */
+  at?: string;
   steps: Step[];
 }
 

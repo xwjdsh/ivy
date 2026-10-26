@@ -110,7 +110,12 @@ export default defineEvals([
       {
         say: "终于有结果了！",
         clearMemory: true,
-        expect: { answer: [/offer|面试|跳槽|工作|job|interview/i] },
+        // Judged, not matched: "什么结果？" holds 结果 and remembers nothing.
+        expect: {
+          judge: [
+            "The reply takes the news as the outcome of the job search the user told her about earlier (interviews at three companies), e.g. asking how it went or which one, rather than asking what the news is about.",
+          ],
+        },
       },
     ],
   },

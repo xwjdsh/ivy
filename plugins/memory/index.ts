@@ -53,6 +53,10 @@ const TAGS_HELP = 'Comma-separated, in both languages, e.g. "dentist, 牙医, �
  */
 const OUTSIDE = "this turn read outside content";
 
+/** How due todos are put to the model in a turn's context. */
+const DUE_HEAD =
+  'Due (the user also gets a notification at its time; mention one only in passing when it fits, as a statement, not a question, e.g. "明天拔智齿，早点睡"; at most once in this conversation, and not at all if nothing fits)';
+
 /** Todos overdue for longer than this are flagged in /memory. */
 const LONG_OVERDUE_DAYS = 30;
 /** At most this many due todos in a turn's context. */
@@ -75,6 +79,8 @@ export function createMemoryPlugin(): IvyPlugin {
   const snapshots = new Map<string, Record<HotFile, Set<string>>>();
   /** What each conversation's recall already gave, so nothing is given twice. */
   const recalled = new Map<string, Set<string>>();
+  /** The due todos each conversation was told of: each once, not on every turn. */
+  const dueTold = new Map<string, Set<string>>();
   let state:
     | {
         files: MemoryFiles;
@@ -348,15 +354,24 @@ export function createMemoryPlugin(): IvyPlugin {
     sessionReleased({ id }) {
       snapshots.delete(id);
       recalled.delete(id);
+      dueTold.delete(id);
     },
     contextFor({ sessionId, userText, now }) {
       const current = screen(store().read()).files;
       const parts: string[] = [];
+      // Each due todo put to the model once a conversation: asked on every turn, it was tacked
+      // onto every reply. It stays in view after (the context of a turn may not), marked as
+      // given, so "anything today?" still finds it. The notification at its time reminds.
+      const told = dueTold.get(sessionId) ?? new Set<string>();
+      dueTold.set(sessionId, told);
       const due = dueTodos(current, localDate(now));
-      // Phrased as a task: a reminder only helps if the model actually says it.
-      if (due.length) {
+      const fresh = due.filter((d) => !told.has(d));
+      const before = due.filter((d) => told.has(d));
+      for (const d of fresh) told.add(d);
+      if (fresh.length) parts.push(`${DUE_HEAD}:\n${fresh.map((d) => `- ${d}`).join("\n")}`);
+      if (before.length) {
         parts.push(
-          `Todos due (mention them to the user once in this conversation, briefly, whatever the question):\n${due.map((d) => `- ${d}`).join("\n")}`,
+          `Due, given before in this conversation (bring up again only if asked):\n${before.map((d) => `- ${d}`).join("\n")}`,
         );
       }
       const snapshot = snapshots.get(sessionId);
