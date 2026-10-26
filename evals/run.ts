@@ -10,7 +10,15 @@
 // Besides the suites here, cases cut from your own conversations live in $IVY_HOME/evals/
 // as JSON (private.ts), never in the repository.
 
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
@@ -54,6 +62,18 @@ const FILES: MemoryFile[] = ["USER.md", "MEMORY.md", "ARCHIVE.md", "IVY.md"];
 /** Where each file lives under the data folder: IVY.md belongs to the journal plugin. */
 const fileDir = (f: MemoryFile) => (f === "IVY.md" ? "journal" : "memory");
 const filePath = (home: string, f: MemoryFile) => join(resolvePaths(home).data, fileDir(f), f);
+/** The archive, a file per topic; a case's ARCHIVE.md is the archive as it was before topics. */
+const archiveDir = (home: string) => join(resolvePaths(home).data, "memory", "archive");
+
+/** Write a memory file as a case gives it; ARCHIVE.md is the archive's general topic. */
+function writeMemory(home: string, name: MemoryFile, text: string): void {
+  if (name === "ARCHIVE.md") {
+    mkdirSync(archiveDir(home), { recursive: true });
+    writeFileSync(join(archiveDir(home), "general.md"), text);
+  } else {
+    writeFileSync(filePath(home, name), text);
+  }
+}
 
 const { values, positionals } = parseArgs({
   allowPositionals: true,
@@ -116,7 +136,11 @@ async function runCase(c: EvalCase, home: string): Promise<string[]> {
   if (c.soul) writeFileSync(paths.soul, c.soul);
   writeFileSync(paths.config, baseConfig + (c.config ? `\n${c.config}` : ""));
   for (const [name, text] of Object.entries(c.files ?? {})) {
-    writeFileSync(filePath(home, name as MemoryFile), text);
+    writeMemory(home, name as MemoryFile, text);
+  }
+  for (const [topic, text] of Object.entries(c.topics ?? {})) {
+    mkdirSync(archiveDir(home), { recursive: true });
+    writeFileSync(join(archiveDir(home), `${topic}.md`), text);
   }
 
   let ivy: Ivy;
@@ -137,10 +161,11 @@ async function runCase(c: EvalCase, home: string): Promise<string[]> {
   const conversation = [...(c.history ?? [])];
   for (const [i, step] of c.steps.entries()) {
     if (step.clearMemory) {
-      for (const f of FILES) if (f !== "IVY.md") writeFileSync(filePath(home, f), "");
+      for (const f of ["USER.md", "MEMORY.md"] as const) writeFileSync(filePath(home, f), "");
+      rmSync(archiveDir(home), { recursive: true, force: true });
     }
     for (const [name, text] of Object.entries(step.files ?? {})) {
-      writeFileSync(filePath(home, name as MemoryFile), text);
+      writeMemory(home, name as MemoryFile, text);
     }
     if (!session || !step.sameSession) {
       session = Session.create(ivy.paths.sessions, ivy.agent.model);
@@ -282,6 +307,15 @@ function readFiles(home: string): Record<MemoryFile, string> {
   for (const f of FILES) {
     const path = filePath(home, f);
     out[f] = existsSync(path) ? readFileSync(path, "utf8") : "";
+  }
+  // The archive is every topic's file, one after another.
+  const dir = archiveDir(home);
+  if (existsSync(dir)) {
+    out["ARCHIVE.md"] = readdirSync(dir)
+      .filter((f) => f.endsWith(".md"))
+      .sort()
+      .map((f) => readFileSync(join(dir, f), "utf8"))
+      .join("\n");
   }
   return out;
 }

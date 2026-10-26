@@ -29,6 +29,18 @@ const NEARLY_FULL = [
   "去年报的日语 N2 已经考过",
 ];
 
+const FAMILY = `# Family · 家人
+When it matters: the user's parents and sister Lin, visits home, relatives' health.
+
+- [fact 2026-06-02] 妈妈膝盖不好，上下楼费劲 #mom #knee
+- [fact 2026-06-20] 爸爸退休后在学书法 #dad #calligraphy
+- [fact 2026-07-03] 妹妹 Lin 住在大阪 #sister #Osaka
+- [fact 2026-07-15] Lin 养了一只叫 Mochi 的柯基 #sister #dog #狗
+- [fact 2026-08-01] 每年中秋回老家 #home
+- [fact 2026-08-20] Lin 在准备考驾照 #sister #driving
+- [fact 2026-09-02] 爸爸血压偏高，在吃药 #dad #health
+`;
+
 export default defineEvals([
   {
     name: "preference-applies-later",
@@ -61,7 +73,7 @@ export default defineEvals([
   {
     name: "archived-fact-found",
     about:
-      "A fact moved to the archive is out of the prompt but found by search, across languages (§8.1 check 2).",
+      "A fact moved to the archive is out of the prompt but found, by the turn's recall or a search, across languages (§8.1 check 2).",
     steps: [
       { say: "记一下：公司 VPN 用的是 WireGuard。" },
       {
@@ -72,7 +84,7 @@ export default defineEvals([
       },
       {
         say: "Which VPN does my company use?",
-        expect: { called: ["memory__search"], answer: /wireguard/i },
+        expect: { answer: /wireguard/i },
       },
     ],
   },
@@ -215,6 +227,41 @@ export default defineEvals([
         files: { "MEMORY.md": "# Memory\n\n- [todo 2026-10-01 due:2099-01-01] 交周报\n" },
         // Mentioning that the old todo is gone is fine; the new one must be there.
         expect: { answer: "周报" },
+      },
+    ],
+  },
+  {
+    name: "archives-into-its-topic",
+    about:
+      "An entry archived goes into the topic it is about (the sister into family), not into general (§8.1).",
+    topics: { family: FAMILY },
+    steps: [
+      { say: "记一下：妹妹 Lin 下周一开始在 Sony 上班。" },
+      {
+        say: "Lin 换工作那条不用一直记着了，放进归档吧。",
+        sameSession: true,
+        expect: {
+          custom: ({ files }) => {
+            const family = files["ARCHIVE.md"]
+              .split(/\n(?=# )/)
+              .find((t) => t.startsWith("# Family"));
+            return family?.includes("Sony")
+              ? undefined
+              : "the Sony entry isn't in the family topic";
+          },
+        },
+      },
+    ],
+  },
+  {
+    name: "reads-the-topic",
+    about:
+      "Asked about a person a topic holds, Ivy reads the topic whole and answers from it, though no word of the question is in the entry (§8.1).",
+    topics: { family: FAMILY },
+    steps: [
+      {
+        say: "我妹最近怎么样你还记得吗？她家那只小家伙叫啥来着",
+        expect: { called: ["memory__read_topic"], answer: /mochi/i },
       },
     ],
   },

@@ -286,20 +286,6 @@ export interface IvyPlugin {
 export const CONTEXT_MAX_CHARS = 2000;
 
 /**
- * A calendar date, YYYY-MM-DD, in the machine's timezone: the dates Ivy writes and the user
- * reads. Plugins share it so they agree on what "today" is.
- */
-export function localDate(d: Date): string {
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
-
-/** "21:40": a time of day, local, as Ivy writes and the user reads it. */
-export function localTime(d: Date): string {
-  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-}
-
-/**
  * An http(s) address as Ivy compares them: parsed, without its #fragment; undefined if it
  * isn't one.
  */
@@ -322,3 +308,15 @@ export function defineTool<S extends z.ZodType>(tool: ToolDef<S>): ToolDef {
 export function definePlugin(plugin: IvyPlugin): IvyPlugin {
   return plugin;
 }
+
+export { localDate, localTime } from "./dates.ts";
+export {
+  dayStart,
+  daysEnded,
+  dayTranscript,
+  LEFT_OUT,
+  nextDate,
+  ROLLOVER_HOUR,
+  ROLLOVER_TIME,
+} from "./days.ts";
+export { RECALL_RARE, rank, recallFrom, type Searchable, search, terms } from "./search.ts";

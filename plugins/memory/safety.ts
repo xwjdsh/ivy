@@ -11,7 +11,7 @@
 // addressed to the model, chat-format markup, and secrets.
 
 import type { Line } from "./format.ts";
-import type { FileName, Files } from "./store.ts";
+import { FILES, type FileName, type Files } from "./store.ts";
 
 export interface Finding {
   kind: "hidden" | "instruction" | "secret";
@@ -106,7 +106,7 @@ export function screen(files: Files): { files: Files; skipped: Noted[]; flagged:
   const skipped: Noted[] = [];
   const flagged: Noted[] = [];
   const shown = { ...files };
-  for (const file of Object.keys(files) as FileName[]) {
+  for (const file of FILES) {
     const v = visible(files[file]);
     shown[file] = v.lines;
     skipped.push(...v.skipped.map((n) => ({ file, ...n })));

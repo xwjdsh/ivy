@@ -6,6 +6,7 @@
 export type Pattern = string | RegExp;
 
 /** The memory files, and IVY.md (Ivy's journal, from the journal plugin). */
+/** ARCHIVE.md is the archive as one file: its general topic, given; every topic, read. */
 export type MemoryFile = "USER.md" | "MEMORY.md" | "ARCHIVE.md" | "IVY.md";
 
 export interface Expect {
@@ -58,6 +59,8 @@ export interface EvalCase {
   config?: string;
   /** Memory files written before the first step. */
   files?: Partial<Record<MemoryFile, string>>;
+  /** Archive topics' files written before the first step, by topic: "family" → its file. */
+  topics?: Record<string, string>;
   /** SOUL.md for this case; without it there is none, as for a new user. */
   soul?: string;
   /**

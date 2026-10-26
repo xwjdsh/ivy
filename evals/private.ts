@@ -49,6 +49,7 @@ function toCase(c: JsonCase, home: string): EvalCase {
           ? readFileSync(STARTER, "utf8")
           : c.soul,
     files: c.files === "user" ? userFiles(home) : c.files,
+    ...(c.files === "user" && { topics: userTopics(home) }),
     steps: c.steps.map((s) => ({ ...s, expect: s.expect && toExpect(s.expect) })),
   };
 }
@@ -82,4 +83,15 @@ function userFiles(home: string): Partial<Record<MemoryFile, string>> {
     if (existsSync(path)) files[f] = readFileSync(path, "utf8");
   }
   return files;
+}
+
+/** The user's archive topics as they are now, each topic's file. */
+function userTopics(home: string): Record<string, string> {
+  const dir = join(resolvePaths(home).data, "memory", "archive");
+  if (!existsSync(dir)) return {};
+  return Object.fromEntries(
+    readdirSync(dir)
+      .filter((n) => n.endsWith(".md"))
+      .map((n) => [n.slice(0, -3), readFileSync(join(dir, n), "utf8")]),
+  );
 }

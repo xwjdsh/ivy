@@ -2,7 +2,8 @@ import { expect, test } from "bun:test";
 
 process.env.TZ = "America/New_York"; // days of 25 and 23 hours
 
-const { daysEnded, weeksEnded } = await import("./index.ts");
+const { daysEnded } = await import("@ivy/plugin-api");
+const { weeksEnded } = await import("./index.ts");
 
 test("a day of 25 or 23 hours is still one day, ended at 04:00", () => {
   // Clocks went back on 1 November 2026, forward on 8 March 2026.

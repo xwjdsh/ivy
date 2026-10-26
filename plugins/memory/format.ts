@@ -3,7 +3,8 @@
 //   - [todo 2026-10-17 due:2026-10-21] Dentist appointment at 15:00 #health #牙医
 //
 // Inside the brackets: the type (none in USER.md), the date the line was written, changed
-// or confirmed, then optional fields and flags. Tags go at the end. Anything else in a file
+// or confirmed, then optional fields and flags; `topic:family` on a hot entry is the topic
+// of the archive it goes to (in a topic's file, the file says it). Tags go at the end. Anything else in a file
 // (headings, notes, hand-written lines) is kept byte for byte; only lines Ivy changes are
 // rewritten, so hand edits never break and never get reformatted.
 
@@ -21,6 +22,8 @@ export interface Entry {
   fields: Partial<Record<DateField, string>>;
   /** Saved from outside content (a tainted session). */
   ext: boolean;
+  /** The archive topic it belongs to: its file's, or, on a hot entry, where it goes. */
+  topic?: string;
   /** Bracket tokens Ivy doesn't know, kept as they are. */
   unknown: string[];
   text: string;
@@ -38,6 +41,11 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const ENTRY_RE = /^- (?:\[([^\]]*)\]\s*)?(.*)$/;
 // A trailing tag: "#" + characters with at least one letter, so "Room #12" stays text.
 const TAG_RE = /\s#((?=[^\s#]*\p{L})[^\s#]+)$/u;
+
+/** A topic's name, as files and tools have it: "family", "friend-ken". */
+export function isTopic(value: string): boolean {
+  return /^[a-z0-9][a-z0-9-]{0,39}$/.test(value);
+}
 
 export function isDate(value: string): boolean {
   return DATE_RE.test(value) && !Number.isNaN(Date.parse(value));
@@ -67,6 +75,8 @@ export function parseLine(raw: string): Line {
       entry.fields[key] = value;
     } else if (token === "ext") {
       entry.ext = true;
+    } else if (key === "topic" && value && isTopic(value) && !entry.topic) {
+      entry.topic = value;
     } else {
       entry.unknown.push(token);
     }
@@ -94,6 +104,7 @@ export function formatEntry(entry: Entry): string {
     entry.date,
     ...DATE_FIELDS.flatMap((f) => (entry.fields[f] ? [`${f}:${entry.fields[f]}`] : [])),
     entry.ext ? "ext" : undefined,
+    entry.topic ? `topic:${entry.topic}` : undefined,
     ...entry.unknown,
   ].filter(Boolean);
   const tags = entry.tags.map((t) => ` #${t}`).join("");

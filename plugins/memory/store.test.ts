@@ -1,6 +1,16 @@
 import { expect, test } from "bun:test";
 import { parseFile, serializeFile } from "./format.ts";
-import { type Context, type Files, find, move, remove, save, tidy, update } from "./store.ts";
+import {
+  type Context,
+  type FileName,
+  type Files,
+  find,
+  move,
+  remove,
+  save,
+  tidy,
+  update,
+} from "./store.ts";
 import { MemoryError } from "./write.ts";
 
 const HEADER = "# Memory\nMaintained by Ivy; you can edit it.\n\n";
@@ -13,13 +23,13 @@ function ctx(
 ): Context {
   const file = (lines: string[]) => parseFile(HEADER + lines.map((l) => `${l}\n`).join(""));
   return {
-    files: { user: file(user), memory: file(memory), archive: file(archive) },
+    files: { user: file(user), memory: file(memory), archive: file(archive), topics: {} },
     limits: { user: limit, memory: limit },
     today: "2026-10-18",
   };
 }
-const text = (files: Files, name: keyof Files) => serializeFile(files[name]);
-const entries = (files: Files, name: keyof Files) =>
+const text = (files: Files, name: FileName) => serializeFile(files[name]);
+const entries = (files: Files, name: FileName) =>
   files[name].filter((l) => l.entry).map((l) => l.raw);
 
 test("save appends a dated line and reports usage; headings are untouched", () => {
@@ -158,7 +168,7 @@ test("move between files adjusts the type; remove deletes for good", () => {
   expect(entries(up.files, "user")).toEqual(["- [2026-10-01] Speaks Japanese"]);
   const back = move(c, "Parking", "memory");
   expect(entries(back.files, "memory")).toContain("- [note 2026-01-01] Parking spot B12");
-  expect(() => move(c, "Parking", "archive")).toThrow("already in ARCHIVE.md");
+  expect(() => move(c, "Parking", "archive")).toThrow("already in the archive's general");
   const gone = remove(c, "Parking");
   expect(entries(gone.files, "archive")).toEqual([]);
   expect(gone.line).toBe("- [note 2026-01-01] Parking spot B12");
@@ -187,9 +197,14 @@ test("find searches all files; an empty query lists the newest", () => {
     ["- [fact 2026-01-05 until:2026-09-01] Lives in Tokyo"],
   );
   expect(find(c.files, { query: "护照" })).toEqual([
-    { file: "memory", line: "- [fact 2026-10-12] Passport expires 2026-12 #护照" },
+    {
+      file: "memory",
+      line: "- [fact 2026-10-12] Passport expires 2026-12 #护照",
+      place: "MEMORY.md",
+      ext: false,
+    },
   ]);
-  expect(find(c.files, { query: "tokyo" })[0]?.file).toBe("archive");
+  expect(find(c.files, { query: "tokyo" })[0]?.place).toBe("archive/general");
   expect(find(c.files, { limit: 2 }).map((f) => f.file)).toEqual(["memory", "user"]);
   expect(find(c.files, { query: "", type: "fact" }).map((f) => f.file)).toEqual([
     "memory",

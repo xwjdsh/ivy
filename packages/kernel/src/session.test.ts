@@ -204,3 +204,16 @@ test("which calls brought in outside content is kept with the session", () => {
     [true, true, false],
   );
 });
+
+test("past conversations are read again once their file changes, and not once it is gone", () => {
+  const dir = mkdtempSync(join(tmpdir(), "ivy-history-"));
+  const s = Session.create(dir, "m");
+  s.append({ role: "user", content: "first" }, { role: "assistant", content: "hi" });
+  const history = sessionHistory(dir);
+  const before = history.messages(s.id);
+  expect(history.messages(s.id)).toBe(before); // unchanged: the same read
+  s.append({ role: "user", content: "second" });
+  expect(history.messages(s.id).map((m) => m.text)).toEqual(["first", "hi", "second"]);
+  trashSession(dir, s.id);
+  expect(history.messages(s.id)).toEqual([]);
+});

@@ -6,12 +6,17 @@ import {
   type IvyPlugin,
   type Logger,
   type Reminder,
+  ROLLOVER_TIME,
+  type ToolResult,
+  type WriterModel,
 } from "@ivy/plugin-api";
 import { z } from "zod";
 import { changeNotice, lineSet } from "./changes.ts";
 import { MemoryFiles } from "./files.ts";
-import { ENTRY_TYPES, type Entry, type Line, localDate, tagList } from "./format.ts";
+import { ENTRY_TYPES, type Entry, type Line, localDate, parseLine, tagList } from "./format.ts";
 import INSTRUCTIONS from "./instructions.md" with { type: "text" };
+import { keepDays, keptLately } from "./keep.ts";
+import { recall } from "./recall.ts";
 import { type Noted, screen } from "./safety.ts";
 import { searchSessions } from "./sessions.ts";
 import {
@@ -21,12 +26,15 @@ import {
   type Files,
   type Found,
   find,
+  GENERAL,
   type HotFile,
   type Limits,
   move,
   remove,
   save,
+  type Topic,
   tidy,
+  topicOf,
   type Usage,
   update,
   usageOf,
@@ -65,6 +73,8 @@ const configSchema = z.strictObject({
 export function createMemoryPlugin(): IvyPlugin {
   /** Per session: the hot files' lines as the session prompt showed them. */
   const snapshots = new Map<string, Record<HotFile, Set<string>>>();
+  /** What each conversation's recall already gave, so nothing is given twice. */
+  const recalled = new Map<string, Set<string>>();
   let state:
     | {
         files: MemoryFiles;
@@ -72,6 +82,7 @@ export function createMemoryPlugin(): IvyPlugin {
         remindAt: string;
         log: Logger;
         history: ConversationHistory;
+        writer: WriterModel;
       }
     | undefined;
 
@@ -101,7 +112,8 @@ export function createMemoryPlugin(): IvyPlugin {
   return definePlugin({
     id: "memory",
     version: "0.1.0",
-    description: "Long-term memory: USER.md and MEMORY.md in every session, ARCHIVE.md by search.",
+    description:
+      "Long-term memory: USER.md and MEMORY.md in every session, the archive by topic and search.",
     configSchema,
     setup(ctx) {
       const config = ctx.config as z.infer<typeof configSchema>;
@@ -111,6 +123,7 @@ export function createMemoryPlugin(): IvyPlugin {
         remindAt: config.remind_at,
         log: ctx.log,
         history: ctx.history,
+        writer: ctx.writer,
       };
     },
     instructions: INSTRUCTIONS.trim(),
@@ -128,6 +141,10 @@ export function createMemoryPlugin(): IvyPlugin {
           ends: dateString.optional(),
           due: z.string().optional().describe("YYYY-MM-DD, or YYYY-MM-DD HH:MM when it has a time"),
           tags: z.string().optional().describe(TAGS_HELP),
+          topic: z
+            .string()
+            .optional()
+            .describe("The archive topic it belongs to, one listed in your prompt, if one fits"),
           distinct: z
             .boolean()
             .optional()
@@ -187,9 +204,11 @@ export function createMemoryPlugin(): IvyPlugin {
               r.status === "confirmed"
                 ? `Confirmed in ${where}:\n${r.line}`
                 : r.status === "done"
-                  ? `Done; moved to ARCHIVE.md:\n${r.line}`
+                  ? `Done; moved to ${archivedTo(r.line)}:\n${r.line}`
                   : `Updated in ${where}${r.usage ? ` ${usageOfText(r.usage)}` : ""}:\n${r.line}` +
-                    (r.archived ? `\nOld version kept in ARCHIVE.md:\n${r.archived}` : "") +
+                    (r.archived
+                      ? `\nOld version kept in ${archivedTo(r.archived)}:\n${r.archived}`
+                      : "") +
                     (r.usage && r.file !== "archive" ? fullness(r.file, r.usage) : "");
             return { files: r.files, text };
           }),
@@ -197,21 +216,35 @@ export function createMemoryPlugin(): IvyPlugin {
       defineTool({
         name: "move",
         description:
-          "Move one entry between files: to archive when it's no longer in current use, back to memory or user when it matters again.",
-        input: z.object({ match: z.string(), to: z.enum(FILES) }),
-        summary: (i) => `move to ${FILE_NAMES[i.to]}: ${i.match}`,
+          "Move one entry between files: to archive when it's no longer in current use (into its topic, or the topic given), back to memory or user when it matters again, or from one archive topic to another. A topic not there yet is started by giving about (when what it holds matters) and a title in the user's languages.",
+        input: z.object({
+          match: z.string(),
+          to: z.enum(FILES),
+          topic: z
+            .string()
+            .optional()
+            .describe('Archive topic: a short English name, e.g. "family", "work", "friend-ken"'),
+          about: z
+            .string()
+            .optional()
+            .describe("For a new topic, or to rewrite one's line: when what it holds matters"),
+          title: z.string().optional().describe('A new topic\'s title, e.g. "Family · 家人"'),
+        }),
+        summary: (i) =>
+          `move to ${i.to === "archive" && i.topic ? `archive/${i.topic}` : FILE_NAMES[i.to]}: ${i.match}`,
         askFirst: (i, { tainted }) => (tainted && i.to !== "archive" ? OUTSIDE : undefined),
         risk: "write",
         own: "records",
         defaultAllow: true,
-        run: ({ match, to }) =>
+        run: ({ match, to, ...place }) =>
           tool((ctx) => {
-            const r = move(ctx, match, to);
+            const r = move(ctx, match, to, place);
             const usage = r.usage ? ` ${usageOfText(r.usage)}` : "";
             const full = r.usage && r.to !== "archive" ? fullness(r.to, r.usage) : "";
+            const where = r.topic ? `archive/${r.topic}` : FILE_NAMES[r.to];
             return {
               files: r.files,
-              text: `Moved from ${FILE_NAMES[r.from]} to ${FILE_NAMES[r.to]}${usage}:\n${r.line}${full}`,
+              text: `Moved from ${FILE_NAMES[r.from]} to ${where}${usage}:\n${r.line}${full}`,
             };
           }),
       }),
@@ -231,7 +264,7 @@ export function createMemoryPlugin(): IvyPlugin {
       defineTool({
         name: "search",
         description:
-          "Search all three memory files as they are now, the archive included. Words in any language; an empty query lists the newest entries.",
+          "Search the memory files as they are now, every archive topic included. Words in any language; an empty query lists the newest entries.",
         input: z.object({
           query: z.string().optional(),
           type: z.enum(ENTRY_TYPES).optional(),
@@ -240,7 +273,22 @@ export function createMemoryPlugin(): IvyPlugin {
         summary: (i) => (i.query?.trim() ? `search "${i.query}"` : "list the newest entries"),
         risk: "read",
         own: "records",
-        run: (input) => tool((ctx) => searchText(find(screen(ctx.files).files, input))),
+        run: (input) => {
+          const found = find(screen(context(store().read()).files).files, input);
+          const content = searchText(found);
+          // An entry saved from outside content may carry its words (§8.1).
+          return found.some((f) => f.ext) ? { content, outside: true } : content;
+        },
+      }),
+      defineTool({
+        name: "read_topic",
+        description:
+          "Read one archive topic whole: everything kept about a person or subject, newest last. The topics are listed in your prompt.",
+        input: z.object({ topic: z.string() }),
+        summary: (i) => `read archive/${i.topic}`,
+        risk: "read",
+        own: "records",
+        run: ({ topic }) => readTopic(screen(store().read()).files, topic),
       }),
       defineTool({
         name: "session_search",
@@ -293,14 +341,15 @@ export function createMemoryPlugin(): IvyPlugin {
         "",
         section("memory"),
         "",
-        archiveNote(current.archive),
+        archiveNote(current),
       ].join("\n");
     },
 
     sessionReleased({ id }) {
       snapshots.delete(id);
+      recalled.delete(id);
     },
-    contextFor({ sessionId, now }) {
+    contextFor({ sessionId, userText, now }) {
       const current = screen(store().read()).files;
       const parts: string[] = [];
       const due = dueTodos(current, localDate(now));
@@ -316,6 +365,15 @@ export function createMemoryPlugin(): IvyPlugin {
         const used = parts.reduce((n, p) => n + p.length + 1, 0);
         parts.push(...changesSince(snapshot, current, CONTEXT_MAX_CHARS - used));
       }
+      // What is left after those: what the user just wrote, recalled.
+      const given = recalled.get(sessionId) ?? new Set<string>();
+      recalled.set(sessionId, given);
+      const left = CONTEXT_MAX_CHARS - parts.reduce((n, p) => n + p.length + 1, 0);
+      const found = recall(
+        { query: userText, archive: current.archive, history: ready().history, sessionId, given },
+        left,
+      );
+      if (found) parts.push(found);
       return parts.length ? parts.join("\n") : null;
     },
 
@@ -323,6 +381,15 @@ export function createMemoryPlugin(): IvyPlugin {
     reminders({ since, now }) {
       return dueReminders(screen(store().read()).files, since, now, ready().remindAt);
     },
+
+    // The day's pass: what was said and not saved, kept in the archive.
+    jobs: [
+      {
+        name: "keep",
+        at: () => ROLLOVER_TIME,
+        run: (job) => keepDays({ ...ready(), files: store(), context }, job),
+      },
+    ],
 
     commands: [
       {
@@ -362,7 +429,7 @@ function searchText(found: Found[]): string {
   if (found.length === 0) return "No matching entries.";
   return [
     `${found.length} ${found.length === 1 ? "entry" : "entries"} (until: = no longer true, replaced: = reworded):`,
-    ...found.map((f) => `${FILE_NAMES[f.file]}: ${f.line}`),
+    ...found.map((f) => `${f.place}: ${f.line}`),
   ].join("\n");
 }
 
@@ -438,12 +505,14 @@ function remembered(ctx: Context): string {
     });
   const user = entries(files.user);
   const memory = entries(files.memory);
-  const archived = files.archive.filter((l) => l.entry).length;
+  const topics = topicCounts(files).filter((t) => t.count > 0);
+  const archived = topics.reduce((n, t) => n + t.count, 0);
   if (user.length + memory.length + archived === 0) return "Nothing yet.";
+  const away = topics.map((t) => `${t.topic.title} (${t.count})`).join(", ");
   return [
     user.length && `## About you\n\n${user.join("\n")}`,
     memory.length && `## Kept in mind\n\n${memory.join("\n")}`,
-    `${archived ? `${archived} more put away, older or done. ` : ""}To change anything, tell me.`,
+    `${archived ? `${archived} more put away, older or done: ${away}. ` : ""}To change anything, tell me.`,
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -453,7 +522,6 @@ function overview(ctx: Context, store: MemoryFiles): string {
   const todos = ctx.files.memory.flatMap((l) =>
     l.entry?.type === "todo" && !l.entry.fields.done ? [l.entry] : [],
   );
-  const archived = ctx.files.archive.filter((l) => l.entry).length;
   const todoLine = (e: Entry) => {
     const due = e.fields.due;
     const late =
@@ -461,9 +529,13 @@ function overview(ctx: Context, store: MemoryFiles): string {
     return `  ${due ? `${due.replace("T", " ")}  ` : ""}${e.text}${late}`;
   };
   return [
-    `USER.md ${usageOfText(usageOf(ctx, "user"))} · MEMORY.md ${usageOfText(usageOf(ctx, "memory"))} · ARCHIVE.md ${archived} entries`,
+    `USER.md ${usageOfText(usageOf(ctx, "user"))} · MEMORY.md ${usageOfText(usageOf(ctx, "memory"))}`,
+    `Archive, by topic:\n${topicCounts(ctx.files)
+      .map((t) => `  ${t.name} (${t.count}): ${t.topic.about}`)
+      .join("\n")}`,
     todos.length ? `Open todos:\n${todos.map(todoLine).join("\n")}` : "No open todos.",
     ...notedText(screen(ctx.files)),
+    ...keptText(keptLately(store.dir)),
     `Files: ${store.dir}`,
   ]
     .filter(Boolean)
@@ -500,13 +572,64 @@ function sameLines(a: Set<string>, b: Set<string>): boolean {
 }
 
 /** The archive isn't in the prompt; say it exists and what it holds, so the model looks there. */
-function archiveNote(archive: Line[]): string {
-  const entries = archive.filter((l) => l.entry);
-  const superseded = entries.filter(
-    (l) => l.entry?.fields.until || l.entry?.fields.replaced,
-  ).length;
-  const what = superseded ? `, ${superseded} of them earlier versions of changed facts` : "";
-  return `## ARCHIVE.md (${entries.length} entries${what}; not shown)\nFor anything about the past or no longer in current use, search it with memory__search before answering.`;
+/** The archive's topics with how many entries each holds and when it matters. */
+function topicCounts(files: Files): Array<{ name: string; topic: Topic; count: number }> {
+  const counts = new Map<string, number>();
+  for (const l of files.archive)
+    if (l.entry) counts.set(topicOf(l), (counts.get(topicOf(l)) ?? 0) + 1);
+  return Object.entries(files.topics).map(([name, topic]) => ({
+    name,
+    topic,
+    count: counts.get(name) ?? 0,
+  }));
+}
+
+function archiveNote(files: Files): string {
+  const topics = topicCounts(files)
+    .filter((t) => t.count > 0 || t.name === GENERAL)
+    .map((t) => `- ${t.name} (${t.count}): ${t.topic.about}`);
+  return `## The archive, by topic (not shown)\nWhat is no longer in current use, and the past (earlier versions of changed facts are marked until: or replaced:). When the user brings up a person or subject a topic holds, read it with memory__read_topic; for anything else about the past, search with memory__search before answering.\n${topics.join("\n")}`;
+}
+
+/** Where an archived line is, from its line: its topic's place. */
+function archivedTo(raw: string): string {
+  return `archive/${topicOf(parseLine(raw))}`;
+}
+
+/** Most of a topic read whole, newest last; what is beyond it is reached by search. */
+const MAX_TOPIC_CHARS = 30_000;
+
+function readTopic(files: Files, name: string): ToolResult {
+  const topic = files.topics[name];
+  if (!topic) {
+    return {
+      content: `There is no topic "${name}"; the topics are: ${Object.keys(files.topics).join(", ")}.`,
+      isError: true,
+    };
+  }
+  const lines = files.archive.filter((l) => l.entry && topicOf(l) === name);
+  let shown = lines.map((l) => l.raw);
+  let cut = 0;
+  while (shown.join("\n").length > MAX_TOPIC_CHARS) {
+    shown = shown.slice(1);
+    cut++;
+  }
+  const content = [
+    `# ${topic.title}: ${lines.length} ${lines.length === 1 ? "entry" : "entries"} (until: = no longer true, replaced: = reworded)`,
+    cut ? `(${cut} older entries not shown; search for them with memory__search)` : "",
+    ...shown,
+  ]
+    .filter(Boolean)
+    .join("\n");
+  return lines.some((l) => l.entry?.ext) ? { content, outside: true } : content;
+}
+
+function keptText(days: Array<{ date: string; lines: string[] }>): string[] {
+  if (!days.length) return [];
+  const lines = days.flatMap((d) => d.lines.map((l) => `  ${l}`));
+  return [
+    `Kept in the archive from the last days' talk, said and not saved then:\n${lines.join("\n")}`,
+  ];
 }
 
 function notedText({ skipped, flagged }: { skipped: Noted[]; flagged: Noted[] }): string[] {

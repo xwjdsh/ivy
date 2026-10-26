@@ -1,12 +1,13 @@
-// Memory operations over the three files, as pure functions: they take the files' lines
+// Memory operations over the files, as pure functions: they take the files' lines
 // and today's date and return the changed lines plus a result for the model. Reading and
 // writing the files, locking and the tools around them live in files.ts and index.ts.
 //
 // - USER.md and MEMORY.md are "hot": capped, injected whole into the system prompt.
-// - ARCHIVE.md is "cold": unbounded, reached through search.
+// - The archive is "cold": unbounded, a file per topic, listed in the prompt and searched.
 // Nothing here deletes history except `remove`: changed text and done todos go to the
 // archive, marked `until:` (stopped being true) or `replaced:` (only reworded).
 
+import { search, terms } from "@ivy/plugin-api";
 import {
   type DateField,
   type Entry,
@@ -14,11 +15,12 @@ import {
   entryLine,
   isDate,
   isDue,
+  isTopic,
   type Line,
   normalizeTags,
   usage,
 } from "./format.ts";
-import { compare, search, terms } from "./search.ts";
+import { compare } from "./search.ts";
 import {
   checkSafe,
   contentAndTags,
@@ -35,10 +37,74 @@ export type HotFile = Exclude<FileName, "archive">;
 export const FILE_NAMES: Record<FileName, string> = {
   user: "USER.md",
   memory: "MEMORY.md",
-  archive: "ARCHIVE.md",
+  archive: "the archive",
 };
 
-export type Files = Record<FileName, Line[]>;
+/** An archive topic: its file is `archive/<name>.md`. */
+export interface Topic {
+  /** As the user reads it, in their languages: "Family · 家人". */
+  title: string;
+  /** When what it holds matters, for the model to know when to read it. */
+  about: string;
+}
+
+/**
+ * The files' lines. The archive's are one list, each entry's `topic` saying which topic's
+ * file it is in (none: `general`); `topics` are the topics there are.
+ */
+export type Files = Record<FileName, Line[]> & { topics: Record<string, Topic> };
+
+/** Where what fits no other topic goes; always there. */
+export const GENERAL = "general";
+export const GENERAL_TOPIC: Topic = {
+  title: "General",
+  about: "anything that fits no other topic",
+};
+/** Topics at most, so their list in the prompt stays short. */
+export const MAX_TOPICS = 20;
+
+/** Where an entry goes in the archive: a topic, made if it is new and says when it matters. */
+export interface TopicInput {
+  topic?: string;
+  /** When what the topic holds matters; makes a new topic, or rewrites a topic's line. */
+  about?: string;
+  /** The topic's title in the user's languages, for a new one: "Family · 家人". */
+  title?: string;
+}
+
+/** The topics with `name` made or its line rewritten, or an error the model can act on. */
+export function withTopic(
+  topics: Record<string, Topic>,
+  { topic: name = GENERAL, about, title }: TopicInput,
+): Record<string, Topic> {
+  const list = () => Object.keys(topics).join(", ");
+  if (!isTopic(name)) {
+    throw new MemoryError(
+      `A topic's name is lowercase English letters, digits and dashes, e.g. "family", "friend-ken"; the title carries the user's languages.`,
+    );
+  }
+  const known = topics[name];
+  const line = about?.trim();
+  if (known) {
+    return line || title
+      ? { ...topics, [name]: { title: title?.trim() || known.title, about: line || known.about } }
+      : topics;
+  }
+  if (!line) {
+    throw new MemoryError(
+      `There is no topic "${name}". To start it, give about (when what it holds matters) and a title in the user's languages; or use one of: ${list()}.`,
+    );
+  }
+  if (Object.keys(topics).length >= MAX_TOPICS) {
+    throw new MemoryError(
+      `There are ${MAX_TOPICS} topics already, the most there can be: use one of ${list()}, or merge two by moving one's entries into the other.`,
+    );
+  }
+  return { ...topics, [name]: { title: title?.trim() || name, about: line } };
+}
+
+/** An entry's topic as kept: none for general, where an entry without one goes. */
+const topicField = (name: string | undefined) => (name && name !== GENERAL ? name : undefined);
 export type Limits = Record<HotFile, number>;
 
 export interface Context {
@@ -61,6 +127,8 @@ export interface Change {
 
 export interface SaveInput {
   file: HotFile;
+  /** The archive topic it goes to once archived: one there is (topics are made by archiving). */
+  topic?: string;
   content: string;
   type?: EntryType;
   since?: string;
@@ -78,6 +146,12 @@ export type SaveResult =
 export function save(ctx: Context, input: SaveInput): SaveResult {
   // Tags typed into the text count as tags (models do that), not as part of the fact.
   const { text, tags } = contentAndTags(input.content, input.tags ?? []);
+  // A topic lives in the archive: one is made by archiving into it, not by a hot entry.
+  if (input.topic && !ctx.files.topics[input.topic]) {
+    throw new MemoryError(
+      `There is no topic "${input.topic}"; use one of ${Object.keys(ctx.files.topics).join(", ")}, or leave it out and choose one when the entry is archived.`,
+    );
+  }
   // USER.md entries have no type; a type passed for it is ignored, not an error.
   const type = input.file === "user" ? undefined : (input.type ?? (input.due ? "todo" : "fact"));
   if (input.due && type !== "todo") throw new MemoryError("`due` is only for todos.");
@@ -86,6 +160,7 @@ export function save(ctx: Context, input: SaveInput): SaveResult {
     date: ctx.today,
     fields: dateFields(input),
     ext: false,
+    topic: topicField(input.topic),
     unknown: [],
     text,
     tags,
@@ -106,6 +181,44 @@ export function save(ctx: Context, input: SaveInput): SaveResult {
     similar: closest ? closest.line.raw : undefined,
     files: { ...ctx.files, [input.file]: next },
   };
+}
+
+// ---------- kept by the day's pass ----------
+
+export interface KeepInput {
+  content: string;
+  /** A topic there is; any other goes to general (the pass makes none). */
+  topic?: string;
+  type?: "fact" | "note";
+  tags?: string[];
+  since?: string;
+  ends?: string;
+  /** The day it was said: the entry's date. */
+  date: string;
+}
+
+/**
+ * Keep in the archive what the day's pass found said and not saved (DESIGN.md §11, M3). It
+ * is kept only if nothing like it is in any file: a pass that misjudges adds nothing that
+ * is already there, in other words or not.
+ */
+export function keep(ctx: Context, input: KeepInput): (Change & { line: string }) | undefined {
+  const { text, tags } = contentAndTags(input.content, input.tags ?? []);
+  if (!text) return undefined;
+  const all = FILES.flatMap((f) => ctx.files[f]);
+  if (closestLine(text, all)) return undefined;
+  const entry: Entry = {
+    type: input.type ?? "fact",
+    date: input.date,
+    fields: dateFields(input),
+    ext: false,
+    topic: topicField(input.topic && ctx.files.topics[input.topic] ? input.topic : undefined),
+    unknown: [],
+    text,
+    tags,
+  };
+  const added = checkSafe(entryLine(entry), ABOUT);
+  return { line: added.raw, files: { ...ctx.files, archive: [...ctx.files.archive, added] } };
 }
 
 // ---------- update ----------
@@ -211,20 +324,42 @@ export interface MoveResult extends Change {
   to: FileName;
   line: string;
   usage?: Usage;
+  /** Where in the archive, when it went there. */
+  topic?: string;
 }
 
-/** Move a line between files: archiving it, or bringing it back. */
-export function move(ctx: Context, match: string, to: FileName): MoveResult {
+/**
+ * Move a line between files: archiving it (into its topic, or the one given), bringing it
+ * back, or moving it from one topic to another.
+ */
+export function move(
+  ctx: Context,
+  match: string,
+  to: FileName,
+  place: TopicInput = {},
+): MoveResult {
   const found = findIn(ctx.files, match);
-  if (found.file === to) throw new MemoryError(`That line is already in ${FILE_NAMES[to]}.`);
   const old = found.line.entry as Entry;
+  const topic = to === "archive" ? (place.topic ?? old.topic ?? GENERAL) : undefined;
+  const sameTopic = topic !== undefined && topicField(topic) === old.topic;
+  if (found.file === to && (to !== "archive" || sameTopic)) {
+    throw new MemoryError(
+      `That line is already in ${to === "archive" ? `the archive's ${topic}` : FILE_NAMES[to]}.`,
+    );
+  }
+  const topics =
+    topic !== undefined ? withTopic(ctx.files.topics, { ...place, topic }) : ctx.files.topics;
   if (to === "user" && old.type === "todo") {
     throw new MemoryError("Todos belong in MEMORY.md, where their due dates are tracked.");
   }
   // USER.md lines carry no type; lines leaving it become facts.
   const type = to === "user" ? undefined : (old.type ?? "fact");
-  const moved = checkSafe(entryLine({ ...old, type }), ABOUT);
+  const moved = checkSafe(
+    entryLine({ ...old, type, topic: topic !== undefined ? topicField(topic) : old.topic }),
+    ABOUT,
+  );
   const files = cloneFiles(ctx.files);
+  files.topics = topics;
   files[found.file].splice(found.index, 1);
   files[to].push(moved);
   if (to !== "archive") checkLimit(ctx, to, files[to], ctx.files[to]);
@@ -233,6 +368,7 @@ export function move(ctx: Context, match: string, to: FileName): MoveResult {
     to,
     line: moved.raw,
     usage: to === "archive" ? undefined : usageOf(ctx, to, files[to]),
+    ...(topic !== undefined && { topic }),
     files,
   };
 }
@@ -278,7 +414,15 @@ export function tidy(ctx: Context): Change & { moved: string[] } {
 export interface Found {
   file: FileName;
   line: string;
+  /** Where it is, as the model and the user read it: "MEMORY.md", "archive/family". */
+  place: string;
+  /** Saved from outside content: finding it taints the turn (DESIGN.md §8.1). */
+  ext: boolean;
 }
+
+/** Where a line is, as the model and the user read it. */
+export const placeOf = (file: FileName, line: Line): string =>
+  file === "archive" ? `archive/${topicOf(line)}` : FILE_NAMES[file];
 
 export interface SearchInput {
   query?: string;
@@ -309,7 +453,12 @@ export function find(files: Files, input: SearchInput): Found[] {
         )
         .slice(0, limit)
         .map(({ item }) => item);
-  return ranked.map((item) => ({ file: item.file, line: item.line.raw }));
+  return ranked.map((item) => ({
+    file: item.file,
+    line: item.line.raw,
+    place: placeOf(item.file, item.line),
+    ext: item.entry.ext,
+  }));
 }
 
 // ---------- helpers ----------
@@ -391,5 +540,13 @@ function findIn(files: Files, match: string): Located {
 }
 
 function cloneFiles(files: Files): Files {
-  return { user: [...files.user], memory: [...files.memory], archive: [...files.archive] };
+  return {
+    user: [...files.user],
+    memory: [...files.memory],
+    archive: [...files.archive],
+    topics: { ...files.topics },
+  };
 }
+
+/** The topic an archived entry is in. */
+export const topicOf = (line: Line): string => line.entry?.topic ?? GENERAL;

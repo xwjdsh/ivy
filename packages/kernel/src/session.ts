@@ -374,6 +374,8 @@ function withoutDanglingToolUse(messages: MessageParam[]): MessageParam[] {
  * the session files on each call. Tool traffic, thinking and per-turn context are left out.
  */
 export function sessionHistory(dir: string): ConversationHistory {
+  // Read again only once a file changed: each turn's recall reads every past conversation.
+  const read = new Map<string, { mtimeMs: number; size: number; messages: PastMessage[] }>();
   return {
     sessions() {
       if (!existsSync(dir)) return [];
@@ -388,8 +390,11 @@ export function sessionHistory(dir: string): ConversationHistory {
     messages(sessionId) {
       const file = join(dir, `${sessionId}.jsonl`);
       if (!isSessionId(sessionId) || !existsSync(file)) return [];
+      const { mtimeMs, size } = statSync(file);
+      const known = read.get(sessionId);
+      if (known && known.mtimeMs === mtimeMs && known.size === size) return known.messages;
       let outside = false;
-      return readRecords(file).flatMap((r): PastMessage[] => {
+      const messages = readRecords(file).flatMap((r): PastMessage[] => {
         if (r.type === "outside") outside = true;
         if (r.type !== "message" || r.message.role === "system") return [];
         if (promptText(r.message) !== null) outside = false;
@@ -398,6 +403,8 @@ export function sessionHistory(dir: string): ConversationHistory {
         if (!text) return [];
         return [{ role, text, ts: r.ts, ...(outside && role === "assistant" && { outside }) }];
       });
+      read.set(sessionId, { mtimeMs, size, messages });
+      return messages;
     },
     points(sessionId) {
       const file = pointsFile(dir, sessionId);

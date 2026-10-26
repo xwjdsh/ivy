@@ -5,9 +5,8 @@ import { join } from "node:path";
 
 process.env.TZ = "Asia/Tokyo"; // local days and the 04:00 rollover, wherever the tests run
 
-const { createReflectionPlugin, dayTranscript, daysEnded, isoWeek, weeksEnded } = await import(
-  "./index.ts"
-);
+const { dayTranscript, daysEnded } = await import("@ivy/plugin-api");
+const { createReflectionPlugin, isoWeek, weeksEnded } = await import("./index.ts");
 type History = import("@ivy/plugin-api").ConversationHistory;
 
 const at = (s: string) => new Date(s); // local, as TZ says

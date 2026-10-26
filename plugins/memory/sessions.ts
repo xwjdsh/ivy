@@ -3,9 +3,14 @@
 // long conversation can't crowd out the others, and each hit comes with a neighboring
 // message for context. All sessions are searched; an index can come when it gets slow.
 
-import type { ConversationHistory, PastMessage, ToolResult } from "@ivy/plugin-api";
+import {
+  type ConversationHistory,
+  type PastMessage,
+  search,
+  type ToolResult,
+  terms,
+} from "@ivy/plugin-api";
 import { localDate } from "./format.ts";
-import { search, terms } from "./search.ts";
 
 export interface SessionSearchInput {
   query: string;
@@ -85,7 +90,7 @@ function line(m: PastMessage, words: string[]): string {
 }
 
 /** The part of a long message around the first matching word. */
-function excerpt(text: string, words: string[]): string {
+export function excerpt(text: string, words: string[]): string {
   if (text.length <= EXCERPT) return text;
   const lower = text.toLowerCase();
   const found = words.map((w) => lower.indexOf(w)).filter((i) => i >= 0);

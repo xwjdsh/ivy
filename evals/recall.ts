@@ -4,9 +4,36 @@
 // recalled; the direct asks ("do you know my name?") are in memory.ts.
 
 import { localDate } from "@ivy/plugin-memory/lines";
-import { defineEvals } from "./eval.ts";
+import { COMPANY, defineEvals } from "./eval.ts";
 
 const daysAgo = (n: number) => localDate(new Date(Date.now() - n * 86_400_000));
+
+/** An archive of about 150 entries of a life, none about the user's sister: the crowd. */
+const crowd = (() => {
+  const things = [
+    ["dentist", "牙医"],
+    ["passport", "护照"],
+    ["bike", "自行车"],
+    ["rent", "房租"],
+    ["gym", "健身房"],
+    ["laptop", "笔记本电脑"],
+    ["camera", "相机"],
+    ["ramen", "拉面"],
+    ["Hokkaido trip", "北海道旅行"],
+    ["Japanese class", "日语课"],
+    ["tax", "税"],
+    ["balcony plants", "阳台的植物"],
+    ["book club", "读书会"],
+    ["coffee", "咖啡"],
+    ["running", "跑步"],
+  ];
+  const lines = Array.from({ length: 150 }, (_, i) => {
+    const [en, zh] = things[i % things.length] as [string, string];
+    return `- [fact ${daysAgo(30 + i)}] ${i % 2 ? `${zh}的事，第${i}条记录` : `Note ${i} about the ${en}`} #${en.split(" ")[0]} #${zh}`;
+  });
+  return `# Archive\n\n${lines.join("\n")}\n`;
+})();
+const SISTER = `- [fact ${daysAgo(50)}] Sister Lin started a new job at Sony in Osaka #sister #妹妹 #Lin #Sony #索尼\n`;
 
 export default defineEvals([
   {
@@ -24,6 +51,43 @@ export default defineEvals([
       "ARCHIVE.md": `# Archive\n\n- [fact ${daysAgo(60)}] Ken: the user's college roommate, now an architect in Osaka #friend #朋友 #Ken\n`,
     },
     steps: [{ say: "我那个做建筑的老同学下个月要来东京玩", expect: { answer: /ken/i } }],
+  },
+  {
+    name: "recall-in-a-crowd",
+    about:
+      "Among some 150 archived entries, the one about the user's sister comes up unasked when she does: recalled for the turn, not searched for.",
+    files: { "ARCHIVE.md": crowd + SISTER },
+    steps: [
+      {
+        say: "妹妹昨天给我打电话，说新工作挺累的",
+        expect: { answer: [/sony|索尼|大阪|osaka/i], notCalled: ["memory__search"] },
+      },
+    ],
+  },
+  {
+    name: "no-false-recall",
+    about: "With the same archive, small talk about something else brings nothing of it up.",
+    files: { "ARCHIVE.md": crowd + SISTER },
+    steps: [
+      {
+        say: "今天天气真好，下班后去河边走了一圈",
+        expect: { answerNot: [/sony|索尼|妹妹|sister|lin\b/i], judge: COMPANY },
+      },
+    ],
+  },
+  {
+    name: "not-recited",
+    about:
+      "A recalled detail is used once, not brought up again on the next turn about the same thing.",
+    files: { "ARCHIVE.md": crowd + SISTER },
+    steps: [
+      { say: "妹妹昨天给我打电话，说新工作挺累的" },
+      {
+        say: "她说老板人还行，就是加班多",
+        sameSession: true,
+        expect: { answerNot: [/sony|索尼/i] },
+      },
+    ],
   },
   {
     name: "said-in-passing",

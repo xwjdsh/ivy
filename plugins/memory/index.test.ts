@@ -44,7 +44,9 @@ const call = (name: string, input: object, tainted = false): Promise<ToolResult>
   );
 };
 const text = (r: ToolResult) => (typeof r === "string" ? r : r.content);
-const file = (name: string) => readFileSync(join(dir, name), "utf8");
+// The archive's general topic, as ARCHIVE.md was before topics.
+const file = (name: string) =>
+  readFileSync(join(dir, name === "ARCHIVE.md" ? "archive/general.md" : name), "utf8");
 
 test("save writes MEMORY.md with its header and reports usage", async () => {
   const r = await call("save", {
@@ -58,7 +60,7 @@ test("save writes MEMORY.md with its header and reports usage", async () => {
   );
   expect(file("MEMORY.md")).toStartWith("# Memory\n");
   expect(file("MEMORY.md")).toContain("Dentist at 15:00 #牙医\n");
-  expect(existsSync(join(dir, "ARCHIVE.md"))).toBe(true);
+  expect(existsSync(join(dir, "archive", "general.md"))).toBe(true);
 });
 
 test("errors come back to the model, not thrown", async () => {
@@ -98,12 +100,12 @@ test("update, confirm, done, move and delete through the tools", async () => {
   const changed = text(
     await call("update", { match: "Tokyo", content: "Lives in Osaka", changed: true }),
   );
-  expect(changed).toContain("Old version kept in ARCHIVE.md:");
+  expect(changed).toContain("Old version kept in archive/general:");
   expect(file("ARCHIVE.md")).toContain(`until:${today}] Lives in Tokyo`);
   expect(text(await call("update", { match: "Osaka" }))).toStartWith("Confirmed in MEMORY.md");
   await call("save", { file: "memory", content: "Book flights", type: "todo" });
   expect(text(await call("update", { match: "Book flights", done: true }))).toStartWith(
-    "Done; moved to ARCHIVE.md",
+    "Done; moved to archive/general",
   );
   expect(text(await call("move", { match: "Osaka", to: "user" }))).toStartWith(
     "Moved from MEMORY.md to USER.md",
@@ -124,6 +126,7 @@ test("delete asks by default; the other writes don't", () => {
     delete: false,
     search: false,
     session_search: false,
+    read_topic: false,
   });
 });
 
@@ -134,7 +137,7 @@ test("search covers all three files and labels validity", async () => {
   const r = text(await call("search", { query: "护照 tokyo" }));
   expect(r).toContain("2 entries (until: = no longer true, replaced: = reworded):");
   expect(r).toContain("MEMORY.md: - [fact");
-  expect(r).toContain("ARCHIVE.md: - [fact");
+  expect(r).toContain("archive/general: - [fact");
   expect(text(await call("search", { query: "unrelated" }))).toBe("No matching entries.");
 });
 
@@ -184,7 +187,7 @@ test("/remembered shows the hot files' words, with when, and how many are put aw
     [
       "## About you\n\n- Prefers short answers",
       "## Kept in mind\n\n- Dentist · due 2999-01-01 15:00\n- In Paris · until 2999-02-01",
-      "1 more put away, older or done. To change anything, tell me.",
+      "1 more put away, older or done: General (1). To change anything, tell me.",
     ].join("\n\n"),
   );
 });
@@ -311,7 +314,7 @@ test("tool calls have short summaries for the transcript", () => {
   );
   expect(summary("update", { match: "Dentist", done: true })).toBe("done: Dentist");
   expect(summary("update", { match: "Dentist" })).toBe("confirm: Dentist");
-  expect(summary("move", { match: "VPN", to: "archive" })).toBe("move to ARCHIVE.md: VPN");
+  expect(summary("move", { match: "VPN", to: "archive" })).toBe("move to the archive: VPN");
   expect(summary("search", {})).toBe("list the newest entries");
 });
 

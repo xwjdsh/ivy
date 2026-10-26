@@ -4,6 +4,7 @@
 
 import {
   type ConversationHistory,
+  LEFT_OUT,
   localDate,
   localTime,
   type SessionPoints,
@@ -65,9 +66,7 @@ export class Points {
       // answered, and isn't left open.
       const transcript = messages
         .map((m) => {
-          const text = m.outside
-            ? "[a reply from what a web page or search said, left out]"
-            : m.text;
+          const text = m.outside ? LEFT_OUT : m.text;
           return `${m.role === "user" ? "User" : "Ivy"} (${stamp(new Date(m.ts))}): ${text}`;
         })
         .join("\n\n")

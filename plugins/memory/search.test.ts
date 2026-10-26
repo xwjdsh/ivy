@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
+import { search, terms } from "@ivy/plugin-api";
 import { parseLine } from "./format.ts";
-import { compare, search, terms } from "./search.ts";
+import { compare } from "./search.ts";
 
 const items = (...lines: string[]) =>
   lines.map((raw) => ({
