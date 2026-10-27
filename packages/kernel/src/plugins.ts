@@ -337,6 +337,35 @@ export class PluginHost {
     return this.tools.get(fullName)?.def.risk;
   }
 
+  /** Whether a tool may take back part of a conversation (`ctx.takeBack`). */
+  takesBack(fullName: string): boolean {
+    return this.tools.get(fullName)?.def.takesBack === true;
+  }
+
+  /**
+   * Part of a conversation was taken back: each plugin undoes what its own tools wrote in it,
+   * from their calls there. One that fails is said, not hidden; the others still undo.
+   */
+  async takenBack(
+    sessionId: string,
+    calls: Array<{ name: string; input: unknown; result: string }>,
+  ): Promise<string[]> {
+    const lines: string[] = [];
+    for (const plugin of this.list()) {
+      const prefix = `${plugin.id}__`;
+      const own = calls.flatMap((c) =>
+        c.name.startsWith(prefix) ? [{ ...c, name: c.name.slice(prefix.length) }] : [],
+      );
+      if (own.length === 0 || !plugin.takenBack) continue;
+      try {
+        lines.push(...(await plugin.takenBack({ sessionId, calls: own })));
+      } catch (err) {
+        lines.push(`Couldn't undo what ${plugin.id} wrote: ${errorMessage(err)}`);
+      }
+    }
+    return lines;
+  }
+
   /** Whether a tool writes Ivy's own records (memory, her journal): closed off the record. */
   writesOwnRecords(fullName: string): boolean {
     const def = this.tools.get(fullName)?.def;

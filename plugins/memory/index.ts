@@ -356,6 +356,34 @@ export function createMemoryPlugin(): IvyPlugin {
       recalled.delete(id);
       dueTold.delete(id);
     },
+    // Taken back: lines saved there go if they are as saved; what was changed or moved is
+    // said, for her to put back or ask about, not guessed back.
+    async takenBack({ calls }) {
+      const saved = calls.flatMap((c) => (c.name === "save" ? savedLine(c.result) : []));
+      const { gone } = await store().change((files): { gone: string[]; files?: Files } => {
+        const gone: string[] = [];
+        const next = { ...files };
+        for (const f of FILES) {
+          next[f] = files[f].filter((l) => {
+            const hit = saved.includes(l.raw);
+            if (hit) gone.push(l.raw);
+            return !hit;
+          });
+        }
+        return gone.length ? { gone, files: next } : { gone };
+      });
+      const kept = saved.filter((l) => !gone.includes(l));
+      const changed = calls.flatMap((c) =>
+        c.name === "update" || c.name === "move" ? [c.result.split("\n")[1] ?? ""] : [],
+      );
+      return [
+        ...(gone.length ? [`Removed from memory:\n${gone.join("\n")}`] : []),
+        ...(kept.length ? [`Saved there but changed since, not removed:\n${kept.join("\n")}`] : []),
+        ...(changed.length
+          ? [`Changed or moved there, not undone (put back or ask):\n${changed.join("\n")}`]
+          : []),
+      ];
+    },
     contextFor({ sessionId, userText, now }) {
       const current = screen(store().read()).files;
       const parts: string[] = [];
@@ -668,4 +696,10 @@ function notedText({ skipped, flagged }: { skipped: Noted[]; flagged: Noted[] })
 
 function daysBetween(from: string, to: string): number {
   return Math.round((Date.parse(to) - Date.parse(from)) / 86_400_000);
+}
+
+/** The line a `save` added, from its result ("Saved to MEMORY.md (…):\n<line>…"). */
+function savedLine(result: string): string[] {
+  const m = /^Saved to [^\n]*:\n(.+)/.exec(result);
+  return m?.[1] ? [m[1]] : [];
 }

@@ -158,6 +158,7 @@ export async function createIvy(opts: IvyOptions): Promise<Ivy> {
   const agent = new Agent({
     // A new conversation starts from the last one's points, which may still be coming.
     beforeFirstTurn: () => points?.settled() ?? Promise.resolve(),
+    forgetPoints: (id) => points?.discard(id) ?? Promise.resolve(),
     config,
     clientFor,
     capabilities,

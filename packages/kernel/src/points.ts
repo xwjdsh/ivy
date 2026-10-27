@@ -2,6 +2,7 @@
 // mattered and what was left open, by the helper model, kept beside the session as metadata,
 // not memory. The next conversation starts from it.
 
+import { rmSync } from "node:fs";
 import {
   type ConversationHistory,
   LEFT_OUT,
@@ -12,7 +13,7 @@ import {
 import type { Helper } from "./helper.ts";
 import { createLogger, errorMessage } from "./log.ts";
 import POINTS from "./prompts/points.md" with { type: "text" };
-import { savePoints } from "./session.ts";
+import { pointsFile, savePoints } from "./session.ts";
 
 /** What the helper reads of a long conversation: its end, where it was left. */
 const MAX_CHARS = 40_000;
@@ -49,6 +50,16 @@ export class Points {
     const work = this.sum(id).finally(() => this.running.delete(id));
     this.running.set(id, work);
     return work;
+  }
+
+  /**
+   * A part of the conversation was taken back: its points go, once any summing up under way
+   * is done (it read the history before the part was marked), to be summed up again
+   * without it when the conversation is let go.
+   */
+  async discard(id: string): Promise<void> {
+    await this.running.get(id);
+    rmSync(pointsFile(this.dir, id), { force: true });
   }
 
   /** Done when the summing up under way is, for a new conversation to start from it. */

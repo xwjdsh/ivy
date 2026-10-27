@@ -382,3 +382,22 @@ test("after outside content, writes of new words to any file are asked first", (
   expect(ask("move", { match: "x", to: "archive" })).toBeUndefined();
   expect(ask("move", { match: "x", to: "memory" })).toBe(reason);
 });
+
+test("taken back: lines saved there go, if as saved; changes are said, not undone", async () => {
+  const peanuts = text(await call("save", { file: "memory", content: "Allergic to peanuts" }));
+  const tokyo = text(await call("save", { file: "memory", content: "Lives in Tokyo" }));
+  await call("update", { match: "Tokyo", content: "Lives in Osaka", changed: true });
+  const lines = await plugin.takenBack?.({
+    sessionId: "s",
+    calls: [
+      { name: "save", input: {}, result: peanuts },
+      { name: "save", input: {}, result: tokyo },
+      { name: "update", input: {}, result: "Updated in MEMORY.md:\n- [fact x] Lives in Osaka" },
+    ],
+  });
+  expect(file("MEMORY.md")).not.toContain("peanuts");
+  expect(file("MEMORY.md")).toContain("Lives in Osaka");
+  expect(lines?.join("\n")).toContain("Removed from memory:\n- [fact");
+  expect(lines?.join("\n")).toContain("changed since, not removed:\n- [fact");
+  expect(lines?.join("\n")).toContain("not undone (put back or ask):\n- [fact x] Lives in Osaka");
+});

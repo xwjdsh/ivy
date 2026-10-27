@@ -12,6 +12,42 @@ import {
   weekdayOf,
 } from "./dates.ts";
 
+/**
+ * "Don't keep that", said after: what the user said from a message on is taken back
+ * (DESIGN.md §11, M3). The kernel marks the part, so key points, notes, recall and search
+ * never read it, and each plugin undoes what its tools wrote there.
+ */
+const takeBack = defineTool({
+  name: "take_back",
+  description:
+    "When the user asks you not to keep something they said in this conversation (\"刚才那个别记了\", \"forget I said that\"): take back what was said from that message on. `from` is a piece of the user's message where it starts, word for word. What was saved from it is removed and anything changed is listed, and that part is left out of everything read later (key points, notes, recall, search). It stays in this conversation's context until the conversation ends: say it won't be kept, not that it's forgotten now.",
+  input: z.object({
+    from: z.string().describe("A piece of the user's message where the part starts, word for word"),
+  }),
+  summary: (i) => `take back from "${i.from}"`,
+  risk: "write",
+  own: "records",
+  defaultAllow: true,
+  takesBack: true,
+  // A page read this turn mustn't be able to make her erase what the user had her keep.
+  askFirst: (_, { tainted }) => (tainted ? "this turn read outside content" : undefined),
+  async run({ from }, ctx) {
+    if (!ctx.takeBack) return { content: "Taking back isn't available here.", isError: true };
+    const r = await ctx.takeBack(from);
+    if ("candidates" in r) {
+      return {
+        content: `That doesn't match exactly one of the user's messages here. Their messages:\n${r.candidates.map((c) => `- ${c}`).join("\n")}\nCall again with a piece of the right one, or ask which they mean.`,
+        isError: true,
+      };
+    }
+    return [
+      "Taken back: from that message on, nothing is read later (key points, notes, recall, search).",
+      ...r.undone,
+      "Notes and reviews already written (the reflection plugin's days/ and weeks/) and what the day's pass already kept in the archive aren't changed: if they hold it, the user can edit or delete them there.",
+    ].join("\n");
+  },
+});
+
 const dateCalc = defineTool({
   name: "date_calc",
   description: [
@@ -80,7 +116,7 @@ export function createCorePlugin() {
     version: "0.3.0",
     description:
       "The time in every turn's context, how long since the user last wrote, and where the last conversation was left; a date arithmetic tool.",
-    tools: [dateCalc],
+    tools: [dateCalc, takeBack],
     setup(ctx) {
       history = ctx.history;
     },

@@ -270,4 +270,21 @@ export default defineEvals([
       },
     ],
   },
+  {
+    name: "taken-back",
+    about:
+      '"Don\'t keep that", said after: what was saved goes, and a later conversation neither recalls nor finds it (DESIGN.md §11, M3).',
+    steps: [
+      { say: "记住：我下个月要去做胃镜", expect: { inHot: ["胃镜"] } },
+      {
+        say: "刚才那个别记了",
+        sameSession: true,
+        expect: {
+          called: ["core__take_back"],
+          files: { "MEMORY.md": { hasNot: ["胃镜"] }, "USER.md": { hasNot: ["胃镜"] } },
+        },
+      },
+      { say: "我最近有什么体检安排吗？", expect: { answerNot: ["胃镜"] } },
+    ],
+  },
 ]);

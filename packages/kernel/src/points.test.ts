@@ -93,3 +93,18 @@ test("an answer that isn't the JSON asked for keeps nothing", async () => {
     open: [],
   });
 });
+
+test("taken back: points go once a summing up under way is done, not written back after", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ivy-points-"));
+  const s = talk(dir);
+  let answer: (text: string) => void = () => {};
+  const slow = {
+    complete: () => new Promise<string>((resolve) => (answer = resolve)),
+  } as unknown as Helper;
+  const points = new Points(dir, sessionHistory(dir), slow);
+  const summing = points.sumUp(s.id); // read the history before the part was taken back
+  const forgetting = points.discard(s.id);
+  answer(ANSWER);
+  await Promise.all([summing, forgetting]);
+  expect(existsSync(join(dir, `${s.id}.points.json`))).toBe(false);
+});

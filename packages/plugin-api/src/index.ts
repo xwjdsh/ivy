@@ -25,6 +25,23 @@ export interface ToolContext {
    */
   tainted: boolean;
   log: Logger;
+  /**
+   * Take back what the user said from the message `from` matches on (a piece of it, exactly
+   * one of theirs in this conversation): every plugin undoes what its tools wrote since, and
+   * nothing reads that part later (DESIGN.md §11, M3). Only for a tool that `takesBack`.
+   */
+  takeBack?(from: string): Promise<TakeBackResult>;
+}
+
+/** What taking back did: nothing, as `from` matched several messages or none; or what each plugin undid. */
+export type TakeBackResult = { candidates: string[] } | { undone: string[] };
+
+/** A tool call of a plugin's own in a part of a conversation taken back. */
+export interface TakenCall {
+  /** Local name, without the plugin's prefix. */
+  name: string;
+  input: unknown;
+  result: string;
 }
 
 export interface ToolDef<S extends z.ZodType = z.ZodType> {
@@ -54,6 +71,8 @@ export interface ToolDef<S extends z.ZodType = z.ZodType> {
    * record, one with `own` that isn't `read` doesn't run (DESIGN.md §5.5).
    */
   own?: "records" | "journal";
+  /** May take back part of the conversation (`ctx.takeBack`): core's tool alone. */
+  takesBack?: boolean;
   /**
    * Why this call needs the user's OK whatever the permission rules allow, or nothing. Asked
    * every time, with no "for this session" or "always"; a deny rule still wins. Memory asks
@@ -264,6 +283,11 @@ export interface IvyPlugin {
    * back, `sessionPrompt` runs again first.
    */
   sessionReleased?(session: SessionInfo): void;
+  /**
+   * The user took back part of a conversation: undo what your tools wrote in it, from their
+   * calls there, and say in a line or two what you undid and what you couldn't.
+   */
+  takenBack?(taken: { sessionId: string; calls: TakenCall[] }): Promise<string[]> | string[];
   /**
    * Text to add to this turn's `<context>` block (e.g. the time, todos due today),
    * or null for nothing. Capped in size (CONTEXT_MAX_CHARS, cut off past it) and time by

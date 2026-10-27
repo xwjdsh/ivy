@@ -53,7 +53,13 @@ export type SessionRecord =
   | { type: "message"; ts: string; message: MessageParam; context?: string; origin?: Origin }
   | { type: "usage"; ts: string; usage: Anthropic.Beta.BetaUsage; costUsd: number }
   /** The session read outside content here, from `tool`: tainted until the user's next prompt (DESIGN.md §8.1). */
-  | { type: "outside"; ts: string; tool: string; ids?: string[] };
+  | { type: "outside"; ts: string; tool: string; ids?: string[] }
+  /**
+   * What was said from the user's `prompt`th message (from 1) to the end of the turn this
+   * line is in was taken back (her reply to it may say what it was): nothing reads it later.
+   * By place, not time: lines written in one instant tie.
+   */
+  | { type: "taken_back"; ts: string; prompt: number };
 
 export interface SessionSummary {
   id: string;
@@ -156,9 +162,11 @@ export class Session {
         const file = join(dir, f);
         const records = readRecords(file);
         const meta = records.find((r) => r.type === "meta");
-        const prompts = records.flatMap((r) => {
+        // What was taken back isn't shown in the list either.
+        const takenBack = takenBackAt(records);
+        const prompts = records.flatMap((r, at) => {
           const text = r.type === "message" ? promptText(r.message) : null;
-          return text === null ? [] : [text];
+          return text === null || takenBack(at) ? [] : [text];
         });
         const last = records.at(-1);
         const createdAt = meta?.type === "meta" ? meta.createdAt : "";
@@ -249,6 +257,54 @@ export class Session {
     this.write({ type: "outside", ts: new Date().toISOString(), tool, ...(ids.length && { ids }) });
   }
 
+  /**
+   * The part of this conversation from the user's message `from` matches (a piece of exactly
+   * one of theirs), with the tool calls made since, by full name; or the messages it could
+   * mean, when it doesn't match exactly one.
+   */
+  spanFrom(
+    from: string,
+  ):
+    | { candidates: string[] }
+    | { prompt: number; calls: Array<{ name: string; input: unknown; result: string }> } {
+    const records = existsSync(this.file) ? readRecords(this.file) : [];
+    const said = records.flatMap((r, at) => {
+      const text = r.type === "message" ? promptText(r.message) : null;
+      return text === null ? [] : [{ at, text }];
+    });
+    // Not the message asking: it often quotes what it takes back.
+    const hits = said
+      .slice(0, -1)
+      .flatMap((m, i) =>
+        from.trim() && m.text.includes(from.trim()) ? [{ ...m, prompt: i + 1 }] : [],
+      );
+    const hit = hits.length === 1 ? hits[0] : undefined;
+    if (!hit) return { candidates: (hits.length ? hits : said.slice(0, -1)).map((m) => m.text) };
+    const asked = new Map<string, { name: string; input: unknown }>();
+    const calls: Array<{ name: string; input: unknown; result: string }> = [];
+    for (const r of records.slice(hit.at)) {
+      if (r.type !== "message" || typeof r.message.content === "string") continue;
+      for (const b of r.message.content) {
+        if (b.type === "tool_use") asked.set(b.id, { name: b.name, input: b.input });
+        if (b.type === "tool_result") {
+          const call = asked.get(b.tool_use_id);
+          const content = b.content;
+          const result =
+            typeof content === "string"
+              ? content
+              : (content ?? []).flatMap((c) => (c.type === "text" ? [c.text] : [])).join("\n");
+          if (call) calls.push({ ...call, result });
+        }
+      }
+    }
+    return { prompt: hit.prompt, calls };
+  }
+
+  /** Mark what was said from the user's `prompt`th message until now as taken back. */
+  takeBack(prompt: number): void {
+    this.write({ type: "taken_back", ts: new Date().toISOString(), prompt });
+  }
+
   /** Whether a tool call's result was outside content. */
   readOutside(toolUseId: string): boolean {
     return this.outsideResults.has(toolUseId);
@@ -331,6 +387,22 @@ export function trashSession(dir: string, id: string): boolean {
   const points = pointsFile(dir, id);
   if (existsSync(points)) renameSync(points, join(dir, TRASH, `${id}.points.json`));
   return true;
+}
+
+/**
+ * Whether the record at a place lies in a part the user took back: from the nth message of
+ * theirs a `taken_back` line names to the end of the turn holding it (their next message).
+ */
+function takenBackAt(records: SessionRecord[]): (at: number) => boolean {
+  const prompts = records.flatMap((r, at) =>
+    r.type === "message" && promptText(r.message) !== null ? [at] : [],
+  );
+  const spans = records.flatMap((r, at) => {
+    if (r.type !== "taken_back") return [];
+    const end = prompts.find((p) => p > at) ?? records.length;
+    return [[prompts[r.prompt - 1] ?? at, end] as const];
+  });
+  return (at) => spans.some(([from, to]) => at >= from && at < to);
 }
 
 /**
@@ -432,14 +504,16 @@ export function sessionHistory(dir: string): ConversationHistory {
     if (known && known.mtimeMs === mtimeMs && known.size === size) return known;
     let outside = false;
     let offRecord = false;
-    const messages = readRecords(file).flatMap((r): PastMessage[] => {
+    const records = readRecords(file);
+    const takenBack = takenBackAt(records);
+    const messages = records.flatMap((r, at): PastMessage[] => {
       if (r.type === "meta" && r.offRecord) offRecord = true;
       if (r.type === "outside") outside = true;
       if (r.type !== "message" || r.message.role === "system") return [];
       if (promptText(r.message) !== null) outside = false;
       const { role } = r.message;
       const text = role === "user" ? promptText(r.message) : assistantText(r.message);
-      if (!text) return [];
+      if (!text || takenBack(at)) return [];
       return [{ role, text, ts: r.ts, ...(outside && role === "assistant" && { outside }) }];
     });
     const fresh = { mtimeMs, size, messages: offRecord ? [] : messages, offRecord };

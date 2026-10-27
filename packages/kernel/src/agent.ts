@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import type { RiskLevel } from "@ivy/plugin-api";
+import type { RiskLevel, TakeBackResult } from "@ivy/plugin-api";
 import { type Capabilities, downgradable, type OptionalFeature } from "./capabilities.ts";
 import { type Config, type ModelRef, type ProviderConfig, resolveModel } from "./config.ts";
 import { createLogger, errorMessage } from "./log.ts";
@@ -109,6 +109,8 @@ export interface AgentOptions {
   permissions: Permissions;
   /** What a session's first turn waits for (a bounded wait), before building its context. */
   beforeFirstTurn?(): Promise<void>;
+  /** Part of a conversation was taken back: its key points go (Points.discard). */
+  forgetPoints?(sessionId: string): Promise<void>;
 }
 
 /** What the user sent: text, or text with the images sent along (in the session's folder). */
@@ -463,6 +465,20 @@ export class Agent {
    * `outside`: the first tool whose result was outside content, if any. Calls in one batch
    * see the session as it was before it: their input was written before any result.
    */
+  /**
+   * Take back what was said from the user's message `from` matches (DESIGN.md §11, M3): the
+   * part is marked, so nothing reads it later, and its key points go, to be summed up again
+   * without it; then each plugin undoes what its tools wrote there. The marking comes first:
+   * an undo that fails leaves nothing readable behind.
+   */
+  private async takeBack(session: Session, from: string): Promise<TakeBackResult> {
+    const span = session.spanFrom(from);
+    if ("candidates" in span) return span;
+    session.takeBack(span.prompt);
+    await this.opts.forgetPoints?.(session.id);
+    return { undone: await this.opts.plugins.takenBack(session.id, span.calls) };
+  }
+
   private async runTools(
     session: Session,
     reply: ModelMessage,
@@ -554,6 +570,9 @@ export class Agent {
                 sessionId,
                 turn: turnNumber,
                 tainted,
+                ...(plugins.takesBack(use.name) && {
+                  takeBack: (from: string) => this.takeBack(session, from),
+                }),
               })
             : { content: messages[verdict](use.name), isError: true };
         if (outcome.outside) {

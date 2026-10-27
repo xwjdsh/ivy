@@ -241,3 +241,22 @@ test("the journal is closed to a conversation that read outside content", async 
     });
   }
 });
+
+test("taken back: entries written there go; revisions are said", async () => {
+  const kept = text(await call("write", { content: "I loved hearing about the trip." }));
+  const gone = text(await call("write", { content: "They told me about their ex's wedding." }));
+  const lines = await plugin.takenBack?.({
+    sessionId: "s",
+    calls: [
+      { name: "write", input: {}, result: gone },
+      { name: "revise", input: {}, result: "Revised in IVY.md:\n- x" },
+    ],
+  });
+  expect(journal()).not.toContain("wedding");
+  expect(journal()).toContain("the trip");
+  expect(lines).toEqual([
+    "Removed from IVY.md: 1 entry.",
+    "Journal entries revised there, not undone: 1.",
+  ]);
+  expect(kept).toStartWith("Written to IVY.md");
+});

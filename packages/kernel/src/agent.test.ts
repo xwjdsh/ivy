@@ -263,6 +263,105 @@ describe("Agent.runTurn", () => {
     );
   });
 
+  test("taking back: the part is marked and unread, each plugin undoes its own", async () => {
+    const undone: unknown[] = [];
+    const kept = definePlugin({
+      id: "m",
+      version: "0",
+      description: "memory",
+      tools: [
+        defineTool({
+          name: "note",
+          description: "note",
+          input: z.object({}),
+          risk: "write",
+          defaultAllow: true,
+          run: () => "Saved to MEMORY.md:\n- peanuts",
+        }),
+      ],
+      takenBack: ({ calls }) => {
+        undone.push(...calls);
+        return ["Removed: peanuts"];
+      },
+    });
+    const broken = definePlugin({
+      id: "b",
+      version: "0",
+      description: "fails to undo",
+      tools: [
+        defineTool({
+          name: "w",
+          description: "w",
+          input: z.object({}),
+          risk: "write",
+          defaultAllow: true,
+          run: () => "written",
+        }),
+      ],
+      takenBack: () => {
+        throw new Error("disk full");
+      },
+    });
+    const back = definePlugin({
+      id: "c",
+      version: "0",
+      description: "core",
+      tools: [
+        defineTool({
+          name: "take_back",
+          description: "take back",
+          input: z.object({ from: z.string() }),
+          risk: "write",
+          defaultAllow: true,
+          takesBack: true,
+          run: async ({ from }, ctx) => JSON.stringify(await ctx.takeBack?.(from)),
+        }),
+        defineTool({
+          name: "peek",
+          description: "peek",
+          input: z.object({}),
+          risk: "read",
+          run: (_, ctx) => String(ctx.takeBack === undefined),
+        }),
+      ],
+    });
+    const model = new FakeModel([
+      reply("end_turn", [text("hi")]),
+      reply("tool_use", [toolUse("tu_1", "m__note"), toolUse("tu_2", "b__w")]),
+      reply("end_turn", [text("noted")]),
+      reply("tool_use", [
+        toolUse("tu_3", "c__take_back", { from: "花生过敏" }),
+        toolUse("tu_4", "c__peek"),
+      ]),
+      reply("end_turn", [text("won't keep it")]),
+    ]);
+    const agent = await makeAgent(model, "read", undefined, "sys", [kept, broken, back]);
+    await run(agent, "早上好");
+    await run(agent, "我对花生过敏，记一下");
+    await run(agent, "刚才那个别记了，就是“花生过敏”那句");
+    const result = session.messages[session.messages.length - 2]?.content as Array<{
+      content: string;
+    }>;
+    expect(JSON.parse(result[0]?.content ?? "")).toEqual({
+      // In plugin-id order; one that fails is said, and the rest still undo.
+      undone: ["Couldn't undo what b wrote: disk full", "Removed: peanuts"],
+    });
+    expect(result[1]?.content).toBe("true"); // a tool that doesn't take back has no way to
+    expect(undone).toMatchObject([{ name: "note", result: "Saved to MEMORY.md:\n- peanuts" }]);
+    // Nothing from that message on is read later; what came before still is.
+    const said = sessionHistory(join(dir, "sessions"))
+      .messages(session.id)
+      .map((m) => m.text);
+    expect(said).toEqual(["早上好", "hi"]);
+    // Ambiguous or unknown: nothing taken, the messages offered.
+    // The request quoting what it takes back didn't make it ambiguous; something not said
+    // takes nothing, and offers the messages before the asking one.
+    expect(session.spanFrom("not said")).toEqual({
+      candidates: ["早上好", "我对花生过敏，记一下"],
+    });
+    expect(Session.list(join(dir, "sessions"))[0]?.preview).toBe("早上好");
+  });
+
   test("tool call runs and its result is sent back", async () => {
     const model = new FakeModel([
       reply("tool_use", [toolUse("tu_1", "t__echo", { msg: "x" })]),

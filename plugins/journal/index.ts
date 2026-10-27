@@ -233,6 +233,25 @@ export function createJournalPlugin(): IvyPlugin {
     sessionReleased({ id }) {
       snapshots.delete(id);
     },
+    // Taken back: the entries written there go; one revised or removed is said, not guessed back.
+    async takenBack({ calls }) {
+      const written = calls.flatMap((c) => (c.name === "write" ? written1(c.result) : []));
+      const removed = await ready().file.change((lines) => {
+        const gone = lines.filter((l) => written.includes(l.raw));
+        return gone.length
+          ? { lines: lines.filter((l) => !written.includes(l.raw)), gone }
+          : { gone };
+      });
+      const changed = calls.filter((c) => c.name === "revise").length;
+      return [
+        ...(removed.gone.length
+          ? [
+              `Removed from ${NAME}: ${removed.gone.length} ${removed.gone.length === 1 ? "entry" : "entries"}.`,
+            ]
+          : []),
+        ...(changed ? [`Journal entries revised there, not undone: ${changed}.`] : []),
+      ];
+    },
     contextFor({ sessionId }) {
       const before = snapshots.get(sessionId);
       if (!before) return null;
@@ -315,3 +334,9 @@ export function proposeSoulEdit(
 }
 
 export default createJournalPlugin();
+
+/** The line a `write` added, from its result ("Written to IVY.md (…):\n<line>…"). */
+function written1(result: string): string[] {
+  const m = /^Written to [^\n]*:\n(.+)/.exec(result);
+  return m?.[1] ? [m[1]] : [];
+}
