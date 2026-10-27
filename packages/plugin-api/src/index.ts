@@ -210,6 +210,8 @@ export interface TurnInfo {
   /** The new user message, for context that depends on what was asked. */
   userText: string;
   now: Date;
+  /** The conversation is off the record: nothing it causes may be kept. */
+  offRecord?: boolean;
 }
 
 /** A stretch of time the daemon asks about: after `since`, up to and including `now`. */
@@ -228,6 +230,13 @@ export interface Reminder {
   body?: string;
   /** When it came due. A reminder more than 12 hours late (asleep all weekend) is dropped. */
   at?: Date;
+  /**
+   * Hers to bring up, not a notification (a follow-up, DESIGN.md §11, M3): the daemon writes
+   * her a message, when it may, and offers it at every check until `handled`.
+   */
+  from?: "ivy";
+  /** Sent, or dropped as already talked about: done with. */
+  handled?(): Promise<void> | void;
 }
 
 /** What a plugin knows about the session it adds a system prompt section to. */

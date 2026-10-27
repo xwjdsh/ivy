@@ -51,7 +51,9 @@ export function SettingsPage(props: {
       </nav>
       <div className="st-body">
         <h2>{section}</h2>
-        {section === "General" && <General onError={onError} />}
+        {section === "General" && (
+          <General state={props.state} onState={props.onState} onError={onError} />
+        )}
         {section === "Models" && (
           <Models
             state={props.state}
@@ -99,7 +101,12 @@ function OpenConfig({ onError }: { onError(err: unknown): void }) {
   );
 }
 
-function General({ onError }: { onError(err: unknown): void }) {
+function General(props: {
+  state: DaemonState | undefined;
+  onState(state: DaemonState): void;
+  onError(err: unknown): void;
+}) {
+  const { onError } = props;
   const [login, setLogin] = useState<boolean | undefined>();
   const [command, setCommand] = useState<{ installed: boolean; path: string } | undefined>();
   useEffect(() => {
@@ -107,13 +114,33 @@ function General({ onError }: { onError(err: unknown): void }) {
     api.login().then(setLogin, onError);
     api.command().then(setCommand, onError);
   }, [onError]);
+  // Hers, the daemon's: shown wherever the settings are.
+  const writesFirst = props.state && (
+    <Row
+      label="Ivy writes first"
+      note="When something you told her comes round, she may ask how it went: once a day at most, never at night, and not again until you answer."
+    >
+      <input
+        type="checkbox"
+        className="st-switch"
+        checked={props.state.writesFirst}
+        onChange={(e) => api.setWritesFirst(e.target.checked).then(props.onState, onError)}
+      />
+    </Row>
+  );
   if (!inApp) {
     return (
-      <p className="st-hint">These are the app's own settings: open Ivy's app to change them.</p>
+      <section>
+        {writesFirst}
+        <p className="st-hint">
+          The rest are the app's own settings: open Ivy's app to change them.
+        </p>
+      </section>
     );
   }
   return (
     <section>
+      {writesFirst}
       <Row label="Appearance">
         <Appearances onError={onError} />
       </Row>

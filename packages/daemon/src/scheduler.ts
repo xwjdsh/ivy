@@ -33,6 +33,11 @@ export interface SchedulerOptions {
    * once the app connects, instead of being sent to no one and marked as announced.
    */
   canDeliver?(): boolean;
+  /**
+   * A reminder that is hers to bring up (`from: "ivy"`): she writes the user a message, if she
+   * may now (writes-first.ts). It comes at every check until it is handled.
+   */
+  writeFirst?(reminder: Reminder): Promise<void>;
   now?: () => Date;
   /** A fixed interval instead of minute starts (tests). */
   intervalMs?: number;
@@ -49,14 +54,19 @@ const log = createLogger("scheduler");
 export function startScheduler(opts: SchedulerOptions): Scheduler {
   const now = opts.now ?? (() => new Date());
   let running: Promise<void> | undefined;
+  /** Hers being written: a model call each, apart from the checks, one batch at a time. */
+  let writing: Promise<void> | undefined;
 
   const checkOnce = async () => {
     if (opts.canDeliver && !opts.canDeliver()) return;
     const until = now();
     const since = lastCheck(opts.stateFile) ?? until;
     // A clock set back gives an empty window; the next check starts from the new time.
+    let hers: Reminder[] = [];
     if (until > since) {
-      for (const r of await opts.reminders({ since, now: until })) {
+      const due = await opts.reminders({ since, now: until });
+      for (const r of due) {
+        if (r.from === "ivy") continue; // after the notifications, below
         if (r.at && until.getTime() - r.at.getTime() > STALE_AFTER_MS) {
           log.info(`reminder too late to show: ${r.title}`);
           continue;
@@ -64,8 +74,22 @@ export function startScheduler(opts: SchedulerOptions): Scheduler {
         opts.publish({ type: "reminder", data: r, notify: true });
         log.info(`reminder: ${r.title}`);
       }
+      hers = due.filter((x) => x.from === "ivy");
     }
     saveLastCheck(opts.stateFile, until);
+    // Hers take a model call each: after the notifications and the saved check (a crash while
+    // writing repeats none), not holding up the next check, one at a time, and one that fails
+    // stops none of the others.
+    const write = opts.writeFirst;
+    if (write && hers.length && !writing) {
+      writing = (async () => {
+        for (const r of hers) {
+          await write(r).catch((err) => log.warn("writing first failed", errorMessage(err)));
+        }
+      })().finally(() => {
+        writing = undefined;
+      });
+    }
   };
   // One check at a time: a slow plugin must not let two windows overlap.
   const check = () => {

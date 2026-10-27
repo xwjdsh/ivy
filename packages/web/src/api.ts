@@ -51,6 +51,7 @@ export const api = {
   setModel: (model: string) => request<Switched>("PUT", "/model", { model }),
   /** "" for none: side work then runs on the model. */
   setHelperModel: (model: string) => request<Switched>("PUT", "/helper-model", { model }),
+  setWritesFirst: (on: boolean) => request<DaemonState>("PUT", "/writes-first", { on }),
   setEffort: (effort: string) => request<Switched>("PUT", "/effort", { effort }),
   sessions: () => request<SessionSummary[]>("GET", "/sessions"),
   createSession: async (offRecord = false) =>

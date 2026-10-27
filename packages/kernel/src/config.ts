@@ -69,6 +69,15 @@ const ConfigSchema = z.strictObject({
       helper_model: z.string().min(1).optional(),
       /** Max model calls per user turn before the loop stops. */
       max_steps: z.number().int().positive().default(25),
+      /** Ivy writes first, from follow-ups the user's words gave her (DESIGN.md §11, M3). */
+      writes_first: z.boolean().default(true),
+      /** When she doesn't, as "HH:MM-HH:MM", local; it may cross midnight. */
+      writes_first_quiet: z
+        .string()
+        .regex(/^([01]\d|2[0-3]):[0-5]\d-([01]\d|2[0-3]):[0-5]\d$/, "a span like 22:00-09:00")
+        .default("22:00-09:00"),
+      /** At most this many a day. */
+      writes_first_per_day: z.number().int().min(0).max(5).default(1),
     })
     .prefault({}),
   /** Tool-name globs; see permissions.ts for the order they are checked in. */

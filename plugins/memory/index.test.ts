@@ -401,3 +401,42 @@ test("taken back: lines saved there go, if as saved; changes are said, not undon
   expect(lines?.join("\n")).toContain("changed since, not removed:\n- [fact");
   expect(lines?.join("\n")).toContain("not undone (put back or ask):\n- [fact x] Lives in Osaka");
 });
+
+test("a follow-up come due is given once in the conversation the user is in, and is then done", async () => {
+  await call("save", {
+    file: "memory",
+    content: '周四面试后问问结果 ("周四下午三点面试，好紧张")',
+    type: "follow",
+    due: "2000-01-01 19:00",
+  });
+  await call("save", { file: "memory", content: "Later", type: "follow", due: "2999-01-01" });
+  const first = plugin.contextFor?.({ sessionId: "s", userText: "在吗", now: new Date() }) ?? "";
+  expect(first).toContain("Something you meant to bring up");
+  expect(first).toContain("- 周四面试后问问结果");
+  expect(first).not.toContain("Later");
+  await Bun.sleep(10); // marked done in order with other writes
+  expect(file("MEMORY.md")).toMatch(
+    /\[follow [\d-]+ due:2000-01-01T19:00 done:[\d-]+\] 周四面试后/,
+  );
+  expect(
+    plugin.contextFor?.({ sessionId: "s2", userText: "在吗", now: new Date() }) ?? "",
+  ).not.toContain("面试");
+});
+
+test("off the record, a follow-up come due isn't given, and stays due", async () => {
+  await call("save", {
+    file: "memory",
+    content: "Ask how it went",
+    type: "follow",
+    due: "2000-01-01",
+  });
+  const ctx = plugin.contextFor?.({
+    sessionId: "s",
+    userText: "在吗",
+    now: new Date(),
+    offRecord: true,
+  });
+  expect(ctx ?? "").not.toContain("Ask how it went");
+  await Bun.sleep(10);
+  expect(file("MEMORY.md")).not.toContain("done:");
+});

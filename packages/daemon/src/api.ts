@@ -18,6 +18,7 @@ import {
   saveHelperModel,
   saveModel,
   saveUpload,
+  saveWritesFirst,
   UnlistedModels,
   updateProvider,
 } from "@ivy/kernel";
@@ -39,6 +40,7 @@ import {
   SetKey,
   SetModel,
   type Settings,
+  SetWritesFirst,
   type Switched,
   TestProvider,
   UpdateProvider,
@@ -83,6 +85,7 @@ export function api(ivy: Ivy, sessions: Sessions): Routes {
     effortUsed: ivy.agent.modelRef && ivy.capabilities.for(ivy.agent.modelRef).effort,
     canSwitchModel: canSwitchModel(ivy.config),
     helperModel: ivy.config.agent.helper_model ?? "",
+    writesFirst: ivy.config.agent.writes_first,
     efforts: [...EFFORT_LEVELS],
     plugins: ivy.plugins.list().length,
     tools: ivy.plugins.apiTools().length,
@@ -206,6 +209,12 @@ export function api(ivy: Ivy, sessions: Sessions): Routes {
         // Applies at once, saved or not, as a model switch does.
         ivy.config.agent.helper_model = model || undefined;
         return Response.json(switched(() => saveHelperModel(ivy.paths, model || undefined)));
+      }
+      case "PUT /writes-first": {
+        const { on } = await body(req, SetWritesFirst);
+        ivy.config.agent.writes_first = on; // applies at once, as the helper does
+        saveWritesFirst(ivy.paths, on);
+        return Response.json(state());
       }
       case "PUT /effort": {
         const { effort } = await body(req, SetEffort);

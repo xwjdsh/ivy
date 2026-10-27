@@ -40,6 +40,16 @@ export function saveHelperModel(paths: Paths, model: string | undefined): Config
   );
 }
 
+/** Save whether Ivy writes first, `[agent] writes_first` (DESIGN.md §11, M3). */
+export function saveWritesFirst(paths: Paths, on: boolean): Config {
+  return saveEdit(
+    paths,
+    (toml) => withValue(toml, ["agent"], "writes_first", on, { createSection: true }),
+    (c) => c.agent.writes_first === on,
+    "whether Ivy writes first",
+  );
+}
+
 /** Save `/effort`'s choice as `[generation] effort`. */
 export function saveEffort(paths: Paths, effort: Effort): Config {
   return saveEdit(
@@ -179,7 +189,7 @@ export function withValue(
   toml: string,
   section: string[],
   key: string,
-  value: string,
+  value: string | boolean,
   options: { createSection?: boolean } = {},
 ): string {
   const lines = toml.split("\n");
@@ -195,7 +205,9 @@ export function withValue(
   let end = lines.findIndex((line, i) => i > header && headerPath(line) !== null);
   if (end === -1) end = lines.length;
 
-  const keyLine = new RegExp(`^(\\s*${key}\\s*=\\s*)("(?:[^"\\\\]|\\\\.)*"|'[^']*')(.*)$`);
+  const keyLine = new RegExp(
+    `^(\\s*${key}\\s*=\\s*)("(?:[^"\\\\]|\\\\.)*"|'[^']*'|true|false)(.*)$`,
+  );
   for (let i = header + 1; i < end; i++) {
     const match = keyLine.exec(lines[i] ?? "");
     if (match) {

@@ -8,8 +8,11 @@
 // (headings, notes, hand-written lines) is kept byte for byte; only lines Ivy changes are
 // rewritten, so hand edits never break and never get reformatted.
 
-export const ENTRY_TYPES = ["fact", "note", "todo"] as const;
+export const ENTRY_TYPES = ["fact", "note", "todo", "follow"] as const;
 export type EntryType = (typeof ENTRY_TYPES)[number];
+
+/** Entries with a time: a todo the user is reminded of, a follow-up Ivy brings up herself. */
+export const timed = (type: EntryType | undefined): boolean => type === "todo" || type === "follow";
 
 /** Date fields, in the order they are written. */
 export const DATE_FIELDS = ["since", "ends", "due", "done", "until", "replaced"] as const;

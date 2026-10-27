@@ -228,7 +228,7 @@ test("a changed fact doesn't inherit the old one's since: or ends:", () => {
 
 test("todos can't move to USER.md", () => {
   const c = ctx(["- [todo 2026-10-01 due:2026-10-20] Renew passport"]);
-  expect(() => move(c, "Renew", "user")).toThrow("Todos belong in MEMORY.md");
+  expect(() => move(c, "Renew", "user")).toThrow("Todos and follow-ups belong in MEMORY.md");
 });
 
 test("a duplicate wins over a more-overlapping but vetoed similar line", () => {
@@ -283,4 +283,37 @@ test("tags typed into the text become tags, without duplicates or stale ones", (
   // A rewording keeps its tags unless new ones are given.
   const reworded = update(c, { match: "Tokyo", content: "Lives in Tokyo, Nakameguro" });
   expect(reworded.line).toBe("- [2026-10-18] Lives in Tokyo, Nakameguro #东京 #Tokyo");
+});
+
+test("follow-ups: a time to ask, few open, let go when done or days past their time", () => {
+  const c = ctx();
+  expect(() => save(c, { file: "memory", content: "Ask about it", type: "follow" })).toThrow(
+    "A follow-up needs `due`",
+  );
+  const r = save(c, {
+    file: "memory",
+    content: '周四面试后问问结果 ("周四下午三点面试")',
+    type: "follow",
+    due: "2026-10-22 19:00",
+  });
+  expect(r.status === "saved" && r.line).toBe(
+    '- [follow 2026-10-18 due:2026-10-22T19:00] 周四面试后问问结果 ("周四下午三点面试")',
+  );
+  const five = ctx(
+    Array.from({ length: 5 }, (_, i) => `- [follow 2026-10-18 due:2026-10-2${i}] Ask ${i}`),
+  );
+  expect(() =>
+    save(five, { file: "memory", content: "One more", type: "follow", due: "2026-10-29" }),
+  ).toThrow("5 open follow-ups already");
+  const old = ctx([
+    "- [follow 2026-10-01 due:2026-10-14T19:00] Too late to ask",
+    "- [follow 2026-10-01 due:2026-10-16T19:00] Still in time",
+  ]);
+  const t = tidy(old);
+  expect(t.moved).toEqual(["- [follow 2026-10-01 due:2026-10-14T19:00] Too late to ask"]);
+  expect(entries(t.files, "memory")).toEqual([
+    "- [follow 2026-10-01 due:2026-10-16T19:00] Still in time",
+  ]);
+  const done = update(old, { match: "Still in time", done: true });
+  expect(done.line).toContain("done:2026-10-18");
 });

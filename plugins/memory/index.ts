@@ -13,7 +13,15 @@ import {
 import { z } from "zod";
 import { changeNotice, lineSet } from "./changes.ts";
 import { MemoryFiles } from "./files.ts";
-import { ENTRY_TYPES, type Entry, type Line, localDate, parseLine, tagList } from "./format.ts";
+import {
+  ENTRY_TYPES,
+  type Entry,
+  entryLine,
+  type Line,
+  localDate,
+  parseLine,
+  tagList,
+} from "./format.ts";
 import INSTRUCTIONS from "./instructions.md" with { type: "text" };
 import { keepDays, keptLately } from "./keep.ts";
 import { recall } from "./recall.ts";
@@ -52,6 +60,10 @@ const TAGS_HELP = 'Comma-separated, in both languages, e.g. "dentist, 牙医, �
  * (DESIGN.md §8.1): the words may be someone else's.
  */
 const OUTSIDE = "this turn read outside content";
+
+/** How due follow-ups are put to the model in a turn's context. */
+const FOLLOW_HEAD =
+  "Something you meant to bring up, from what they told you (if it fits, bring it up in passing, once, as yourself; if they already told you how it went, don't):";
 
 /** How due todos are put to the model in a turn's context. */
 const DUE_HEAD =
@@ -96,6 +108,17 @@ export function createMemoryPlugin(): IvyPlugin {
     if (!state) throw new Error("memory plugin not set up");
     return state;
   };
+  /** Mark follow-ups done, by their lines as read: brought up or sent, they are handled. */
+  const markDone = (raws: string[]) =>
+    store().change((files) => {
+      const today = localDate(new Date());
+      const memory = files.memory.map((l) =>
+        l.entry && raws.includes(l.raw)
+          ? entryLine({ ...l.entry, fields: { ...l.entry.fields, done: today } })
+          : l,
+      );
+      return { files: { ...files, memory } };
+    });
   const store = () => ready().files;
   const context = (current: Files): Context => ({
     files: current,
@@ -138,7 +161,7 @@ export function createMemoryPlugin(): IvyPlugin {
       defineTool({
         name: "save",
         description:
-          "Save a new entry. file: user (USER.md) or memory (MEMORY.md). type: fact, note or todo (MEMORY.md only; a due date makes it a todo).",
+          "Save a new entry. file: user (USER.md) or memory (MEMORY.md). type: fact, note, todo or follow (MEMORY.md only; a due date makes it a todo; a follow is something to ask the user about after it happens, its due when to ask).",
         input: z.object({
           file: fileEnum,
           content: z.string().describe("One fact, one line, in the user's language"),
@@ -384,9 +407,20 @@ export function createMemoryPlugin(): IvyPlugin {
           : []),
       ];
     },
-    contextFor({ sessionId, userText, now }) {
+    contextFor({ sessionId, userText, now, offRecord }) {
       const current = screen(store().read()).files;
       const parts: string[] = [];
+      // A follow-up come due while the user is here is hers to bring up now, in passing, once;
+      // given, it is done, so it is never also sent to them (DESIGN.md §11, M3). Not off the
+      // record, where marking it done would keep something of that conversation: it waits.
+      const follows = offRecord ? [] : dueFollows(current, now, ready().remindAt);
+      if (follows.length) {
+        parts.push(`${FOLLOW_HEAD}\n${follows.map((f) => `- ${f.text}`).join("\n")}`);
+        // Written in order with any other change (one Serial); the turn needn't wait for it.
+        markDone(follows.map((f) => f.raw)).catch((err) =>
+          ready().log.warn("couldn't mark follow-ups done", String(err)),
+        );
+      }
       // Each due todo put to the model once a conversation: asked on every turn, it was tacked
       // onto every reply. It stays in view after (the context of a turn may not), marked as
       // given, so "anything today?" still finds it. The notification at its time reminds.
@@ -422,7 +456,20 @@ export function createMemoryPlugin(): IvyPlugin {
 
     // Due todos for the daemon to announce: reading MEMORY.md, no model involved.
     reminders({ since, now }) {
-      return dueReminders(screen(store().read()).files, since, now, ready().remindAt);
+      const files = screen(store().read()).files;
+      // Follow-ups due and not yet handled come at every check, hers to send when she may.
+      const follows = dueFollows(files, now, ready().remindAt).map(
+        (f): Reminder => ({
+          id: `follow|${f.raw}`,
+          title: f.text,
+          at: f.at,
+          from: "ivy",
+          handled: async () => {
+            await markDone([f.raw]);
+          },
+        }),
+      );
+      return [...dueReminders(files, since, now, ready().remindAt), ...follows];
     },
 
     // The day's pass: what was said and not saved, kept in the archive.
@@ -480,6 +527,21 @@ function searchText(found: Found[]): string {
  * Open todos whose time falls after `since`, up to `now`: the time they have, or
  * `remindAt` on their day for a todo with a date alone.
  */
+/** Follow-ups whose time has come, not done: theirs to bring up or send. */
+function dueFollows(
+  files: Files,
+  now: Date,
+  remindAt: string,
+): Array<{ raw: string; text: string; at: Date }> {
+  return files.memory.flatMap((line) => {
+    const e = line.entry;
+    const due = e?.type === "follow" && !e.fields.done ? e.fields.due : undefined;
+    if (!e || !due) return [];
+    const at = localTime(due.slice(0, 10), due.slice(11) || remindAt);
+    return at <= now ? [{ raw: line.raw, text: e.text, at }] : [];
+  });
+}
+
 function dueReminders(files: Files, since: Date, now: Date, remindAt: string): Reminder[] {
   const out: Reminder[] = [];
   for (const line of files.memory) {

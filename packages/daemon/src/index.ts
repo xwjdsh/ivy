@@ -14,9 +14,10 @@ import type { IvyPlugin } from "@ivy/plugin-api";
 import { api } from "./api.ts";
 import { startJobs } from "./jobs.ts";
 import { startScheduler } from "./scheduler.ts";
-import { type Daemon, startDaemon } from "./server.ts";
+import { type Daemon, type DaemonEvent, startDaemon } from "./server.ts";
 import { Sessions } from "./sessions.ts";
 import { codeVersion } from "./version.ts";
+import { writeFirst } from "./writes-first.ts";
 
 // What other packages use: `ivy daemon` (runDaemon), a daemon to test against (serve,
 // startDaemon), what a client checks (health, codeVersion), and the evals' display text.
@@ -113,11 +114,22 @@ export async function runDaemon(
   setLogSink((line) => process.stderr.write(`${new Date().toISOString()} ${line}\n`));
   const served = await serve({ paths, plugins, onDemand: opts.idleExitMs !== undefined });
   const { ivy, sessions, daemon } = served;
+  // One set of options for all checks: it keeps when she was last held back.
+  const writing = {
+    config: ivy.config.agent,
+    sessionsDir: paths.sessions,
+    get model() {
+      return ivy.agent.model;
+    },
+    writer: ivy.writer,
+    publish: (event: DaemonEvent) => daemon.publish(event),
+  };
   const scheduler = startScheduler({
     stateFile: join(paths.daemonState, "scheduler.json"),
     reminders: (window) => ivy.plugins.reminders(window),
     publish: (event) => daemon.publish(event),
     canDeliver: () => daemon.notifiers > 0,
+    writeFirst: (reminder) => writeFirst(writing, reminder),
   });
   const jobs = startJobs({
     stateFile: join(paths.daemonState, "jobs.json"),

@@ -7,7 +7,7 @@
 // Nothing here deletes history except `remove`: changed text and done todos go to the
 // archive, marked `until:` (stopped being true) or `replaced:` (only reworded).
 
-import { search, terms } from "@ivy/plugin-api";
+import { localDate, search, terms } from "@ivy/plugin-api";
 import {
   type DateField,
   type Entry,
@@ -18,6 +18,7 @@ import {
   isTopic,
   type Line,
   normalizeTags,
+  timed,
   usage,
 } from "./format.ts";
 import { compare } from "./search.ts";
@@ -154,7 +155,8 @@ export function save(ctx: Context, input: SaveInput): SaveResult {
   }
   // USER.md entries have no type; a type passed for it is ignored, not an error.
   const type = input.file === "user" ? undefined : (input.type ?? (input.due ? "todo" : "fact"));
-  if (input.due && type !== "todo") throw new MemoryError("`due` is only for todos.");
+  if (input.due && !timed(type)) throw new MemoryError("`due` is only for todos and follow-ups.");
+  if (type === "follow") checkFollow(ctx, input.due);
   const entry: Entry = {
     type,
     date: ctx.today,
@@ -263,14 +265,16 @@ export function update(ctx: Context, input: UpdateInput): UpdateResult {
   }
 
   if (input.done) {
-    if (old.type !== "todo") throw new MemoryError("Only todos can be marked done.");
+    if (!timed(old.type)) throw new MemoryError("Only todos and follow-ups can be marked done.");
     const done = entryLine({ ...old, date: ctx.today, fields: { ...old.fields, done: ctx.today } });
     files[found.file].splice(found.index, 1);
     files.archive.push(done);
     return { status: "done", file: "archive", line: done.raw, files };
   }
 
-  if (fields.due && old.type !== "todo") throw new MemoryError("`due` is only for todos.");
+  if (fields.due && !timed(old.type)) {
+    throw new MemoryError("`due` is only for todos and follow-ups.");
+  }
   const given =
     input.content === undefined ? undefined : contentAndTags(input.content, input.tags ?? []);
   const text = given?.text ?? old.text;
@@ -349,8 +353,10 @@ export function move(
   }
   const topics =
     topic !== undefined ? withTopic(ctx.files.topics, { ...place, topic }) : ctx.files.topics;
-  if (to === "user" && old.type === "todo") {
-    throw new MemoryError("Todos belong in MEMORY.md, where their due dates are tracked.");
+  if (to === "user" && timed(old.type)) {
+    throw new MemoryError(
+      "Todos and follow-ups belong in MEMORY.md, where their times are tracked.",
+    );
   }
   // USER.md lines carry no type; lines leaving it become facts.
   const type = to === "user" ? undefined : (old.type ?? "fact");
@@ -385,8 +391,9 @@ export function remove(ctx: Context, match: string): Change & { file: FileName; 
 
 /**
  * Rules that need no judgment, run when a session starts: hot entries whose `ends:` date
- * has passed go to the archive marked `until:` that date, and so do todos marked done by
- * hand. Returns the moved lines (empty when nothing changed).
+ * has passed go to the archive marked `until:` that date, and so do todos and follow-ups
+ * marked done by hand, and follow-ups left FOLLOW_DAYS past their time (never brought up:
+ * it is too late to ask). Returns the moved lines (empty when nothing changed).
  */
 export function tidy(ctx: Context): Change & { moved: string[] } {
   const files = cloneFiles(ctx.files);
@@ -396,7 +403,11 @@ export function tidy(ctx: Context): Change & { moved: string[] } {
       const e = line.entry;
       if (!e) return true;
       const ended = e.fields.ends && e.fields.ends < ctx.today;
-      const done = e.type === "todo" && e.fields.done;
+      const stale =
+        e.type === "follow" &&
+        !!e.fields.due &&
+        addDays(e.fields.due.slice(0, 10), FOLLOW_DAYS) < ctx.today;
+      const done = (timed(e.type) && e.fields.done) || stale;
       if (!ended && !done) return true;
       const archived = ended
         ? entryLine({ ...e, fields: { ...e.fields, until: e.fields.ends } })
@@ -407,6 +418,28 @@ export function tidy(ctx: Context): Change & { moved: string[] } {
     });
   }
   return { files, moved };
+}
+
+/** Days a follow-up waits past its time to be brought up before it is let go. */
+export const FOLLOW_DAYS = 3;
+/** Open follow-ups at most: they are for what matters to the user, not every plan. */
+export const MAX_FOLLOWS = 5;
+
+function checkFollow(ctx: Context, due: string | undefined): void {
+  if (!due)
+    throw new MemoryError("A follow-up needs `due`: when to bring it up, after it happens.");
+  const open = ctx.files.memory.filter((l) => l.entry?.type === "follow" && !l.entry.fields.done);
+  if (open.length >= MAX_FOLLOWS) {
+    throw new MemoryError(
+      `There are ${MAX_FOLLOWS} open follow-ups already, the most there can be; keep this one for what matters more, or let one go (update done: true):\n${open.map((l) => l.raw).join("\n")}`,
+    );
+  }
+}
+
+function addDays(day: string, n: number): string {
+  const [y = 0, m = 1, d = 1] = day.split("-").map(Number);
+  const at = new Date(y, m - 1, d + n, 12);
+  return localDate(at);
 }
 
 // ---------- search ----------

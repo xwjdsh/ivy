@@ -90,6 +90,8 @@ export interface Ivy {
   reloadProviders(): void;
   /** Side work that only extracts or sums up, on the helper model (helper.ts). */
   helper: Helper;
+  /** What the user reads in her voice outside a turn: the main model, her persona (writer.ts). */
+  writer: Writer;
   /** The client for a provider (one per provider), e.g. for a model ref other than the agent's. */
   clientFor(provider: ProviderConfig): ModelClient;
   /** The models an endpoint lists with this key: a connection test, nothing saved. */
@@ -234,6 +236,7 @@ export async function createIvy(opts: IvyOptions): Promise<Ivy> {
     },
     reloadProviders,
     helper,
+    writer,
     clientFor,
     async listModelsAt({ type, base_url, key }) {
       const kind = type as ProviderConfig["type"];

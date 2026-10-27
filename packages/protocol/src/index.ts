@@ -129,6 +129,8 @@ export interface SessionSummary {
   busy: boolean;
   /** Off the record: kept nowhere, deleted once let go. */
   offRecord?: true;
+  /** Started by Ivy, writing first. */
+  fromIvy?: true;
 }
 
 /** GET /sessions/:id: everything a client needs to show a session it opens. */
@@ -201,6 +203,8 @@ export function stopNote(end: TurnEnd): string | undefined {
 export type SessionEvent = { sessionId: string } & SessionChange;
 
 export type SessionChange =
+  /** A conversation Ivy started herself, her message first (DESIGN.md §11, M3). */
+  | { type: "started" }
   /** A message arrived: it runs now, or waits for the running turn. */
   | { type: "prompt"; prompt: Prompt }
   /** A waiting message was taken back, or dropped with an interrupt. */
@@ -284,6 +288,8 @@ export interface DaemonState {
   canSwitchModel: boolean;
   /** The helper model for side work, "<provider>/<model id>"; "" when side work runs on `model`. */
   helperModel: string;
+  /** Ivy writes first, from follow-ups (DESIGN.md §11, M3). */
+  writesFirst: boolean;
   /** The effort levels /effort offers. */
   efforts: string[];
   /** Plugins loaded, and the tools they offer. */
@@ -410,6 +416,8 @@ export const AnswerPermission = z.object({ choice: z.enum(PERMISSION_ANSWERS) })
 export const SetModel = z.object({ model: z.string().min(1) });
 /** PUT /helper-model: "" for none, side work then running on the main model. */
 export const SetHelperModel = z.object({ model: z.string() });
+/** PUT /writes-first: whether Ivy writes first. */
+export const SetWritesFirst = z.object({ on: z.boolean() });
 
 /** Why /model has nothing to offer: one model, and how to get more. */
 export const onlyOneModel = (current: string) =>

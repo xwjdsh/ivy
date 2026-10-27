@@ -225,7 +225,7 @@ export class Agent {
     // Off the record, said on every turn, so she says so herself when it matters and offers
     // to keep nothing (DESIGN.md §11, M3).
     const context = await this.opts.plugins.turnContext(
-      { sessionId: session.id, userText, now: new Date() },
+      { sessionId: session.id, userText, now: new Date(), offRecord: session.offRecord },
       session.offRecord ? [{ id: "conversation", text: OFF_RECORD }] : [],
     );
     session.appendPrompt(userText, context, images);

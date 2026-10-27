@@ -124,3 +124,31 @@ test("with no one to show reminders, the window stays open until someone is", as
   expect(s.windows.at(-1)).toEqual({ since: T0, now: at(20) }); // one window from the last check
   s.scheduler.stop();
 });
+
+test("hers go to writing first after the notifications; one that fails stops nothing", async () => {
+  const events: DaemonEvent[] = [];
+  const written: string[] = [];
+  let clock = T0;
+  const scheduler = startScheduler({
+    stateFile: join(mkdtempSync(join(tmpdir(), "ivy-s-")), "s.json"),
+    now: () => clock,
+    intervalMs: 1e9,
+    publish: (e) => events.push(e),
+    reminders: async () => [
+      { id: "f1", plugin: "memory", title: "ask about the interview", from: "ivy" },
+      { id: "f2", plugin: "memory", title: "ask about the trip", from: "ivy" },
+      { id: "t", plugin: "memory", title: "Pick up the parcel", at: T0 },
+    ],
+    writeFirst: async (r) => {
+      if (r.id === "f1") throw new Error("model down");
+      written.push(r.id);
+    },
+  });
+  await scheduler.check(); // the first check starts from now: an empty window
+  clock = at(1);
+  await scheduler.check();
+  await Bun.sleep(10); // hers are written apart from the check
+  scheduler.stop();
+  expect(events.map((e) => (e.data as { title: string }).title)).toEqual(["Pick up the parcel"]);
+  expect(written).toEqual(["f2"]);
+});

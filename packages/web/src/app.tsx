@@ -31,7 +31,7 @@ import { ImageViewer } from "./viewer.tsx";
 const sessionInHash = () => decodeURIComponent(location.hash.slice(1)) || undefined;
 
 /** Session events that change the list: a session started, ran, or finished a turn. */
-const LISTED = new Set<SessionEvent["type"]>(["prompt", "turn_start", "turn_end"]);
+const LISTED = new Set<SessionEvent["type"]>(["started", "prompt", "turn_start", "turn_end"]);
 
 export function App() {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
@@ -111,6 +111,14 @@ export function App() {
         setReading((r) => (r?.chat && r.id === e.sessionId ? { ...r, chat: apply(r.chat, e) } : r));
       }
       if (LISTED.has(e.type)) reloadList();
+      // She wrote first (only when the user hasn't written for a while): her conversation is
+      // the one going on now, if that takes nothing from the user (a new chat, or the window
+      // away); else it is in the list, and her notification takes them there.
+      const away = document.hidden || !document.hasFocus();
+      if (e.type === "started" && !readingId.current && (!chatId.current || away)) {
+        setOffNext(false); // as open(id) does: a switch set for a new chat isn't for hers
+        location.hash = encodeURIComponent(e.sessionId);
+      }
     };
     // Opening the window carries on a conversation from the last few hours; after longer, it
     // starts a new one, and that one is history.

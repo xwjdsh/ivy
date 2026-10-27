@@ -13,7 +13,7 @@ import { dirname, join } from "node:path";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { ConversationHistory, PastMessage, SessionPoints } from "@ivy/plugin-api";
 import { imageTypeOf, isImageName } from "./images.ts";
-import { promptText } from "./turn-context.ts";
+import { contextBlock, promptText } from "./turn-context.ts";
 
 type MessageParam = Anthropic.Beta.BetaMessageParam;
 type ContentBlock = Exclude<MessageParam["content"], string>[number];
@@ -45,6 +45,8 @@ export type SessionRecord =
       model: string;
       /** Off the record (DESIGN.md §11, M3): nothing reads it, and it is deleted once let go. */
       offRecord?: true;
+      /** Started by Ivy, writing first (DESIGN.md §11, M3). */
+      fromIvy?: true;
     }
   /**
    * `context`: the turn's plugin context, kept apart from what the user typed (see
@@ -72,6 +74,7 @@ export interface SessionSummary {
   /** Start of the first user prompt. */
   preview: string;
   offRecord?: true;
+  fromIvy?: true;
 }
 
 /**
@@ -107,7 +110,11 @@ export class Session {
     this.imagesDir = join(dirname(file), id);
   }
 
-  static create(dir: string, model: string, options: { offRecord?: boolean } = {}): Session {
+  static create(
+    dir: string,
+    model: string,
+    options: { offRecord?: boolean; fromIvy?: boolean } = {},
+  ): Session {
     const now = new Date();
     const id = `${now.toISOString().slice(0, 10)}-${crypto.randomUUID().slice(0, 8)}`;
     const session = new Session(id, join(dir, `${id}.jsonl`));
@@ -118,6 +125,7 @@ export class Session {
       createdAt: now.toISOString(),
       model,
       ...(session.offRecord && { offRecord: true as const }),
+      ...(options.fromIvy && { fromIvy: true as const }),
     };
     return session;
   }
@@ -176,8 +184,10 @@ export class Session {
           createdAt,
           updatedAt: last && last.type !== "meta" ? last.ts : createdAt,
           turns: prompts.length,
-          preview: (prompts[0] ?? "").slice(0, 80),
+          // One she started has her words first, until the user says something.
+          preview: (prompts[0] ?? openingOf(records) ?? "").slice(0, 80),
           ...(meta?.type === "meta" && meta.offRecord && { offRecord: true as const }),
+          ...(meta?.type === "meta" && meta.fromIvy && { fromIvy: true as const }),
         };
       })
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
@@ -208,6 +218,21 @@ export class Session {
       message,
       ...(context && { context }),
     });
+  }
+
+  /**
+   * Begin a conversation with her message (DESIGN.md §11, M3). The API wants a user turn
+   * first: a context block saying she wrote first, which is no prompt of the user's.
+   */
+  appendOpening(text: string, note: string): void {
+    const opener: MessageParam = {
+      role: "user",
+      content: [{ type: "text", text: contextBlock([{ id: "conversation", text: note }]) }],
+    };
+    const reply: MessageParam = { role: "assistant", content: [{ type: "text", text }] };
+    this.messages.push(opener, reply);
+    const ts = new Date().toISOString();
+    this.write({ type: "message", ts, message: opener }, { type: "message", ts, message: reply });
   }
 
   contextOf(message: MessageParam): string | undefined {
@@ -387,6 +412,16 @@ export function trashSession(dir: string, id: string): boolean {
   const points = pointsFile(dir, id);
   if (existsSync(points)) renameSync(points, join(dir, TRASH, `${id}.points.json`));
   return true;
+}
+
+/** Her first words in a conversation she started, before the user said anything. */
+function openingOf(records: SessionRecord[]): string | undefined {
+  for (const r of records) {
+    if (r.type !== "message") continue;
+    if (r.message.role === "user" && promptText(r.message) !== null) return undefined;
+    if (r.message.role === "assistant") return assistantText(r.message) ?? undefined;
+  }
+  return undefined;
 }
 
 /**

@@ -2,7 +2,10 @@
 // runs. Each step is a new session unless it says otherwise, as when a user comes back
 // another day.
 
+import { localDate } from "@ivy/plugin-memory/lines";
 import { defineEvals } from "./eval.ts";
+
+const today = localDate(new Date());
 
 // A MEMORY.md filled close to a 1,000-character limit, for the over-cap case.
 const NEARLY_FULL = [
@@ -285,6 +288,55 @@ export default defineEvals([
         },
       },
       { say: "我最近有什么体检安排吗？", expect: { answerNot: ["胃镜"] } },
+    ],
+  },
+  {
+    name: "follow-after-the-event",
+    about:
+      "Something ahead the user worries over becomes a follow-up, timed for after it, with why it matters (DESIGN.md §11, M3).",
+    steps: [
+      {
+        say: "后天下午三点有个面试，好紧张",
+        expect: {
+          files: {
+            "MEMORY.md": {
+              has: [/\[follow [^\]]*due:\d{4}-\d\d-\d\dT(1[6-9]|2[0-3])[^\n]*面试/],
+            },
+          },
+        },
+      },
+    ],
+  },
+  {
+    name: "deadline-stays-a-todo",
+    about: "A plain deadline is a todo, not something to ask the user about after.",
+    steps: [
+      {
+        say: "记一下，周五前要交季度报告",
+        expect: { files: { "MEMORY.md": { has: [/\[todo[^\n]*报告/], hasNot: ["[follow"] } } },
+      },
+    ],
+  },
+  {
+    name: "no-follow-from-impression",
+    about: "How the user seems is never a reason to write first: no follow-up from a tired day.",
+    steps: [
+      {
+        say: "今天好累，什么都不想干",
+        expect: { files: { "MEMORY.md": { hasNot: ["[follow"] } } },
+      },
+    ],
+  },
+  {
+    name: "follow-up-in-conversation",
+    about:
+      "A follow-up come due while the user is talking is brought up then, in passing, once; not again on the next turn.",
+    files: {
+      "MEMORY.md": `# Memory\n\n- [follow ${today} due:${today}T17:00] 面试后问问结果；说很紧张 ("今天下午三点面试，好紧张")\n`,
+    },
+    steps: [
+      { say: "在吗", expect: { answer: [/面试/] } },
+      { say: "刚吃完饭，有点撑", sameSession: true, expect: { answerNot: [/面试/] } },
     ],
   },
 ]);

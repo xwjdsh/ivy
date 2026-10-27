@@ -18,7 +18,13 @@ const MINIMAL = '[agent]\nmodel = "anthropic/claude-opus-5-5"\n\n[providers.anth
 
 test("minimal config: a model on a provider; everything else defaulted", () => {
   const config = loadConfig(configWith(MINIMAL));
-  expect(config.agent).toEqual({ model: "anthropic/claude-opus-5-5", max_steps: 25 });
+  expect(config.agent).toEqual({
+    model: "anthropic/claude-opus-5-5",
+    max_steps: 25,
+    writes_first: true,
+    writes_first_quiet: "22:00-09:00",
+    writes_first_per_day: 1,
+  });
   expect(config.model?.ref).toBe("anthropic/claude-opus-5-5");
   expect(config.model?.id).toBe("claude-opus-5-5");
   expect(config.model?.provider).toMatchObject({
