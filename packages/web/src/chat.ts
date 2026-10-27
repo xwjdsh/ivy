@@ -103,13 +103,16 @@ export interface Chat {
   queue: Prompt[];
   tokens: Tokens;
   permission?: PermissionAsk;
+  /** Off the record: kept nowhere, deleted once let go. */
+  offRecord?: boolean;
 }
 
 export const NO_TOKENS: Tokens = { in: 0, cached: 0, out: 0 };
 
 /** A session no message has been sent to yet. */
-export const emptyChat = (id: string): Chat => ({
+export const emptyChat = (id: string, offRecord = false): Chat => ({
   id,
+  offRecord,
   items: [],
   streaming: "",
   queue: [],
@@ -124,6 +127,7 @@ export const chatOf = (view: SessionView): Chat => ({
   queue: view.queue,
   tokens: view.tokens,
   permission: view.permission,
+  offRecord: view.offRecord === true,
 });
 
 /** The text written so far becomes a reply of its own (a tool call or the step's end follows). */

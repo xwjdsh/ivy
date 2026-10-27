@@ -50,7 +50,8 @@ export interface ToolDef<S extends z.ZodType = z.ZodType> {
    * a result is outside content, how a call shows (DESIGN.md §5.7): with it, a call folds with
    * her own things even when what it found counts as outside. Left out, the tool may act on
    * the user's world, and shows as a line; so does an `external` or `dangerous` tool, whatever
-   * this says.
+   * this says. A tool that keeps anything of Ivy's must say so: in a conversation off the
+   * record, one with `own` that isn't `read` doesn't run (DESIGN.md §5.5).
    */
   own?: "records" | "journal";
   /**

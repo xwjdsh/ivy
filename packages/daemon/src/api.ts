@@ -320,8 +320,8 @@ export function api(ivy: Ivy, sessions: Sessions): Routes {
       case "GET /sessions":
         return Response.json(sessions.list());
       case "POST /sessions": {
-        const { display } = await body(req, CreateSession);
-        return Response.json({ id: sessions.create(display) }, { status: 201 });
+        const { display, offRecord } = await body(req, CreateSession);
+        return Response.json({ id: sessions.create(display, offRecord) }, { status: 201 });
       }
       case "GET /sessions/:":
         return Response.json(sessions.view(id));

@@ -138,6 +138,10 @@ export const NO_MODEL =
   "Ivy has no model yet: add a provider in Settings and choose a model, or set [agent] model in config.toml.";
 const log = createLogger("agent");
 
+/** An off-the-record conversation's line in each turn's context. */
+const OFF_RECORD =
+  "This conversation is off the record: nothing from it is kept, and it is deleted when it ends. Don't offer to remember anything; if the user asks you to, say you can't in this one.";
+
 export class Agent {
   /** Current model; starts as `agent.model` and can be switched at runtime. None before one is chosen. */
   private current: ModelRef | undefined;
@@ -216,11 +220,12 @@ export class Agent {
         ready.then(done, done);
       });
     }
-    const context = await this.opts.plugins.turnContext({
-      sessionId: session.id,
-      userText,
-      now: new Date(),
-    });
+    // Off the record, said on every turn, so she says so herself when it matters and offers
+    // to keep nothing (DESIGN.md §11, M3).
+    const context = await this.opts.plugins.turnContext(
+      { sessionId: session.id, userText, now: new Date() },
+      session.offRecord ? [{ id: "conversation", text: OFF_RECORD }] : [],
+    );
     session.appendPrompt(userText, context, images);
     const turnNumber = session.messages.filter((m) => promptText(m) !== null).length;
     if (context) turn.onEvent({ type: "context", text: context });
@@ -283,7 +288,11 @@ export class Agent {
         // With eager input streaming, an unparseable tool input rejects the stream.
         // Nothing was appended, so re-issuing the same request is safe.
         if (isToolJsonParseError(err) && parseRetries++ < MAX_PARSE_RETRIES) {
-          log.warn("tool input JSON could not be parsed, retrying", errorMessage(err));
+          // The error quotes the input; the log outlives an off-the-record conversation.
+          log.warn(
+            "tool input JSON could not be parsed, retrying",
+            session.offRecord ? undefined : errorMessage(err),
+          );
           // What was already shown comes again: say why, rather than leave it unexplained.
           if (shown) {
             turn.onEvent({
@@ -478,6 +487,7 @@ export class Agent {
     type Verdict =
       | "run"
       | "unknown tool"
+      | "off the record"
       | "denied by rule"
       | "denied by user"
       | "unanswered"
@@ -492,6 +502,11 @@ export class Agent {
       }
       if (risk === undefined) {
         verdicts.push("unknown tool"); // a name the model made up; nothing to ask about
+        continue;
+      }
+      // Nothing from an off-the-record conversation is kept, whatever the rules allow.
+      if (session.offRecord && plugins.writesOwnRecords(use.name)) {
+        verdicts.push("off the record");
         continue;
       }
       const ruled = permissions.decide(use.name, risk, sessionId);
@@ -519,6 +534,8 @@ export class Agent {
 
     const messages: Record<Exclude<Verdict, "run">, (name: string) => string> = {
       "unknown tool": (name) => `Unknown tool: ${name}`,
+      "off the record": () =>
+        "This conversation is off the record: nothing from it is kept, so this didn't run.",
       "denied by rule": () => "This tool call is blocked by a permission rule.",
       "denied by user": () => "The user denied this tool call.",
       unanswered: () =>

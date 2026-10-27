@@ -53,7 +53,8 @@ export const api = {
   setHelperModel: (model: string) => request<Switched>("PUT", "/helper-model", { model }),
   setEffort: (effort: string) => request<Switched>("PUT", "/effort", { effort }),
   sessions: () => request<SessionSummary[]>("GET", "/sessions"),
-  createSession: async () => (await request<{ id: string }>("POST", "/sessions", {})).id,
+  createSession: async (offRecord = false) =>
+    (await request<{ id: string }>("POST", "/sessions", { offRecord })).id,
   session: (id: string) => request<SessionView>("GET", `/sessions/${id}`),
   /** The session's file goes to the trash folder (DESIGN.md §5.7). */
   deleteSession: (id: string) => request<void>("DELETE", `/sessions/${id}`),

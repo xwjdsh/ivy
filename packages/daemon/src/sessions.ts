@@ -6,7 +6,7 @@
 // A session is loaded when a client first asks for it and let go once it has been idle a
 // while, so a daemon that runs for weeks doesn't keep every session it ever opened.
 
-import { existsSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import {
   type AgentEvent,
@@ -17,6 +17,7 @@ import {
   isSessionId,
   type PermissionChoice,
   promptText,
+  removeSession,
   Session,
   serverToolCall,
   serverToolResult,
@@ -115,6 +116,17 @@ export class Sessions {
     this.sweeper.unref(); // the server keeps the daemon running, not this
   }
 
+  /**
+   * Off-the-record sessions left by a daemon that stopped before letting them go (a crash)
+   * ended then. Only once this daemon holds the socket: before, another may be running
+   * them.
+   */
+  forgetLeftovers(): void {
+    for (const s of Session.list(this.ivy.paths.sessions, Number.POSITIVE_INFINITY)) {
+      if (s.offRecord && !this.live.has(s.id)) this.forget(s.id);
+    }
+  }
+
   /** Sessions on disk, most recently active first, with whether a turn runs in each. */
   list(limit = 50): SessionSummary[] {
     return Session.list(this.ivy.paths.sessions, limit).map(({ file: _, ...s }) => ({
@@ -124,8 +136,8 @@ export class Sessions {
   }
 
   /** Start a session. Its file is written with the first message. */
-  create(display: Display): string {
-    const session = Session.create(this.ivy.paths.sessions, this.ivy.agent.model);
+  create(display: Display, offRecord = false): string {
+    const session = Session.create(this.ivy.paths.sessions, this.ivy.agent.model, { offRecord });
     this.live.set(session.id, this.hold(session));
     if (display !== "markdown") this.displays.set(session.id, display);
     void this.ivy.systemPrompt.start(session.id, DISPLAY_INSTRUCTIONS[display]);
@@ -152,6 +164,7 @@ export class Sessions {
       queue: [...live.queue],
       tokens: tokensFromUsage(summarizeUsage(this.ivy.paths.sessions, { sessionId: id })),
       ...(permission && { permission }),
+      ...(live.session.offRecord && { offRecord: true as const }),
     };
   }
 
@@ -246,7 +259,9 @@ export class Sessions {
   delete(id: string): boolean {
     const live = this.live.get(id);
     if (live?.pumping) return false;
-    const trashed = trashSession(this.ivy.paths.sessions, id);
+    // Off the record, as its first line says (it may not be held here): gone, not trashed.
+    const offRecord = live?.session.offRecord ?? Session.isOffRecord(this.ivy.paths.sessions, id);
+    const trashed = offRecord ? this.forget(id) : trashSession(this.ivy.paths.sessions, id);
     if (!live && !trashed) throw new SessionNotFoundError(`Session not found: ${id}`);
     if (live) {
       this.live.delete(id);
@@ -288,7 +303,17 @@ export class Sessions {
       if (!existsSync(live.session.file)) continue;
       this.live.delete(id);
       this.ivy.releaseSession(id);
+      if (live.session.offRecord) this.forget(id);
     }
+  }
+
+  /**
+   * An off-the-record session ended: gone for good, its images and traces too, as the user
+   * was told (DESIGN.md §11, M3). Whether it was there.
+   */
+  private forget(id: string): boolean {
+    rmSync(join(this.ivy.paths.traces, id), { recursive: true, force: true });
+    return removeSession(this.ivy.paths.sessions, id);
   }
 
   /**
@@ -301,6 +326,8 @@ export class Sessions {
     for (const id of this.live.keys()) this.interrupt(id, true);
     const pumping = [...this.live.values()].flatMap((l) => (l.pumping ? [l.pumping] : []));
     await Promise.race([Promise.all(pumping), Bun.sleep(CLOSE_WAIT_MS)]);
+    // Ivy stopping ends an off-the-record conversation.
+    for (const [id, live] of this.live) if (live.session.offRecord) this.forget(id);
   }
 
   /** A session held here, loaded from disk when first asked for. */

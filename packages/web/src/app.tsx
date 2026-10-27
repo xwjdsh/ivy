@@ -37,6 +37,11 @@ export function App() {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   /** The chat shown; undefined: a new one, not yet started. */
   const [chat, setChat] = useState<Chat | undefined>();
+  /** The conversation about to start goes off the record (switched on her card). */
+  const [offNext, setOffNext] = useState(false);
+  /** Whether the conversation going on is off the record, for a new one started from it. */
+  const offNow = useRef(false);
+  offNow.current = chat?.offRecord === true;
   const chatId = useRef<string | undefined>(undefined);
   /**
    * Conversations begun in this window: one grows from the end of the past, which stays in view
@@ -140,6 +145,10 @@ export function App() {
   const open = useCallback(
     (id: string | undefined) => {
       read(undefined);
+      // A new one started from one off the record stays so (kept by mistake can't be undone;
+      // the switch turns it off); any other starts on the record. Nothing is saved.
+      if (id) setOffNext(false);
+      else setOffNext((on) => on || offNow.current);
       location.hash = id ? encodeURIComponent(id) : "";
       if (!id) void show(undefined); // an empty hash may not fire hashchange
     },
@@ -254,15 +263,27 @@ export function App() {
       }
       let id = chat?.id;
       if (!id) {
-        id = await api.createSession();
+        id = await api.createSession(offNext);
         startedHere.current.add(id);
         chatId.current = id;
-        setChat(emptyChat(id));
+        setChat(emptyChat(id, offNext));
+        setOffNext(false);
         history.replaceState(null, "", `#${encodeURIComponent(id)}`);
       }
       await api.send(id, text, images);
     } catch (err) {
-      failed(err);
+      // Off the record and left idle, it ended and was deleted, as the user was told: start
+      // afresh, with what they wrote still in the composer.
+      const ended =
+        chat?.offRecord && err instanceof Error && err.message.startsWith("Session not found");
+      if (ended) {
+        open(undefined); // off the record still, as the user chose
+        setError(
+          "That conversation was off the record and has ended, so it's gone. Send again to start a new one.",
+        );
+      } else {
+        failed(err);
+      }
       throw err; // the composer keeps the text
     }
   };
@@ -280,11 +301,14 @@ export function App() {
 
   // What is written goes to the past conversation open above, if one is.
   const target = reading ? reading.chat : chat;
+  // Off the record is decided as a conversation starts, for all of it (DESIGN.md §11, M3).
+  const offRecord = chat ? chat.offRecord === true : offNext;
   const composer = (
     <Composer
       busy={target?.running !== undefined}
       replying={reading !== undefined}
       noModel={state?.model === ""}
+      offRecord={offRecord && !reading}
       onSend={send}
       onStop={() => target && api.interrupt(target.id).catch(failed)}
     />
@@ -308,7 +332,7 @@ export function App() {
       </button>
     </div>
   );
-  const now = presence(chat, sessions, connected);
+  const now = presence(chat, sessions, connected, offRecord);
   return (
     <div className="app">
       <main>
@@ -383,6 +407,7 @@ export function App() {
             onError={failed}
             onClose={closeCard}
             remembers={remembers}
+            offRecord={{ on: offRecord, open: !chat && !reading, onChange: setOffNext }}
           />
         )}
         {settings && <SettingsPage state={state} onState={setState} onError={failed} />}
@@ -410,6 +435,7 @@ export function App() {
             />
           )}
           fill={!!chat && !startedHere.current.has(chat.id)}
+          offRecord={offRecord && !reading}
         />
         <div className="dock">
           {setup}

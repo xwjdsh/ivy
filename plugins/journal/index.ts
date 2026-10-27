@@ -207,6 +207,9 @@ export function createJournalPlugin(): IvyPlugin {
         }),
         summary: (i) => `propose a SOUL.md change: ${i.new_text}`,
         risk: "dangerous",
+        // Who she is, kept: so closed off the record too (DESIGN.md §5.5). Being dangerous,
+        // it still shows as a line, asked every time.
+        own: "journal",
         run: ({ old_text, new_text }, ctx) =>
           closed(ctx) ?? asToolResult(() => proposeSoulEdit(ready().soul, old_text, new_text)),
       }),

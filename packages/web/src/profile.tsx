@@ -82,6 +82,8 @@ export function Card(props: {
   onClose(): void;
   /** Whether there is what she remembers about the user to turn to (the memory plugin on). */
   remembers: boolean;
+  /** Off the record: set for a conversation about to start (`open`), then fixed for all of it. */
+  offRecord: { on: boolean; open: boolean; onChange(on: boolean): void };
 }) {
   const { from, presence, facts, state, onError, onClose } = props;
   const card = useRef<HTMLElement>(null);
@@ -157,6 +159,23 @@ export function Card(props: {
               <ChevronRight size={14} />
             </button>
           )}
+          <label className={`off-record${props.offRecord.open ? "" : " fixed"}`}>
+            <span className="what">Off the record</span>
+            <input
+              type="checkbox"
+              className="st-switch"
+              checked={props.offRecord.on}
+              disabled={!props.offRecord.open}
+              onChange={(e) => props.offRecord.onChange(e.target.checked)}
+            />
+            <span className="note">
+              {props.offRecord.open
+                ? "Nothing from this conversation is kept, and it's deleted when it ends."
+                : props.offRecord.on
+                  ? "On for all of this conversation: only a new one can start without it."
+                  : "Only a new conversation can start off the record."}
+            </span>
+          </label>
           <Hood>
             {state && <ModelSettings state={state} onState={props.onState} onError={onError} />}
             <dl className="facts">

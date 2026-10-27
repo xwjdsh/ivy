@@ -197,14 +197,18 @@ export class PluginHost {
    * Build this turn's `<context>` block from every plugin's contextFor, in plugin-id order.
    * Each is capped in size and time; a failing or slow plugin is skipped, never the turn.
    */
-  async turnContext(turn: TurnInfo): Promise<string> {
+  async turnContext(
+    turn: TurnInfo,
+    /** The kernel's own sections, first: e.g. that the conversation is off the record. */
+    own: Array<{ id: string; text: string }> = [],
+  ): Promise<string> {
     const parts = await this.collect(
       "contextFor",
       (p) => p.contextFor?.(turn),
       CONTEXT_MAX_CHARS,
       CONTEXT_TIMEOUT_MS,
     );
-    return contextBlock(parts);
+    return contextBlock([...own, ...parts]);
   }
 
   /** Tell plugins a session was let go (see IvyPlugin.sessionReleased); errors are logged. */
@@ -331,6 +335,12 @@ export class PluginHost {
 
   riskOf(fullName: string): RiskLevel | undefined {
     return this.tools.get(fullName)?.def.risk;
+  }
+
+  /** Whether a tool writes Ivy's own records (memory, her journal): closed off the record. */
+  writesOwnRecords(fullName: string): boolean {
+    const def = this.tools.get(fullName)?.def;
+    return !!def?.own && def.risk !== "read";
   }
 
   /** Why a call needs the user's OK whatever the rules allow (the tool's `askFirst`), if it does. */

@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MemoryKeyStore, resolvePaths } from "@ivy/kernel";
@@ -330,6 +330,46 @@ test("an idle session is let go, and loaded again as it was when asked for", asy
   await client.until((e) => e.type === "turn_end" && e.promptId === second.id);
   // Still a plain-text session after being loaded again.
   expect(JSON.stringify(model.requests[1]?.system)).toContain("plain text");
+  await client.close();
+});
+
+test("an off-the-record session is shown as such, and gone for good once let go", async () => {
+  const { call, socket, sessions, clock, paths } = await start([{ content: [text("ok")] }]);
+  const client = await follow(socket);
+  const id = (await call("POST", "/sessions", { offRecord: true })).body.id;
+  await call("POST", `/sessions/${id}/prompts`, { text: "a secret" });
+  await client.until((e) => e.type === "turn_end");
+  expect((await call("GET", `/sessions/${id}`)).body.offRecord).toBe(true);
+  const listed = (await call("GET", "/sessions")).body as Array<{ id: string; offRecord?: true }>;
+  expect(listed.find((s) => s.id === id)?.offRecord).toBe(true);
+  clock.now += IDLE_MS + 1000;
+  sessions.sweep();
+  expect(existsSync(join(paths.sessions, `${id}.jsonl`))).toBe(false);
+  expect(existsSync(join(paths.sessions, "trash", `${id}.jsonl`))).toBe(false); // not restorable
+  expect(existsSync(join(paths.traces, id))).toBe(false);
+  expect((await call("GET", `/sessions/${id}`)).status).toBe(404);
+  await client.close();
+});
+
+test("a second daemon that can't start leaves the running one's off-the-record talk alone", async () => {
+  const { call, socket, paths } = await start([{ content: [text("ok")] }]);
+  const client = await follow(socket);
+  const id = (await call("POST", "/sessions", { offRecord: true })).body.id;
+  await call("POST", `/sessions/${id}/prompts`, { text: "a secret" });
+  await client.until((e) => e.type === "turn_end");
+  const second = serve({
+    paths,
+    plugins: [tools],
+    model: new ScriptedModel([]),
+    keys: new MemoryKeyStore(),
+    sumUp: false,
+  });
+  await expect(second).rejects.toThrow();
+  expect(existsSync(join(paths.sessions, `${id}.jsonl`))).toBe(true);
+  // Deleted while not held (a restart let it go from memory): gone, not to the trash.
+  await call("DELETE", `/sessions/${id}`);
+  expect(existsSync(join(paths.sessions, "trash", `${id}.jsonl`))).toBe(false);
+  expect(existsSync(join(paths.sessions, `${id}.jsonl`))).toBe(false);
   await client.close();
 });
 

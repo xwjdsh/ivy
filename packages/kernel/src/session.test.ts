@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { appendFileSync, existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type Anthropic from "@anthropic-ai/sdk";
@@ -216,4 +216,23 @@ test("past conversations are read again once their file changes, and not once it
   expect(history.messages(s.id).map((m) => m.text)).toEqual(["first", "hi", "second"]);
   trashSession(dir, s.id);
   expect(history.messages(s.id)).toEqual([]);
+});
+
+test("an off-the-record conversation reads as nothing to plugins, but lists for the user", () => {
+  const dir = mkdtempSync(join(tmpdir(), "ivy-offrecord-"));
+  const kept = Session.create(dir, "m");
+  kept.append({ role: "user", content: "kept" }, { role: "assistant", content: "ok" });
+  const off = Session.create(dir, "m", { offRecord: true });
+  off.append({ role: "user", content: "secret" }, { role: "assistant", content: "ok" });
+  const history = sessionHistory(dir);
+  expect(history.sessions().map((s) => s.id)).toEqual([kept.id]);
+  expect(history.messages(off.id)).toEqual([]);
+  writeFileSync(
+    join(dir, `${off.id}.points.json`),
+    '{"title":"x","points":[],"open":[],"through":"z"}',
+  );
+  expect(history.points(off.id)).toBeUndefined();
+  // The user still sees it, marked, until it is let go.
+  expect(Session.list(dir).find((s) => s.id === off.id)?.offRecord).toBe(true);
+  expect(Session.load(dir, off.id).offRecord).toBe(true);
 });

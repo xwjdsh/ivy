@@ -127,6 +127,8 @@ export interface SessionSummary {
   preview: string;
   /** A turn is running. */
   busy: boolean;
+  /** Off the record: kept nowhere, deleted once let go. */
+  offRecord?: true;
 }
 
 /** GET /sessions/:id: everything a client needs to show a session it opens. */
@@ -146,6 +148,8 @@ export interface SessionView {
   tokens: Tokens;
   /** A permission prompt waiting for an answer, if any. */
   permission?: PermissionAsk;
+  /** Off the record: kept nowhere, deleted once let go. */
+  offRecord?: true;
 }
 
 /** What a client may answer to a permission prompt. */
@@ -379,7 +383,11 @@ export type Switched = DaemonState & { saved: boolean; error?: string };
 // --- Requests --------------------------------------------------------------------------
 
 /** POST /sessions */
-export const CreateSession = z.object({ display: z.enum(DISPLAYS).default("markdown") });
+export const CreateSession = z.object({
+  display: z.enum(DISPLAYS).default("markdown"),
+  /** Off the record (DESIGN.md §11, M3): set when it starts, for all of it. */
+  offRecord: z.boolean().default(false),
+});
 /** POST /sessions/:id/prompts: text, images (as POST /images named them), or both. */
 export const SendPrompt = z
   .object({

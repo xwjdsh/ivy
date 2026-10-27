@@ -217,6 +217,52 @@ describe("Agent.runTurn", () => {
     expect(model.requests[0]?.tools?.map((t) => ("name" in t ? t.name : ""))).toEqual(["t__echo"]);
   });
 
+  test("off the record: writes to her own records don't run, reads do, and she is told", async () => {
+    const saved: string[] = [];
+    const records = definePlugin({
+      id: "m",
+      version: "0",
+      description: "memory",
+      tools: [
+        defineTool({
+          name: "save",
+          description: "save",
+          input: z.object({}),
+          risk: "write",
+          own: "records",
+          defaultAllow: true,
+          run: () => {
+            saved.push("x");
+            return "saved";
+          },
+        }),
+        defineTool({
+          name: "read",
+          description: "read",
+          input: z.object({}),
+          risk: "read",
+          own: "records",
+          run: () => "remembered",
+        }),
+      ],
+    });
+    session = Session.create(join(dir, "sessions"), "m", { offRecord: true });
+    const model = new FakeModel([
+      reply("tool_use", [toolUse("tu_1", "m__save"), toolUse("tu_2", "m__read")]),
+      reply("end_turn", [text("I can't keep that here.")]),
+    ]);
+    await run(await makeAgent(model, "read", undefined, "sys", [records]), "记住我对花生过敏");
+    expect(saved).toEqual([]);
+    expect(session.messages[2]?.content).toMatchObject([
+      { tool_use_id: "tu_1", content: expect.stringContaining("off the record"), is_error: true },
+      { tool_use_id: "tu_2", content: "remembered" },
+    ]);
+    const context = events.find((e) => e.type === "context");
+    expect(context && "text" in context && context.text).toContain(
+      "## conversation\nThis conversation is off the record",
+    );
+  });
+
   test("tool call runs and its result is sent back", async () => {
     const model = new FakeModel([
       reply("tool_use", [toolUse("tu_1", "t__echo", { msg: "x" })]),

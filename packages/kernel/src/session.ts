@@ -5,6 +5,7 @@ import {
   readdirSync,
   readFileSync,
   renameSync,
+  rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
@@ -37,7 +38,14 @@ export interface Origin {
 
 /** One line of a session JSONL file. */
 export type SessionRecord =
-  | { type: "meta"; id: string; createdAt: string; model: string }
+  | {
+      type: "meta";
+      id: string;
+      createdAt: string;
+      model: string;
+      /** Off the record (DESIGN.md §11, M3): nothing reads it, and it is deleted once let go. */
+      offRecord?: true;
+    }
   /**
    * `context`: the turn's plugin context, kept apart from what the user typed (see
    * turn-context.ts). `origin`: where a reply came from (none before it was recorded).
@@ -57,6 +65,7 @@ export interface SessionSummary {
   turns: number;
   /** Start of the first user prompt. */
   preview: string;
+  offRecord?: true;
 }
 
 /**
@@ -76,6 +85,8 @@ export class Session {
 
   /** Meta record not yet written: the file is created lazily on the first append. */
   private pendingMeta: SessionRecord | null = null;
+  /** Off the record: nothing reads it, its own records are closed to it, it goes when let go. */
+  offRecord = false;
   /** The file ends in a partial line (crash mid-write); start the next write on a new line. */
   private needsNewline = false;
   /** Outside content read since the user's last prompt. */
@@ -90,11 +101,18 @@ export class Session {
     this.imagesDir = join(dirname(file), id);
   }
 
-  static create(dir: string, model: string): Session {
+  static create(dir: string, model: string, options: { offRecord?: boolean } = {}): Session {
     const now = new Date();
     const id = `${now.toISOString().slice(0, 10)}-${crypto.randomUUID().slice(0, 8)}`;
     const session = new Session(id, join(dir, `${id}.jsonl`));
-    session.pendingMeta = { type: "meta", id, createdAt: now.toISOString(), model };
+    session.offRecord = options.offRecord === true;
+    session.pendingMeta = {
+      type: "meta",
+      id,
+      createdAt: now.toISOString(),
+      model,
+      ...(session.offRecord && { offRecord: true as const }),
+    };
     return session;
   }
 
@@ -105,6 +123,7 @@ export class Session {
     const content = readFileSync(file, "utf8");
     session.needsNewline = content.length > 0 && !content.endsWith("\n");
     const messages = parseRecords(content).flatMap((r) => {
+      if (r.type === "meta" && r.offRecord) session.offRecord = true;
       if (r.type === "outside") {
         session.outside = true;
         for (const id of r.ids ?? []) session.outsideResults.add(id);
@@ -118,6 +137,14 @@ export class Session {
     });
     session.messages.push(...withoutDanglingToolUse(messages));
     return session;
+  }
+
+  /** Whether a session on disk is off the record, from its first line. */
+  static isOffRecord(dir: string, id: string): boolean {
+    const file = join(dir, `${id}.jsonl`);
+    if (!isSessionId(id) || !existsSync(file)) return false;
+    const meta = readRecords(file).find((r) => r.type === "meta");
+    return meta?.type === "meta" && meta.offRecord === true;
   }
 
   /** Most recently active sessions first. */
@@ -142,6 +169,7 @@ export class Session {
           updatedAt: last && last.type !== "meta" ? last.ts : createdAt,
           turns: prompts.length,
           preview: (prompts[0] ?? "").slice(0, 80),
+          ...(meta?.type === "meta" && meta.offRecord && { offRecord: true as const }),
         };
       })
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
@@ -306,6 +334,20 @@ export function trashSession(dir: string, id: string): boolean {
 }
 
 /**
+ * Delete a session for good, with its images and key points: an off-the-record one, once let
+ * go (DESIGN.md §11, M3). Not to the trash, which can be restored. Its traces are the
+ * caller's (they live outside the sessions folder).
+ */
+export function removeSession(dir: string, id: string): boolean {
+  const file = join(dir, `${id}.jsonl`);
+  if (!isSessionId(id) || !existsSync(file)) return false;
+  rmSync(file, { force: true });
+  rmSync(join(dir, id), { recursive: true, force: true });
+  rmSync(pointsFile(dir, id), { force: true });
+  return true;
+}
+
+/**
  * A session's key points (points.ts): a file beside its transcript, so the transcript stays
  * written by its Session alone and its time stays that of the last activity.
  */
@@ -375,43 +417,58 @@ function withoutDanglingToolUse(messages: MessageParam[]): MessageParam[] {
  */
 export function sessionHistory(dir: string): ConversationHistory {
   // Read again only once a file changed: each turn's recall reads every past conversation.
-  const read = new Map<string, { mtimeMs: number; size: number; messages: PastMessage[] }>();
+  type Read = { mtimeMs: number; size: number; messages: PastMessage[]; offRecord: boolean };
+  const read = new Map<string, Read>();
+  /**
+   * A session as plugins may read it. One off the record reads as nothing at all: every
+   * reader of past conversations (key points, recall, the day's pass and notes, search)
+   * comes through here, so none needs to know (DESIGN.md §11, M3).
+   */
+  const readSession = (sessionId: string): Read | undefined => {
+    const file = join(dir, `${sessionId}.jsonl`);
+    if (!isSessionId(sessionId) || !existsSync(file)) return undefined;
+    const { mtimeMs, size } = statSync(file);
+    const known = read.get(sessionId);
+    if (known && known.mtimeMs === mtimeMs && known.size === size) return known;
+    let outside = false;
+    let offRecord = false;
+    const messages = readRecords(file).flatMap((r): PastMessage[] => {
+      if (r.type === "meta" && r.offRecord) offRecord = true;
+      if (r.type === "outside") outside = true;
+      if (r.type !== "message" || r.message.role === "system") return [];
+      if (promptText(r.message) !== null) outside = false;
+      const { role } = r.message;
+      const text = role === "user" ? promptText(r.message) : assistantText(r.message);
+      if (!text) return [];
+      return [{ role, text, ts: r.ts, ...(outside && role === "assistant" && { outside }) }];
+    });
+    const fresh = { mtimeMs, size, messages: offRecord ? [] : messages, offRecord };
+    read.set(sessionId, fresh);
+    return fresh;
+  };
   const history: ConversationHistory = {
     sessions() {
       if (!existsSync(dir)) return [];
       return readdirSync(dir)
         .filter((f) => f.endsWith(".jsonl"))
-        .map((f) => {
+        .flatMap((f) => {
           const id = f.replace(/\.jsonl$/, "");
+          const known = readSession(id);
+          if (!known || known.offRecord) return [];
           // When the last thing was said, as Session.list has it: a file's time changes
           // when it is copied or backed up.
-          const last = history.messages(id).at(-1)?.ts;
-          return { id, updatedAt: last ?? statSync(join(dir, f)).mtime.toISOString() };
+          const last = known.messages.at(-1)?.ts;
+          return [{ id, updatedAt: last ?? statSync(join(dir, f)).mtime.toISOString() }];
         })
         .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
     },
     messages(sessionId) {
-      const file = join(dir, `${sessionId}.jsonl`);
-      if (!isSessionId(sessionId) || !existsSync(file)) return [];
-      const { mtimeMs, size } = statSync(file);
-      const known = read.get(sessionId);
-      if (known && known.mtimeMs === mtimeMs && known.size === size) return known.messages;
-      let outside = false;
-      const messages = readRecords(file).flatMap((r): PastMessage[] => {
-        if (r.type === "outside") outside = true;
-        if (r.type !== "message" || r.message.role === "system") return [];
-        if (promptText(r.message) !== null) outside = false;
-        const { role } = r.message;
-        const text = role === "user" ? promptText(r.message) : assistantText(r.message);
-        if (!text) return [];
-        return [{ role, text, ts: r.ts, ...(outside && role === "assistant" && { outside }) }];
-      });
-      read.set(sessionId, { mtimeMs, size, messages });
-      return messages;
+      return readSession(sessionId)?.messages ?? [];
     },
     points(sessionId) {
       const file = pointsFile(dir, sessionId);
       if (!isSessionId(sessionId) || !existsSync(file)) return undefined;
+      if (readSession(sessionId)?.offRecord) return undefined;
       try {
         const p = JSON.parse(readFileSync(file, "utf8")) as SessionPoints;
         // A file edited by hand or damaged is no points, rather than a failing reader.

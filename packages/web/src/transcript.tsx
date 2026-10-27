@@ -50,6 +50,8 @@ export function Timeline(props: {
   fill: boolean;
   /** Changes when the view should go back to the end of the conversation going on. */
   toEnd: unknown;
+  /** The conversation going on, or about to start, is off the record: said up front. */
+  offRecord: boolean;
 }) {
   const { chat } = props;
   const id = chat?.id;
@@ -130,6 +132,12 @@ export function Timeline(props: {
           key={id ?? ""}
           className={`now${props.fill ? " fill" : ""}${shown.arrived ? " arrived" : ""}`}
         >
+          {props.offRecord && (
+            <p className="off-record-note">
+              Off the record: nothing from this conversation is kept, and it's deleted when it ends.
+              Your model provider's own keeping is outside Ivy.
+            </p>
+          )}
           {chat &&
             parts.map((s) => (
               // Items are only appended (a tool's result fills its own), so where each starts

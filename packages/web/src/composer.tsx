@@ -107,6 +107,8 @@ export function Composer(props: {
   replying: boolean;
   /** No model chosen yet (a new install): nothing can be sent until one is. */
   noModel: boolean;
+  /** Writing off the record: shown where the user writes, as a reminder. */
+  offRecord: boolean;
   onSend(text: string, images: string[]): Promise<void>;
   onStop(): void;
 }) {
@@ -201,7 +203,7 @@ export function Composer(props: {
     // Clicking anywhere in the box writes in it.
     // biome-ignore lint/a11y/noStaticElementInteractions lint/a11y/useKeyWithClickEvents: the textarea takes the keys
     <div
-      className="composer"
+      className={`composer${props.offRecord ? " off-record" : ""}`}
       onClick={(e) => {
         if (!(e.target as Element).closest("button")) input.current?.focus();
       }}
@@ -235,7 +237,9 @@ export function Composer(props: {
               ? "Ivy is replying; a message now is sent next"
               : props.replying
                 ? "Reply in this conversation"
-                : "Talk to Ivy"
+                : props.offRecord
+                  ? "Off the record · nothing is kept"
+                  : "Talk to Ivy"
         }
         onChange={(e) => setText(e.target.value)}
         onPaste={(e) => {

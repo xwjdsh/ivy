@@ -5,8 +5,8 @@ import type { SessionSummary } from "@ivy/protocol";
 import type { Chat } from "./chat.ts";
 
 export interface Presence {
-  /** away: the daemon can't be reached; waiting: for the user's answer. */
-  tone: "here" | "busy" | "waiting" | "away";
+  /** away: the daemon can't be reached; waiting: for the user's answer; off: off the record. */
+  tone: "here" | "busy" | "waiting" | "away" | "off";
   text: string;
 }
 
@@ -14,6 +14,8 @@ export function presence(
   chat: Chat | undefined,
   sessions: SessionSummary[],
   connected: boolean,
+  /** The conversation going on, or the one about to start, is off the record. */
+  offRecord = false,
 ): Presence {
   if (!connected) return { tone: "away", text: "Away" };
   if (chat?.running) {
@@ -25,5 +27,5 @@ export function presence(
   if (sessions.some((s) => s.busy && s.id !== chat?.id)) {
     return { tone: "busy", text: "Busy in another chat" };
   }
-  return { tone: "here", text: "Here" };
+  return offRecord ? { tone: "off", text: "Off the record" } : { tone: "here", text: "Here" };
 }

@@ -18,6 +18,9 @@ test("presence follows what the daemon reports, nothing more", () => {
   const running: Chat = { ...idle, running: prompt };
   expect(presence(idle, [], false)).toEqual({ tone: "away", text: "Away" });
   expect(presence(idle, [], true)).toEqual({ tone: "here", text: "Here" });
+  // Off the record shows where "Here" would; what she is doing still shows as itself.
+  expect(presence(idle, [], true, true)).toEqual({ tone: "off", text: "Off the record" });
+  expect(presence(running, [], true, true).text).toBe("Thinking");
   expect(presence(running, [], true).text).toBe("Thinking");
   expect(presence({ ...running, streaming: "Hel" }, [], true).text).toBe("Writing");
   const tool: Chat = {

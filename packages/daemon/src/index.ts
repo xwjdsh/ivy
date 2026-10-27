@@ -73,6 +73,7 @@ export async function serve(opts: ServeOptions): Promise<Served> {
     onDemand: opts.onDemand ?? false,
   });
   daemon = started;
+  live.forgetLeftovers();
   return {
     ivy,
     sessions: live,
