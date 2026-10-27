@@ -170,10 +170,10 @@ export function Card(props: {
             />
             <span className="note">
               {props.offRecord.open
-                ? "Nothing from this conversation is kept, and it's deleted when it ends."
+                ? "Not kept, and deleted when it ends."
                 : props.offRecord.on
-                  ? "On for all of this conversation: only a new one can start without it."
-                  : "Only a new conversation can start off the record."}
+                  ? "On until this conversation ends."
+                  : "Only for a new conversation."}
             </span>
           </label>
           <Hood>

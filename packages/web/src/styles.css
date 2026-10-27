@@ -2040,9 +2040,10 @@ main {
   font-size: 13px;
 }
 
-/* Under the name and the switch, across the row. */
+/* Under the name and the switch, across the row, from the left as the name is. */
 .card .off-record .note {
   grid-column: 1 / -1;
+  text-align: left;
   color: var(--faint);
   font-size: 11.5px;
 }
