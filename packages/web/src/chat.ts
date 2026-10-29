@@ -102,8 +102,6 @@ export interface Chat {
   /** Prompts waiting for it, oldest first. */
   queue: Prompt[];
   tokens: Tokens;
-  /** The whole prompt of its last model call (see SessionView). */
-  context: number;
   permission?: PermissionAsk;
   /** Off the record: kept nowhere, deleted once let go. */
   offRecord?: boolean;
@@ -119,7 +117,6 @@ export const emptyChat = (id: string, offRecord = false): Chat => ({
   streaming: "",
   queue: [],
   tokens: NO_TOKENS,
-  context: 0,
 });
 
 export const chatOf = (view: SessionView): Chat => ({
@@ -129,7 +126,6 @@ export const chatOf = (view: SessionView): Chat => ({
   running: view.running,
   queue: view.queue,
   tokens: view.tokens,
-  context: view.context,
   permission: view.permission,
   offRecord: view.offRecord === true,
 });
@@ -189,10 +185,8 @@ export function apply(chat: Chat, e: SessionChange): Chat {
             : item,
         ),
       };
-    case "step": {
-      const used = tokensFromUsage(e.usage);
-      return { ...settle(chat), tokens: addTokens(chat.tokens, used), context: used.in };
-    }
+    case "step":
+      return { ...settle(chat), tokens: addTokens(chat.tokens, tokensFromUsage(e.usage)) };
     case "notice":
       return { ...chat, items: [...chat.items, { kind: "note", text: e.text, tone: "warn" }] };
     case "permission":

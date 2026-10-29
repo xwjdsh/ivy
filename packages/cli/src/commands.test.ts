@@ -6,7 +6,6 @@ test("plugin commands go after the built-ins but before /help and /exit", () => 
   expect(names).toEqual([
     "/new",
     "/clear",
-    "/resume",
     "/model",
     "/effort",
     "/usage",

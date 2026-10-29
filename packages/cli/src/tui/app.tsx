@@ -9,7 +9,6 @@ import {
   type PermissionAsk,
   type Prompt,
   type SessionEvent,
-  type SessionSummary,
   type SessionView,
   type Switched,
   stopNote,
@@ -27,7 +26,6 @@ import { formatCall } from "../verbose-format.ts";
 import { Input } from "./input.tsx";
 import { historyItems, type Item, itemId, sentText } from "./items.ts";
 import { Picker, pickerHeight } from "./picker.tsx";
-import { SessionPicker } from "./session-picker.tsx";
 import {
   ItemView,
   PermissionPrompt,
@@ -54,8 +52,6 @@ export interface AppProps {
   history: InputHistory;
   screen: Screen;
   verbose: boolean;
-  /** Open the session picker on start (`ivy -r` without an id). */
-  pickSession?: boolean;
 }
 
 interface PendingTool {
@@ -101,7 +97,6 @@ export function App({
   history,
   screen,
   verbose,
-  pickSession = false,
 }: AppProps) {
   const { exit } = useApp();
   const { columns, rows } = useWindowSize();
@@ -198,8 +193,18 @@ export function App({
     setStreaming(rest);
   };
 
+  /**
+   * While a message goes to the thread, the events of other conversations: the one it starts
+   * shows from them, so nothing of the reply is missed before it is shown.
+   */
+  const early = useRef<SessionEvent[] | undefined>(undefined);
+  /** Messages on their way to the thread: the events are kept until the last has arrived. */
+  const toThread = useRef(0);
   const onEvent = (e: SessionEvent) => {
-    if (e.sessionId !== sessionRef.current) return;
+    if (e.sessionId !== sessionRef.current) {
+      early.current?.push(e);
+      return;
+    }
     switch (e.type) {
       case "prompt":
         setQueue((q) => [...q, e.prompt]);
@@ -332,16 +337,9 @@ export function App({
     return () => stop.abort();
   }, [client, info]);
 
-  const resumeSession = (id: string) => {
-    client.session(id).then((view) => show(view, `Resumed ${id}`), failed);
-  };
-
-  // At most one dialog at a time: the session, model or effort picker.
+  // At most one dialog at a time: the model or effort picker.
   const [dialog, setDialog] = useState<
-    | { kind: "sessions"; sessions: SessionSummary[] }
-    | { kind: "model"; models: string[] }
-    | { kind: "effort" }
-    | null
+    { kind: "model"; models: string[] } | { kind: "effort" } | null
   >(null);
   const closeDialog = () => setDialog(null);
 
@@ -373,18 +371,6 @@ export function App({
     // The daemon may have resolved a bare id to "<provider>/<id>": show what it chose.
     client.setModel(name).then((result) => switched(`Model: ${result.model}`, result), failed);
   };
-  const openPicker = () => {
-    client.sessions().then((all) => {
-      const others = all.filter((s) => s.id !== sessionRef.current);
-      if (others.length > 0) setDialog({ kind: "sessions", sessions: others });
-      else info("No other sessions to resume.");
-    }, failed);
-  };
-  // biome-ignore lint/correctness/useExhaustiveDependencies: run once on mount
-  useEffect(() => {
-    if (pickSession) openPicker();
-  }, []);
-
   const runCommand = (line: string) => {
     const [cmd = "", ...args] = line.trim().split(/\s+/);
     const id = sessionRef.current;
@@ -430,11 +416,7 @@ export function App({
         client
           .createSession()
           .then((next) => client.session(next))
-          .then((view) => show(view, `New session ${view.id}`), failed);
-        return;
-      case "/resume":
-        if (args[0]) resumeSession(args[0]);
-        else openPicker();
+          .then((view) => show(view, "A fresh start."), failed);
         return;
       default: {
         if (!pluginCommands.some((c) => c.name === cmd)) {
@@ -453,8 +435,33 @@ export function App({
   const onSubmit = (text: string) => {
     history.add(text);
     if (text.startsWith("/")) runCommand(text);
-    // The daemon runs it now, or after the running turn; either way it shows in events.
-    else client.send(sessionRef.current, text).catch(failed);
+    // The daemon sends it on in the conversation going on (now, or after the running turn), or
+    // starts the next one after a pause; this shows whichever it went to.
+    else {
+      toThread.current++;
+      early.current ??= [];
+      client
+        .sendToThread(text)
+        .then(async (sent) => {
+          const id = sent.sessionId;
+          if (id === sessionRef.current) return;
+          if (sent.started) {
+            // New, so all it holds came since it was sent.
+            const since = (early.current ?? []).filter((e) => e.sessionId === id);
+            show(
+              { id, entries: [], queue: [], tokens: NO_TOKENS },
+              "A new conversation, after a pause.",
+            );
+            for (const e of since) onEventRef.current(e);
+          } else {
+            show(await client.session(id), "Ivy's message.");
+          }
+        })
+        .catch(failed)
+        .finally(() => {
+          if (--toThread.current === 0) early.current = undefined;
+        });
+    }
   };
 
   const answerPermission = (choice: PermissionAnswer) => {
@@ -494,7 +501,6 @@ export function App({
     pendingTools.length * 2 +
     (queue.length > 0 ? queue.length + 1 : 0) +
     (permission ? permissionPromptHeight(permission) : 0) +
-    (dialog?.kind === "sessions" ? pickerHeight(dialog.sessions.length) : 0) +
     (dialog?.kind === "model" ? pickerHeight(dialog.models.length, true) : 0) +
     (dialog?.kind === "effort" ? state.efforts.length + 4 : 0) +
     completions.length;
@@ -581,17 +587,6 @@ export function App({
           onPick={(level) => {
             closeDialog();
             switchEffort(level);
-          }}
-          onCancel={closeDialog}
-        />
-      )}
-      {dialog?.kind === "sessions" && (
-        <SessionPicker
-          sessions={dialog.sessions}
-          width={width}
-          onPick={(id) => {
-            closeDialog();
-            resumeSession(id);
           }}
           onCancel={closeDialog}
         />

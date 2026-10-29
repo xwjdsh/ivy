@@ -29,6 +29,7 @@ test("sessions persist, reload and list newest first", async () => {
   Session.load(dir, a.id).append({ role: "user", content: "follow-up" });
   expect(Session.list(dir).map((s) => s.id)).toEqual([a.id, b.id]);
   expect(Session.list(dir)[0]).toMatchObject({ turns: 2, preview: "first question" });
+  expect(Session.latest(dir)).toMatchObject({ id: a.id, turns: 2 });
 });
 
 test("loading an unknown session throws", () => {

@@ -44,6 +44,8 @@ import {
   SetWritesFirst,
   type Switched,
   TestProvider,
+  type Thread,
+  ThreadPrompt,
   UpdateProvider,
   type Uploaded,
 } from "@ivy/protocol";
@@ -332,6 +334,14 @@ export function api(ivy: Ivy, sessions: Sessions): Routes {
         return Response.json(
           findMessages(ivy.history, new URL(req.url).searchParams.get("q") ?? ""),
         );
+      case "GET /thread": {
+        const thread: Thread = { sessionId: sessions.current() };
+        return Response.json(thread);
+      }
+      case "POST /thread": {
+        const { text, images, display } = await body(req, ThreadPrompt);
+        return Response.json(sessions.sendToThread(text, images, display), { status: 202 });
+      }
       case "GET /sessions":
         return Response.json(sessions.list());
       case "POST /sessions": {

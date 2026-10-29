@@ -55,6 +55,8 @@ export function Timeline(props: {
   toEnd: unknown;
   /** The conversation going on, or about to start, is off the record: said up front. */
   offRecord: boolean;
+  /** It went on from one off the record, which ended: it is kept, and says so. */
+  backOnRecord?: boolean;
   /** When the conversation going on began, set apart from the past above it by this. */
   began?: string;
   /** Set (a new object each time) to go to a message found in the conversation going on. */
@@ -165,6 +167,12 @@ export function Timeline(props: {
           className={`now${props.fill ? " fill" : ""}${shown.arrived ? " arrived" : ""}`}
         >
           {props.began && <Divider when={props.began} />}
+          {props.backOnRecord && (
+            <p className="off-record-note">
+              Back on the record: the conversation off the record has ended, and this one is kept as
+              usual.
+            </p>
+          )}
           {props.offRecord && (
             <p className="off-record-note">
               Off the record: nothing from this conversation is kept, and it's deleted when it ends.

@@ -21,7 +21,7 @@ import { forgetStretch, History, keepStretch } from "./history.tsx";
 import { presence } from "./presence.ts";
 import { Card, Contact } from "./profile.tsx";
 import { type Found, Search } from "./search.tsx";
-import { carriesOn, isHers, when } from "./sessions.ts";
+import { when } from "./sessions.ts";
 import { SettingsPage } from "./settings.tsx";
 import { Timeline } from "./transcript.tsx";
 import { ImageViewer } from "./viewer.tsx";
@@ -86,6 +86,7 @@ export function App() {
   useEffect(() => {
     const stop = new AbortController();
     const onEvent = (e: SessionEvent) => {
+      if (e.sessionId !== chatId.current) early.current?.push(e);
       if (e.sessionId === chatId.current) {
         setChat((c) => (c && c.id === e.sessionId ? apply(c, e) : c));
       }
@@ -107,13 +108,14 @@ export function App() {
       if (!up) return;
       const carryOn = first && !chatId.current && !sessionInHash();
       first = false;
-      api.sessions().then((list) => {
-        setSessions(list);
-        const last = list[0];
-        if (carryOn && !chatId.current && last && carriesOn(last)) {
-          location.hash = encodeURIComponent(last.id);
-        }
-      }, failed);
+      api.sessions().then(setSessions, failed);
+      if (carryOn) {
+        api.thread().then(({ sessionId }) => {
+          if (sessionId && !chatId.current && !sessionInHash()) {
+            location.hash = encodeURIComponent(sessionId);
+          }
+        }, failed);
+      }
       api.state().then(setState, failed);
       void show(chatId.current ?? sessionInHash());
     };
@@ -221,6 +223,15 @@ export function App() {
 
   /** A conversation being started: a message sent meanwhile goes to it too, not to another. */
   const starting = useRef<Promise<string> | undefined>(undefined);
+  /**
+   * While a message goes to the thread, the events of other conversations: the one it starts
+   * shows from them, so nothing of the reply is missed before it is shown.
+   */
+  const early = useRef<SessionEvent[] | undefined>(undefined);
+  /** Messages on their way to the thread: the events are kept until the last has arrived. */
+  const toThread = useRef(0);
+  /** A conversation the thread went on in after one off the record: said so, at its top. */
+  const [backOnRecord, setBackOnRecord] = useState<string | undefined>();
 
   const send = async (text: string, images: string[]) => {
     setError(undefined);
@@ -228,41 +239,50 @@ export function App() {
     setToEnd((n) => (n ?? 0) + 1);
     setJump(undefined); // gone to; not again when the view changes
     try {
-      const pending = starting.current;
-      let id = pending ? await pending : chat?.id;
-      let off = offNext;
-      const summary = chat && sessions.find((s) => s.id === chat.id);
-      const hers = sessions[0];
-      if (pending) {
-        // Goes where the message before it went.
-      } else if (chat && summary && hers && hers !== summary && isHers(hers) && carriesOn(hers)) {
-        // She wrote while this was on screen: her message is newer than it (it is listed, and
-        // hers first), and what is written now answers it, where she wrote it.
-        keepStretch(chat);
-        history.replaceState(null, "", `#${encodeURIComponent(hers.id)}`);
-        await show(hers.id);
-        id = hers.id;
-      } else if (chat && summary && !chat.running && !carriesOn(summary, chat.context)) {
-        // After a pause, a new day, or once it has grown too large, this starts the next
-        // stretch; one off the record stays so, as a fresh start from it does (see open).
-        keepStretch(chat);
-        off ||= chat.offRecord === true;
-        id = undefined;
-      }
-      if (!id) {
-        starting.current = api.createSession(off);
-        try {
-          id = await starting.current;
-        } finally {
-          starting.current = undefined;
+      if (!chat || starting.current) {
+        // A fresh start made here: on or off the record, as the switch says.
+        let id = await starting.current;
+        if (!id) {
+          starting.current = api.createSession(offNext);
+          try {
+            id = await starting.current;
+          } finally {
+            starting.current = undefined;
+          }
+          startedHere.current.add(id);
+          chatId.current = id;
+          setChat(emptyChat(id, offNext));
+          setOffNext(false);
+          history.replaceState(null, "", `#${encodeURIComponent(id)}`);
         }
-        startedHere.current.add(id);
-        chatId.current = id;
-        setChat(emptyChat(id, off));
-        setOffNext(false);
-        history.replaceState(null, "", `#${encodeURIComponent(id)}`);
+        await api.send(id, text, images);
+        return;
       }
-      await api.send(id, text, images);
+      // Else the daemon decides where it goes: on here, in her message newer than this, or,
+      // after a pause, a new day or once this has grown too large, the next conversation.
+      toThread.current++;
+      early.current ??= [];
+      try {
+        const sent = await api.sendToThread(text, images);
+        const id = sent.sessionId;
+        // Here already, or switched to by a message sent just before this one.
+        if (id === chat.id || id === chatId.current) return;
+        keepStretch(chat);
+        // Off the record lasts while its conversation does; the next is kept, and says so.
+        if (sent.started && chat.offRecord) setBackOnRecord(id);
+        history.replaceState(null, "", `#${encodeURIComponent(id)}`);
+        if (sent.started) {
+          // New, so all it holds came since it was sent.
+          startedHere.current.add(id);
+          chatId.current = id;
+          const since = early.current.filter((e) => e.sessionId === id);
+          setChat(since.reduce((c, e) => apply(c, e), emptyChat(id)));
+        } else {
+          await show(id); // her message, newer than this
+        }
+      } finally {
+        if (--toThread.current === 0) early.current = undefined;
+      }
     } catch (err) {
       // Off the record and left idle, it ended and was deleted, as the user was told: start
       // afresh, with what they wrote still in the composer.
@@ -409,6 +429,7 @@ export function App() {
           )}
           fill={!!chat && !startedHere.current.has(chat.id)}
           offRecord={offRecord}
+          backOnRecord={chat !== undefined && chat.id === backOnRecord}
           began={began}
         />
         <div className="dock">

@@ -9,6 +9,7 @@
 import { type Config, Session, sessionHistory, type Writer } from "@ivy/kernel";
 import { localDate, localTime, type Reminder, rank } from "@ivy/plugin-api";
 import type { DaemonEvent } from "./server.ts";
+import { WAITS_MS } from "./thread.ts";
 import PROMPT from "./writes-first.md" with { type: "text" };
 
 /** The writer's answer when the user already told her, or asking no longer makes sense. */
@@ -20,8 +21,6 @@ const MAX_SAID_CHARS = 4000;
 const LOOK_BACK_MS = 7 * 24 * 60 * 60 * 1000;
 /** The user wrote this recently: they are here, and a conversation they're in brings it up. */
 const HERE_MS = 60 * 60 * 1000;
-/** Her unanswered message holds her back this long; after, it is let go, as a follow-up is. */
-const UNANSWERED_MS = 3 * 24 * 60 * 60 * 1000;
 /** Held back, she isn't asked again this soon: the check reads every conversation. */
 const RECHECK_MS = 5 * 60 * 1000;
 const heldBack = new WeakMap<WriteFirstOptions, number>();
@@ -46,7 +45,7 @@ export function mayWrite(opts: WriteFirstOptions, now: Date): string | undefined
   const sent = hers.filter((s) => localDate(new Date(s.createdAt)) === today).length;
   if (sent >= config.writes_first_per_day) return "enough for today";
   const last = hers[0];
-  if (last && last.turns === 0 && now.getTime() - Date.parse(last.createdAt) < UNANSWERED_MS) {
+  if (last && last.turns === 0 && now.getTime() - Date.parse(last.createdAt) < WAITS_MS) {
     return "her last one is unanswered";
   }
   const latest = all.find((s) => !s.fromIvy || s.turns > 0);

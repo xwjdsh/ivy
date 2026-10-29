@@ -1,17 +1,9 @@
-// The talk as one thread: conversations are the stretches of it, split where it paused (a few
-// hours apart, a new day, or grown too large for the model), read back whole, oldest first, the
-// way a long conversation with someone reads when you scroll back.
+// The talk as one thread: conversations are the stretches of it, split by the daemon where it
+// paused (thread.ts there), read back whole, oldest first, the way a long conversation with
+// someone reads when you scroll back.
 
-import type { SessionSummary } from "@ivy/protocol";
-
-/** A pause this long ends a stretch of the talk: what is written after it starts the next. */
-export const PAUSE_MS = 3 * 60 * 60 * 1000;
-/** A new day starts at this hour, as her notes' days do (plugin-api's ROLLOVER_HOUR). */
+/** A new day starts at this hour, as the thread's and her notes' days do (plugin-api's). */
 const ROLLOVER_HOUR = 4;
-/** A stretch whose prompt has grown this large ends: each turn sends all of it again. */
-export const MAX_CONTEXT = 80_000;
-/** A message of Ivy's unanswered this long is let go, as the daemon lets it go (writes-first). */
-const HERS_MS = 3 * 24 * 60 * 60 * 1000;
 
 /** The day a time belongs to, a new one starting at 04:00: past midnight is still the night. */
 const talkDay = (d: Date) =>
@@ -23,20 +15,6 @@ const talkDay = (d: Date) =>
     d.getMinutes(),
   );
 const dayOf = (t: number) => talkDay(new Date(t)).toDateString();
-
-/** A message of Ivy's, written first and not answered yet. */
-export const isHers = (s: SessionSummary) => s.fromIvy === true && s.turns === 0;
-
-/**
- * Whether what is written now carries on this conversation rather than starting the next
- * stretch: it was active within a pause, on the same day, and hasn't grown too large. A message
- * of Ivy's, unanswered, is answered where she wrote it, for as long as she waits for it.
- */
-export function carriesOn(s: SessionSummary, context = 0, now = Date.now()): boolean {
-  const at = Date.parse(s.updatedAt);
-  if (isHers(s)) return now - at < HERS_MS;
-  return now - at < PAUSE_MS && dayOf(at) === dayOf(now) && context < MAX_CONTEXT;
-}
 
 const midnight = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
 

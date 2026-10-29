@@ -23,24 +23,11 @@ const HELP = `Usage: ivy [options] [prompt]
 
   ivy                 Start the interactive TUI
   ivy "question"      Ask once, print the answer and exit
-  ivy -c              Continue the most recent session
-  ivy -r [id]         Resume a session (pick from a list without an id)
   ivy daemon          Run Ivy in the background (the app starts it)
 
 Options:
-  -c, --continue      Continue the most recent session
-  -r, --resume [id]   Resume session <id>, or pick one
   -v, --verbose       Show request/response details and hidden context
   -h, --help          Show this help`;
-
-/** parseArgs has no optional option values; a bare -r/--resume becomes "" (= open the picker). */
-function withOptionalResumeValue(argv: string[]): string[] {
-  return argv.flatMap((arg, i) => {
-    const bare = arg === "-r" || arg === "--resume";
-    const next = argv[i + 1];
-    return bare && (next === undefined || next.startsWith("-")) ? [arg, ""] : [arg];
-  });
-}
 
 async function main(): Promise<number> {
   if (process.argv[2] === "daemon") {
@@ -54,11 +41,9 @@ async function main(): Promise<number> {
     return 0;
   }
   const { values, positionals } = parseArgs({
-    args: withOptionalResumeValue(process.argv.slice(2)),
+    args: process.argv.slice(2),
     allowPositionals: true,
     options: {
-      continue: { type: "boolean", short: "c" },
-      resume: { type: "string", short: "r" },
       verbose: { type: "boolean", short: "v" },
       help: { type: "boolean", short: "h" },
     },
@@ -80,21 +65,14 @@ async function main(): Promise<number> {
   const paths = resolvePaths();
   const client = await connect(paths);
 
-  let sessionId: string;
-  const pickSession = values.resume === "";
-  if (values.resume) {
-    sessionId = values.resume;
-  } else if (values.continue) {
-    const last = (await client.sessions())[0];
-    sessionId = last ? last.id : await client.createSession();
-  } else {
-    sessionId = await client.createSession(interactive ? "markdown" : "plain");
-  }
-
+  // A question asked once is a conversation of its own, in plain text for scripts and pipes;
+  // the terminal opens on the thread, where the window is.
   if (!interactive) {
+    const sessionId = await client.createSession("plain");
     const end = await runPlain(client, sessionId, prompt, verbose);
     return end.stopReason === "error" ? 1 : 0;
   }
+  const sessionId = (await client.thread()).sessionId ?? (await client.createSession());
   const [session, state, pluginCommands] = await Promise.all([
     client.session(sessionId),
     client.state(),
@@ -112,7 +90,6 @@ async function main(): Promise<number> {
       history,
       screen,
       verbose,
-      pickSession,
     }),
     {
       exitOnCtrlC: false,

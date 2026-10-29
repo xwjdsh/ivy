@@ -555,3 +555,61 @@ test("a search shows with its result when the session is opened, even across a p
   ]);
   await client.close();
 });
+
+test("the thread: on in the conversation going on, or the next one after a pause", async () => {
+  const { call, clock } = await start([
+    { stop: "end_turn", content: [text("one")] },
+    { stop: "end_turn", content: [text("two")] },
+    { stop: "end_turn", content: [text("three")] },
+  ]);
+  const settled = async (id: string) => {
+    for (let i = 0; i < 200; i++) {
+      const view = (await call("GET", `/sessions/${id}`)).body as SessionView;
+      if (!view.running && view.queue.length === 0) return;
+      await Bun.sleep(5);
+    }
+  };
+  expect((await call("GET", "/thread")).body).toEqual({});
+  const first = (await call("POST", "/thread", { text: "hi" })).body;
+  expect(first.started).toBe(true);
+  // Sent close together: the same conversation, though it isn't written yet.
+  const second = (await call("POST", "/thread", { text: "and more" })).body;
+  expect(second).toMatchObject({ sessionId: first.sessionId, started: false });
+  await settled(first.sessionId);
+  expect((await call("GET", "/thread")).body).toEqual({ sessionId: first.sessionId });
+
+  // After a pause, the next one; a fresh start made meanwhile is where it goes instead.
+  clock.now += 4 * 60 * 60 * 1000;
+  expect((await call("GET", "/thread")).body).toEqual({});
+  const fresh = (await call("POST", "/sessions", {})).body.id;
+  const third = (await call("POST", "/thread", { text: "again" })).body;
+  expect(third).toMatchObject({ sessionId: fresh, started: false });
+  await settled(fresh);
+});
+
+test("the thread goes on off the record while it lasts, and never in a question asked once", async () => {
+  const { call } = await start([
+    { stop: "end_turn", content: [text("one")] },
+    { stop: "end_turn", content: [text("two")] },
+    { stop: "end_turn", content: [text("three")] },
+  ]);
+  const settled = async (id: string) => {
+    for (let i = 0; i < 200; i++) {
+      const view = (await call("GET", `/sessions/${id}`)).body as SessionView;
+      if (!view.running && view.queue.length === 0) return;
+      await Bun.sleep(5);
+    }
+  };
+  const off = (await call("POST", "/sessions", { offRecord: true })).body.id;
+  await call("POST", `/sessions/${off}/prompts`, { text: "between us" });
+  await settled(off);
+  const on = (await call("POST", "/thread", { text: "still" })).body;
+  expect(on).toMatchObject({ sessionId: off, started: false });
+  await settled(off);
+
+  // `ivy "…"`: plain text, a conversation of its own, never where the thread goes on.
+  const once = (await call("POST", "/sessions", { display: "plain" })).body.id;
+  await call("POST", `/sessions/${once}/prompts`, { text: "quick question" });
+  await settled(once);
+  expect((await call("GET", "/thread")).body).toEqual({});
+});

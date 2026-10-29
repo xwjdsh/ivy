@@ -21,6 +21,8 @@ import {
   type SessionSummary,
   type SessionView,
   type Switched,
+  type Thread,
+  type ThreadSent,
 } from "@ivy/protocol";
 
 /** A daemon `ivy` starts exits once no client has used it for this long. */
@@ -78,6 +80,10 @@ export class DaemonClient {
     return (await this.request<{ id: string }>("POST", "/sessions", { display })).id;
   }
   session = (id: string) => this.request<SessionView>("GET", `/sessions/${id}`);
+  /** The conversation the next message goes on in, if any. */
+  thread = () => this.request<Thread>("GET", "/thread");
+  /** A message to the thread: the daemon sends it on in the conversation going on, or a new one. */
+  sendToThread = (text: string) => this.request<ThreadSent>("POST", "/thread", { text });
   send = (id: string, text: string) =>
     this.request<Prompt>("POST", `/sessions/${id}/prompts`, { text });
   withdraw = (id: string, promptId: string) =>

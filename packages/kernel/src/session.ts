@@ -172,32 +172,24 @@ export class Session {
     if (!existsSync(dir)) return [];
     return readdirSync(dir)
       .filter((f) => f.endsWith(".jsonl"))
-      .map((f) => {
-        const file = join(dir, f);
-        const records = readRecords(file);
-        const meta = records.find((r) => r.type === "meta");
-        // What was taken back isn't shown in the list either.
-        const takenBack = takenBackAt(records);
-        const prompts = records.flatMap((r, at) => {
-          const text = r.type === "message" ? promptText(r.message) : null;
-          return text === null || takenBack(at) ? [] : [text];
-        });
-        const last = records.at(-1);
-        const createdAt = meta?.type === "meta" ? meta.createdAt : "";
-        return {
-          id: f.replace(/\.jsonl$/, ""),
-          file,
-          createdAt,
-          updatedAt: last && last.type !== "meta" ? last.ts : createdAt,
-          turns: prompts.length,
-          // One she started has her words first, until the user says something.
-          preview: (prompts[0] ?? openingOf(records) ?? "").slice(0, 80),
-          ...(meta?.type === "meta" && meta.offRecord && { offRecord: true as const }),
-          ...(meta?.type === "meta" && meta.fromIvy && { fromIvy: true as const }),
-        };
-      })
+      .map((f) => summaryOf(dir, f))
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
       .slice(0, limit);
+  }
+
+  /**
+   * The session written to last, by its file's time: a stat for each, one file read, as the
+   * thread asks on every message.
+   */
+  static latest(dir: string): SessionSummary | undefined {
+    if (!existsSync(dir)) return undefined;
+    let latest: { f: string; at: number } | undefined;
+    for (const f of readdirSync(dir)) {
+      if (!f.endsWith(".jsonl")) continue;
+      const at = statSync(join(dir, f)).mtimeMs;
+      if (!latest || at > latest.at) latest = { f, at };
+    }
+    return latest && summaryOf(dir, latest.f);
   }
 
   /**
@@ -432,6 +424,32 @@ function openingOf(records: SessionRecord[]): string | undefined {
     if (r.message.role === "assistant") return assistantText(r.message) ?? undefined;
   }
   return undefined;
+}
+
+/** A session's line in the list, read from its file. */
+function summaryOf(dir: string, f: string): SessionSummary {
+  const file = join(dir, f);
+  const records = readRecords(file);
+  const meta = records.find((r) => r.type === "meta");
+  // What was taken back isn't shown in the list either.
+  const takenBack = takenBackAt(records);
+  const prompts = records.flatMap((r, at) => {
+    const text = r.type === "message" ? promptText(r.message) : null;
+    return text === null || takenBack(at) ? [] : [text];
+  });
+  const last = records.at(-1);
+  const createdAt = meta?.type === "meta" ? meta.createdAt : "";
+  return {
+    id: f.replace(/\.jsonl$/, ""),
+    file,
+    createdAt,
+    updatedAt: last && last.type !== "meta" ? last.ts : createdAt,
+    turns: prompts.length,
+    // One she started has her words first, until the user says something.
+    preview: (prompts[0] ?? openingOf(records) ?? "").slice(0, 80),
+    ...(meta?.type === "meta" && meta.offRecord && { offRecord: true as const }),
+    ...(meta?.type === "meta" && meta.fromIvy && { fromIvy: true as const }),
+  };
 }
 
 /**

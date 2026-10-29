@@ -15,6 +15,8 @@ import {
   type SessionView,
   type Settings,
   type Switched,
+  type Thread,
+  type ThreadSent,
   type Uploaded,
 } from "@ivy/protocol";
 
@@ -55,6 +57,11 @@ export const api = {
   setWritesFirst: (on: boolean) => request<DaemonState>("PUT", "/writes-first", { on }),
   setEffort: (effort: string) => request<Switched>("PUT", "/effort", { effort }),
   sessions: () => request<SessionSummary[]>("GET", "/sessions"),
+  /** The conversation the next message goes on in, if any. */
+  thread: () => request<Thread>("GET", "/thread"),
+  /** A message to the thread: the daemon sends it on here, or starts the next conversation. */
+  sendToThread: (text: string, images: string[]) =>
+    request<ThreadSent>("POST", "/thread", { text, images }),
   /** Messages, the user's and Ivy's, holding every word of a query; newest first. */
   search: (q: string) => request<MessageHit[]>("GET", `/search?q=${encodeURIComponent(q)}`),
   createSession: async (offRecord = false) =>

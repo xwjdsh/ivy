@@ -37,10 +37,12 @@ import {
   type SessionEvent,
   type SessionSummary,
   type SessionView,
+  type ThreadSent,
   type TurnEnd,
   tokensFromUsage,
 } from "@ivy/protocol";
 import { DISPLAY_INSTRUCTIONS } from "./display.ts";
+import { carriesOn } from "./thread.ts";
 
 /** A permission prompt no client answers is refused after this long. */
 export const PERMISSION_TIMEOUT_MS = 10 * 60 * 1000;
@@ -107,6 +109,8 @@ export class Sessions {
   private readonly now: () => number;
   private readonly sweeper: Timer;
   private closed = false;
+  /** A fresh start made and not written to yet: the thread goes on in it (sendToThread). */
+  private fresh: string | undefined;
 
   constructor(opts: SessionsOptions) {
     this.ivy = opts.ivy;
@@ -142,7 +146,35 @@ export class Sessions {
     this.live.set(session.id, this.hold(session));
     if (display !== "markdown") this.displays.set(session.id, display);
     void this.ivy.systemPrompt.start(session.id, DISPLAY_INSTRUCTIONS[display]);
+    if (display === "markdown") this.fresh = session.id;
     return session.id;
+  }
+
+  /**
+   * The conversation the thread goes on in now, if any (thread.ts): a fresh start not written
+   * to yet, else the latest, if what is written now carries it on (off the record too: it
+   * lasts while it does).
+   */
+  current(now = this.now()): string | undefined {
+    const fresh = this.fresh && this.live.get(this.fresh);
+    if (fresh && fresh.session.messages.length === 0) return this.fresh;
+    const latest = Session.latest(this.ivy.paths.sessions);
+    // A question asked once (`ivy "…"`, in plain text) is a conversation of its own.
+    if (!latest || this.displays.has(latest.id)) return undefined;
+    const context = lastPrompt(this.ivy.paths.sessions, latest.id);
+    return carriesOn({ ...latest, busy: false }, context, now) ? latest.id : undefined;
+  }
+
+  /**
+   * Send to the thread: to the conversation going on, or a new one (on the record: off the
+   * record lasts while its conversation does). All in one step, so two sends close together
+   * go to the same one.
+   */
+  sendToThread(text: string, images: string[], display: Display): ThreadSent {
+    const going = this.current();
+    const sessionId = going ?? this.create(display);
+    const prompt = this.send(sessionId, text, images);
+    return { sessionId, started: going === undefined, prompt };
   }
 
   view(id: string): SessionView {
@@ -164,7 +196,6 @@ export class Sessions {
       ...(streaming !== undefined && { streaming }),
       queue: [...live.queue],
       tokens: tokensFromUsage(summarizeUsage(this.ivy.paths.sessions, { sessionId: id })),
-      context: lastPrompt(this.ivy.paths.sessions, id),
       ...(permission && { permission }),
       ...(live.session.offRecord && { offRecord: true as const }),
     };

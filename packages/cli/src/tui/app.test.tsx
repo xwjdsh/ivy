@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type Served, serve } from "@ivy/daemon";
-import { resolvePaths, Session } from "@ivy/kernel";
+import { resolvePaths } from "@ivy/kernel";
 import { type Reply, ScriptedModel, type Step, text, toolUse } from "@ivy/kernel/testing";
 import { definePlugin, defineTool, type IvyPlugin } from "@ivy/plugin-api";
 import { render } from "ink-testing-library";
@@ -78,6 +78,10 @@ class CountingClient extends DaemonClient {
   override send = async (id: string, text: string) => {
     this.sent++;
     return this.request("POST", `/sessions/${id}/prompts`, { text }) as never;
+  };
+  override sendToThread = async (text: string) => {
+    this.sent++;
+    return this.request("POST", "/thread", { text }) as never;
   };
   override follow(...[onEvent, signal, onConnect]: Parameters<DaemonClient["follow"]>) {
     return super.follow(
@@ -318,6 +322,7 @@ test("joining a turn that runs: its running tool and prompt show, and finish onc
   const { type, frame, idle, client } = await start([
     { stop: "tool_use", content: [text("Let me save that."), toolUse("a", "t__save")] },
     { stop: "end_turn", content: [text("Saved.")] },
+    { stop: "end_turn", content: [text("Hello again.")] },
   ]);
   // Another client starts a turn in another session; it waits on a permission prompt.
   const other = new DaemonClient(client.socket);
@@ -325,7 +330,8 @@ test("joining a turn that runs: its running tool and prompt show, and finish onc
   await other.send(busy, "save it");
   for (let i = 0; i < 100 && !(await other.session(busy)).permission; i++) await tick(10);
 
-  await type(`/resume ${busy}`);
+  // What is typed here goes on in the thread, which is that conversation: it is joined.
+  await type("hello");
   await type(ENTER);
   await eventually(() => expect(frame()).toContain("Allow t__save"));
   expect(frame()).toContain("Let me save that.");
@@ -364,7 +370,7 @@ test("slash commands: completion, /help and /new", async () => {
     ?.at(-1);
   await type("/new");
   await type(ENTER);
-  await eventually(() => expect(frame()).toContain("New session"));
+  await eventually(() => expect(frame()).toContain("A fresh start."));
   expect(
     frame()
       .match(/\d{4}-\d{2}-\d{2}-[0-9a-f]{8}/g)
@@ -442,26 +448,8 @@ test("a failed tool shows ✗ and the first line of the error", async () => {
   expect(frame()).toContain("⎿ The user denied this tool call.");
 });
 
-test("/resume clears the screen and redraws that session's history", async () => {
-  const { type, frame, idle, screen, sessionId } = await start([
-    { stop: "end_turn", content: [text("first answer")] },
-  ]);
-  await type("first question");
-  await type(ENTER);
-  await idle();
-  await type("/new");
-  await type(ENTER);
-  expect(screen.clears).toBe(1);
-  await type(`/resume ${sessionId}`);
-  await type(ENTER);
-  await eventually(() => expect(frame()).toContain(`Resumed ${sessionId}`));
-  expect(screen.clears).toBe(2);
-  expect(frame()).toContain("first answer");
-});
-
 const DOWN = "\x1b[B";
 const UP = "\x1b[A";
-const ESC = "\x1b";
 const TAB = "\t";
 
 test("/ list: arrows and Ctrl+P/N move the selection; Tab fills it in", async () => {
@@ -471,17 +459,17 @@ test("/ list: arrows and Ctrl+P/N move the selection; Tab fills it in", async ()
   await type("/");
   expect(frame()).toContain("❯ /new");
   await type(DOWN);
-  await type(CTRL_N); // /new → /clear → /resume
-  expect(frame()).toContain("❯ /resume");
+  await type(CTRL_N); // /new → /clear → /model
+  expect(frame()).toContain("❯ /model");
   await type(CTRL_P);
   await type(UP); // back to /new
   expect(frame()).toContain("❯ /new");
   await type(UP); // wraps to the last item
   expect(frame()).toContain("❯ /exit");
-  for (let i = 0; i < 7; i++) await type(UP); // /help, /verbose, /status, /usage, /effort, /model, /resume
-  expect(frame()).toContain("❯ /resume");
-  await type(TAB); // fills in "/resume " to type an id
-  expect(frame()).toContain("› /resume"); // trailing space is trimmed in the frame
+  for (let i = 0; i < 6; i++) await type(UP); // /help, /verbose, /status, /usage, /effort, /model
+  expect(frame()).toContain("❯ /model");
+  await type(TAB); // fills in "/model " to type a name
+  expect(frame()).toContain("› /model"); // trailing space is trimmed in the frame
   expect(frame()).not.toContain("❯"); // list closes once an argument is being typed
 });
 
@@ -490,44 +478,11 @@ test("typing narrows the list; Enter runs a command whose argument is optional",
   await type("/");
   await type(DOWN);
   expect(frame()).toContain("❯ /clear");
-  await type("r");
-  expect(frame()).toContain("❯ /resume");
+  await type("ef");
+  expect(frame()).toContain("❯ /effort");
   expect(frame()).not.toContain("/clear");
   await type(ENTER);
-  await eventually(() => expect(frame()).toContain("No other sessions to resume."));
-});
-
-test("/resume without an id opens a picker; Enter resumes, Esc cancels", async () => {
-  const sessions = join(home, "sessions");
-  const older = Session.create(sessions, "m");
-  older.append(
-    { role: "user", content: "older question" },
-    { role: "assistant", content: "older answer" },
-  );
-  await tick(5);
-  const newer = Session.create(sessions, "m");
-  newer.append(
-    { role: "user", content: "newer question" },
-    { role: "assistant", content: "newer answer" },
-  );
-
-  const { type, frame, screen } = await start([]);
-  await type("/resume");
-  await type(ENTER);
-  await eventually(() => expect(frame()).toContain("Resume a session"));
-  expect(frame()).toMatch(/❯ just now\s+newer question\s+1 turn/);
-  await type(ESC);
-  expect(frame()).not.toContain("Resume a session");
-
-  await type("/resume");
-  await type(ENTER);
-  await type(DOWN);
-  expect(frame()).toMatch(/❯ just now\s+older question/);
-  await type(ENTER);
-  await eventually(() => expect(frame()).toContain(`Resumed ${older.id}`));
-  expect(screen.clears).toBe(1);
-  expect(frame()).toContain("older answer");
-  expect(frame()).not.toContain("Resume a session");
+  await eventually(() => expect(frame()).toContain("(current)"));
 });
 
 test("/model opens a picker; choosing switches the model for later turns", async () => {
@@ -666,8 +621,8 @@ test("a plugin command's log reaches the verbose view", async () => {
   await eventually(() => expect(frame()).toContain("note saved: tea"));
 });
 
-test("plugin context reaches the model but isn't shown, live or after /resume", async () => {
-  const { type, frame, idle, model, sessionId } = await start(
+test("plugin context reaches the model but isn't shown", async () => {
+  const { type, frame, idle, model } = await start(
     [{ stop: "end_turn", content: [text("Tea it is.")] }],
     undefined,
     [notes],
@@ -680,13 +635,6 @@ test("plugin context reaches the model but isn't shown, live or after /resume", 
   expect(sent).toContain("the user likes tea");
   expect(frame()).toContain("› what should I drink?");
   expect(frame()).not.toContain("<context>");
-
-  await type("/new");
-  await type(ENTER);
-  await type(`/resume ${sessionId}`);
-  await type(ENTER);
-  await eventually(() => expect(frame()).toContain(`Resumed ${sessionId}`));
-  expect(frame()).toContain("› what should I drink?");
   expect(frame()).not.toContain("likes tea");
 });
 

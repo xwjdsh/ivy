@@ -160,8 +160,6 @@ export interface SessionView {
   /** Prompts waiting for the running turn to end, oldest first. */
   queue: Prompt[];
   tokens: Tokens;
-  /** The whole prompt of its last model call: how much of the model's context it fills. */
-  context: number;
   /** A permission prompt waiting for an answer, if any. */
   permission?: PermissionAsk;
   /** Off the record: kept nowhere, deleted once let go. */
@@ -421,6 +419,27 @@ export const SendPrompt = z
     images: z.array(z.string()).max(20).default([]),
   })
   .refine((p) => p.text || p.images.length, "A message needs text or an image");
+/**
+ * POST /thread: a message to the thread, which the daemon sends on in the conversation going on
+ * or in a new one (docs/design/interfaces.md#the-chat-window); `display`, for a new one.
+ */
+export const ThreadPrompt = z
+  .object({
+    text: z.string().trim().default(""),
+    images: z.array(z.string()).max(20).default([]),
+    display: z.enum(DISPLAYS).default("markdown"),
+  })
+  .refine((p) => p.text || p.images.length, "A message needs text or an image");
+/** POST /thread answers where it went, and whether that conversation started with it. */
+export interface ThreadSent {
+  sessionId: string;
+  started: boolean;
+  prompt: Prompt;
+}
+/** GET /thread: the conversation the next message goes on in, if any. */
+export interface Thread {
+  sessionId?: string;
+}
 /** POST /images answers with the name a prompt gives it; the body is the image itself. */
 export interface Uploaded {
   name: string;

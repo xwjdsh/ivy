@@ -1,9 +1,8 @@
 import type { CommandInfo } from "@ivy/protocol";
 
 export const COMMANDS: CommandInfo[] = [
-  { name: "/new", description: "Start a new session and clear the screen" },
+  { name: "/new", description: "Start afresh: a new conversation, and a clear screen" },
   { name: "/clear", description: "Same as /new" },
-  { name: "/resume", args: "[id]", description: "Pick a session to resume, or give its id" },
   { name: "/model", args: "[name]", description: "Switch model (saved as default)" },
   { name: "/effort", args: "[level]", description: "Switch effort (saved as default)" },
   { name: "/usage", description: "Show token usage" },
