@@ -6,6 +6,7 @@ import {
   type CommandResult,
   type DaemonState,
   type ErrorBody,
+  type MessageHit,
   type PermissionAnswer,
   type Prompt,
   readEvents,
@@ -54,6 +55,8 @@ export const api = {
   setWritesFirst: (on: boolean) => request<DaemonState>("PUT", "/writes-first", { on }),
   setEffort: (effort: string) => request<Switched>("PUT", "/effort", { effort }),
   sessions: () => request<SessionSummary[]>("GET", "/sessions"),
+  /** Messages, the user's and Ivy's, holding every word of a query; newest first. */
+  search: (q: string) => request<MessageHit[]>("GET", `/search?q=${encodeURIComponent(q)}`),
   createSession: async (offRecord = false) =>
     (await request<{ id: string }>("POST", "/sessions", { offRecord })).id,
   session: (id: string) => request<SessionView>("GET", `/sessions/${id}`),

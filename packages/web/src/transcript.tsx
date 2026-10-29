@@ -27,12 +27,15 @@ import { imageUrl } from "./api.ts";
 import { arrange, type Chat, type Item, type Shown, type ToolItem, thinking } from "./chat.ts";
 import { useHighlight } from "./highlight.ts";
 import { renderMarkdown, showImage } from "./markdown.ts";
+import { type Found, lightUp, messageIn } from "./search.tsx";
 import { viewImage } from "./viewer.tsx";
 
 /** What the past above can ask of the timeline it is in. */
 export interface Place {
   /** Called before more appear above, so the view stays where it is. */
   keepBottom(): void;
+  /** Called before this grows, so the view stays where it is if it is above it. */
+  keepIfAbove(el: HTMLElement): void;
   /** Bring this to the top of the view, and stay there as it opens. */
   reveal(el: HTMLElement): void;
 }
@@ -52,11 +55,16 @@ export function Timeline(props: {
   toEnd: unknown;
   /** The conversation going on, or about to start, is off the record: said up front. */
   offRecord: boolean;
+  /** When the conversation going on began, set apart from the past above it by this. */
+  began?: string;
+  /** Set (a new object each time) to go to a message found in the conversation going on. */
+  jump?: Found;
 }) {
   const { chat } = props;
   const id = chat?.id;
   const box = useRef<HTMLDivElement>(null);
   const column = useRef<HTMLDivElement>(null);
+  const now = useRef<HTMLDivElement>(null);
   // Follow the end of the conversation as it grows, unless the user scrolled up to read.
   const pinned = useRef(true);
   // Set when what is about to grow is above the view: keep this distance from the bottom.
@@ -101,11 +109,28 @@ export function Timeline(props: {
   useEffect(() => {
     if (props.toEnd !== undefined) end();
   }, [props.toEnd, end]);
-  const place = useMemo<Place>(
-    () => ({
-      keepBottom: () => {
+  const place = useMemo<Place>(() => {
+    let keeps = 0;
+    const keepBottom = () => {
+      const el = box.current;
+      if (!el) return;
+      fromBottom.current = el.scrollHeight - el.scrollTop;
+      // Kept for the resize it is set for; if none comes (it grew by nothing), let it go after
+      // the frame, rather than pull the view there at some later render. A later keep has it
+      // from then on.
+      const mine = ++keeps;
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          if (keeps === mine) fromBottom.current = undefined;
+        }),
+      );
+    };
+    return {
+      keepBottom,
+      keepIfAbove: (target) => {
         const el = box.current;
-        if (el) fromBottom.current = el.scrollHeight - el.scrollTop;
+        // What grows below where the user reads pushes nothing they see.
+        if (el && target.getBoundingClientRect().top < el.getBoundingClientRect().top) keepBottom();
       },
       reveal: (target) => {
         // Unpinned first: what opens below it must not pull the view back to the end.
@@ -113,9 +138,15 @@ export function Timeline(props: {
         fromBottom.current = undefined;
         target.scrollIntoView({ block: "start" });
       },
-    }),
-    [],
-  );
+    };
+  }, []);
+  const { jump } = props;
+  useLayoutEffect(() => {
+    const message = jump && now.current && messageIn(now.current, jump);
+    if (!message) return;
+    place.reveal(message);
+    lightUp(message);
+  }, [jump, place]);
   // What the conversation had when shown appears at once; what comes after fades in. Shown in
   // place of another that had something, it arrives as a whole.
   const [shown, setShown] = useState({ id, opened: chat?.items.length ?? 0, arrived: false });
@@ -130,8 +161,10 @@ export function Timeline(props: {
         {props.history(place)}
         <div
           key={id ?? ""}
+          ref={now}
           className={`now${props.fill ? " fill" : ""}${shown.arrived ? " arrived" : ""}`}
         >
+          {props.began && <Divider when={props.began} />}
           {props.offRecord && (
             <p className="off-record-note">
               Off the record: nothing from this conversation is kept, and it's deleted when it ends.
@@ -157,6 +190,19 @@ export function Timeline(props: {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Where a stretch of the talk began, after a pause: a faint time across the column, as a
+ * messaging app marks a gap. Anything else (a delete button) sits at its end.
+ */
+export function Divider({ when, children }: { when: string; children?: ReactNode }) {
+  return (
+    <div className="divider">
+      <span className="when">{when}</span>
+      {children}
     </div>
   );
 }

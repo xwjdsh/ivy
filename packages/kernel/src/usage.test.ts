@@ -3,7 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Session } from "./session.ts";
-import { summarizeUsage } from "./usage.ts";
+import { lastPrompt, summarizeUsage } from "./usage.ts";
 
 const usage = (input: number, output: number, cacheRead = 0) =>
   ({
@@ -39,4 +39,13 @@ test("sums usage per session, across sessions, and since a time", async () => {
 
   expect(summarizeUsage(dir, { since: cutoff })).toMatchObject({ calls: 1, sessions: 1 });
   expect(summarizeUsage(dir, { sessionId: "missing" }).calls).toBe(0);
+});
+
+test("the last call's whole prompt, cache included", () => {
+  const dir = mkdtempSync(join(tmpdir(), "ivy-usage-"));
+  const a = Session.create(dir, "m");
+  a.recordUsage(usage(100, 10), 0.01);
+  a.recordUsage(usage(20, 10, 900), 0.01);
+  expect(lastPrompt(dir, a.id)).toBe(920);
+  expect(lastPrompt(dir, "missing")).toBe(0);
 });

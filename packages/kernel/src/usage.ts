@@ -73,3 +73,19 @@ export function summarizeUsage(sessionsDir: string, filter: UsageFilter = {}): U
   }
   return totals;
 }
+
+/**
+ * The whole prompt of a session's last model call, cache included: how much of the model's
+ * context the conversation fills now, and what each of its turns sends again.
+ */
+export function lastPrompt(sessionsDir: string, sessionId: string): number {
+  const file = join(sessionsDir, `${sessionId}.jsonl`);
+  if (!existsSync(file)) return 0;
+  let last = 0;
+  for (const record of readRecords(file)) {
+    if (record.type !== "usage") continue;
+    const u = tokenCounts(record.usage);
+    last = u.input + u.cacheRead + u.cacheWrite;
+  }
+  return last;
+}

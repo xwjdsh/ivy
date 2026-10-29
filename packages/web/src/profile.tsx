@@ -3,7 +3,7 @@
 // what runs her (the model and the effort), out of the way of the conversation.
 
 import { compact, type DaemonState, formatTokens, type Tokens } from "@ivy/protocol";
-import { ChevronRight, Monitor, Moon, Sun } from "lucide-react";
+import { ChevronRight, Monitor, Moon, SquarePen, Sun } from "lucide-react";
 import {
   type ReactNode,
   type RefObject,
@@ -84,6 +84,8 @@ export function Card(props: {
   remembers: boolean;
   /** Off the record: set for a conversation about to start (`open`), then fixed for all of it. */
   offRecord: { on: boolean; open: boolean; onChange(on: boolean): void };
+  /** Start afresh, the talk going on above (⌘N); none while nothing has been said yet. */
+  onFresh?: () => void;
 }) {
   const { from, presence, facts, state, onError, onClose } = props;
   const card = useRef<HTMLElement>(null);
@@ -159,6 +161,12 @@ export function Card(props: {
               <ChevronRight size={14} />
             </button>
           )}
+          {props.onFresh && (
+            <button type="button" className="flip fresh-start" onClick={props.onFresh}>
+              Start fresh
+              <SquarePen size={14} />
+            </button>
+          )}
           <label className={`off-record${props.offRecord.open ? "" : " fixed"}`}>
             <span className="what">Off the record</span>
             <input
@@ -173,7 +181,7 @@ export function Card(props: {
                 ? "Not kept, and deleted when it ends."
                 : props.offRecord.on
                   ? "On until this conversation ends."
-                  : "Only for a new conversation."}
+                  : "Only from a fresh start."}
             </span>
           </label>
           <Hood>

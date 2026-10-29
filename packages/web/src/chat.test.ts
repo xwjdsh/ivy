@@ -59,6 +59,7 @@ test("joining a turn that runs keeps streaming into its text", () => {
     running: prompt,
     queue: [{ id: "p2", text: "next" }],
     tokens: { in: 0, cached: 0, out: 0 },
+    context: 0,
   };
   const chat = run([{ type: "text", delta: " reply" }], chatOf(view));
   expect(chat.streaming).toBe("Half a reply");

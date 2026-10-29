@@ -5,8 +5,6 @@
   color-scheme: light dark;
 
   --bg: #fcfaf8;
-  /* Sunk into the page: a past conversation opened above. */
-  --well: #f5f1ed;
   --hover: rgb(60 30 15 / 0.05);
   --text: #221d1a;
   --muted: #6f655e;
@@ -46,7 +44,6 @@
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #1a1715;
-    --well: #221d1a;
     --hover: rgb(255 235 225 / 0.05);
     --text: #efe9e5;
     --muted: #a89e97;
@@ -248,15 +245,13 @@ main {
   justify-content: flex-end;
 }
 
-/* Rarely asked for: a conversation starts by itself after a while away, and the past ones are
-   above it. They stay quiet until pointed at. */
-.topbar .new,
+/* Rarely asked for: the past is above, and the talk goes on by itself. They stay quiet until
+   pointed at. */
 .topbar .find,
 .topbar .gear {
   opacity: 0.55;
 }
 
-.topbar .new:hover,
 .topbar .find:hover,
 .topbar .gear:hover,
 .topbar .find[aria-expanded="true"] {
@@ -1638,32 +1633,6 @@ main {
   color: var(--faint);
 }
 
-/* Writing to a past conversation opened above: sending carries it on. */
-.replying {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  height: 34px;
-  padding: 0 6px 0 12px;
-  border-radius: 12px;
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-size: 13px;
-}
-
-.replying .text {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.replying .preview {
-  margin-left: 8px;
-  color: var(--muted);
-}
-
 /* Errors */
 
 /* A new install: what Ivy needs before anything can be said. */
@@ -1734,10 +1703,11 @@ main {
 
 /* --- History ------------------------------------------------------------------------ */
 
+/* The stretches before, whole, each after when it began: the talk as it went. */
 .history {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 24px;
   padding: 12px 0 36px;
   user-select: none;
 }
@@ -1757,133 +1727,56 @@ main {
   color: var(--text);
 }
 
-.day {
+.stretch {
+  scroll-margin-top: 8px;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 14px;
+  user-select: text;
 }
 
-/* The day, centered between hairlines, the way a messaging app marks one. */
-.day h2 {
+/* Not read yet: its room held, a spinner at its middle while it is read. */
+.stretch .unread {
+  display: grid;
+  place-items: center;
+  color: var(--faint);
+}
+
+/* Where a stretch began: a faint time between hairlines, and the day where it changed, as a
+   messaging app marks a gap. Its delete button, if any, sits at the end of the line. */
+.divider {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin: 0 0 6px;
+  height: 24px;
   color: var(--faint);
   font-size: 11.5px;
   font-weight: 500;
+  user-select: none;
 }
 
-.day h2::before,
-.day h2::after {
+.divider::before,
+.divider::after {
   content: "";
   flex: 1;
   height: 1px;
   background: var(--line);
 }
 
-.past {
-  scroll-margin-top: 8px;
-  border-radius: 12px;
+.divider .when {
+  order: 1;
 }
 
-.past-head {
-  display: flex;
-  align-items: center;
-  height: 36px;
-  border-radius: 10px;
+.divider::after {
+  order: 2;
 }
 
-.past-head:hover {
-  background: var(--hover);
-}
-
-.past-row {
-  flex: 1;
-  min-width: 0;
-  height: 100%;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 0 10px;
-  border: none;
-  background: none;
-  text-align: left;
-  color: var(--muted);
-}
-
-.past-row .time {
-  flex: none;
-  width: 38px;
-  color: var(--faint);
-  font-size: 12.5px;
-  font-variant-numeric: tabular-nums;
-}
-
-.past-row .preview {
-  flex: 1;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.past-row .fold {
-  flex: none;
-  color: var(--faint);
-  opacity: 0;
-  transition:
-    transform 0.2s,
-    opacity 0.15s;
-}
-
-.past-head:hover .fold,
-.past.open .fold {
-  opacity: 1;
-}
-
-.past.open .fold {
-  transform: rotate(180deg);
-}
-
-/* Opened: one bounded block in the list, its head a strip that stays in view while it is
-   read, the conversation on the page as it was. Set apart by space; drawn round by an
-   outline, which takes none. */
-.past.open {
-  margin: 10px 0;
-  box-shadow: 0 0 0 1px var(--line-strong);
-  /* Rounds the head's corners while it is in place, and none once it sticks: nothing shows
-     past it. Clip, not hidden, which would keep it from sticking. */
-  overflow: clip;
-}
-
-.past.open .past-head {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  border-bottom: 1px solid var(--line);
-  border-radius: 0;
-  background: var(--well);
-}
-
-.past.open .past-head:hover {
-  background-image: linear-gradient(var(--hover), var(--hover));
-}
-
-.past.open .past-row {
-  color: var(--text);
-}
-
-.past .busy {
-  flex: none;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--accent);
-  animation: breathe 1.6s ease-in-out infinite;
+.divider .delete {
+  order: 3;
 }
 
 /* The delete button shows on the line under the pointer, or once asked to confirm. */
-.past .delete {
+.divider .delete {
   display: none;
   flex: none;
   place-items: center;
@@ -1897,58 +1790,26 @@ main {
   color: var(--faint);
 }
 
-.past-head:hover .delete,
-.past .delete:focus-visible,
-.past.confirming .delete {
+.divider:hover .delete,
+.divider .delete:focus-visible,
+.stretch.confirming .delete {
   display: grid;
 }
 
-.past .delete:hover {
+.divider .delete:hover {
   background: var(--hover);
   color: var(--error);
 }
 
-.past .delete.confirm {
+.divider .delete.confirm {
   background: var(--error);
   color: var(--error-text);
   font-size: 12px;
   font-weight: 500;
 }
 
-.past .delete.confirm:hover {
+.divider .delete.confirm:hover {
   filter: brightness(1.08);
-}
-
-/* Opened: the conversation as it was, read-only, and a way back into it. */
-.past-body {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  padding: 10px 16px 14px;
-  user-select: text;
-  animation: rise 0.25s cubic-bezier(0.2, 0.8, 0.2, 1) both;
-}
-
-.past-body .loading {
-  align-self: center;
-  color: var(--faint);
-}
-
-.past-body .continue {
-  align-self: center;
-  margin-top: 4px;
-  padding: 6px 14px;
-  border: 1px solid var(--line-strong);
-  border-radius: 999px;
-  background: var(--bg);
-  color: var(--text);
-  font-size: 13px;
-  user-select: none;
-}
-
-.past-body .continue:hover {
-  border-color: var(--accent);
-  color: var(--accent);
 }
 
 /* --- Her card, and the search ------------------------------------------------------- */
@@ -2023,7 +1884,8 @@ main {
   background: var(--hover);
 }
 
-.card .remembered {
+.card .remembered,
+.card .fresh-start {
   width: 100%;
   justify-content: space-between;
   padding: 0 8px;
@@ -2141,7 +2003,7 @@ main {
   font-size: 12.5px;
 }
 
-/* Finding a past conversation (⌘K): a box over the conversation, under the top bar. */
+/* Finding what was said (⌘K): a box over the conversation, under the top bar. */
 .search {
   position: absolute;
   top: calc(var(--bar) - 2px);
@@ -2167,7 +2029,6 @@ main {
   gap: 10px;
   height: 48px;
   padding: 0 16px;
-  border-bottom: 1px solid var(--line);
   color: var(--faint);
 }
 
@@ -2185,6 +2046,12 @@ main {
 .search .found {
   overflow-y: auto;
   padding: 6px;
+  border-top: 1px solid var(--line);
+}
+
+/* Nothing typed yet: the box alone. */
+.search .found:empty {
+  display: none;
 }
 
 .search .found button {
@@ -2220,13 +2087,30 @@ main {
   font-variant-numeric: tabular-nums;
 }
 
-.search .busy {
+.search .who {
   flex: none;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--accent);
-  animation: breathe 1.6s ease-in-out infinite;
+  width: 28px;
+  color: var(--faint);
+  font-size: 12px;
+}
+
+.search mark {
+  border-radius: 3px;
+  background: var(--accent-soft);
+  color: inherit;
+}
+
+/* A message gone to from the search: lit a moment where it is, then as before. */
+.lit-up {
+  scroll-margin-top: 48px;
+  animation: lit-up 1.6s ease-out;
+}
+
+@keyframes lit-up {
+  from,
+  40% {
+    background-color: var(--accent-soft);
+  }
 }
 
 .search .none {

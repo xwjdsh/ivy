@@ -103,8 +103,6 @@ interface Attached {
 
 export function Composer(props: {
   busy: boolean;
-  /** Writing to a past conversation, to carry it on. */
-  replying: boolean;
   /** No model chosen yet (a new install): nothing can be sent until one is. */
   noModel: boolean;
   /** Writing off the record: shown where the user writes, as a reminder. */
@@ -235,11 +233,9 @@ export function Composer(props: {
             ? "Choose a model in Settings to start"
             : props.busy
               ? "Ivy is replying; a message now is sent next"
-              : props.replying
-                ? "Reply in this conversation"
-                : props.offRecord
-                  ? "Off the record · nothing is kept"
-                  : "Talk to Ivy"
+              : props.offRecord
+                ? "Off the record · nothing is kept"
+                : "Talk to Ivy"
         }
         onChange={(e) => setText(e.target.value)}
         onPaste={(e) => {

@@ -1,29 +1,27 @@
 // The chat window: one long conversation with Ivy, the past ones above the one going on now,
 // her at the top, and her card growing out of her face when she is clicked. Like the TUI it is a client of
 // the daemon, which runs the sessions; this page only shows them and sends what the user types.
-// The session going on is in the URL's hash, so a reload keeps it. While a past one is open,
-// what is written goes to it, and it becomes the one going on.
+// The session going on is in the URL's hash, so a reload keeps it. What is written always goes
+// on at the end: after a pause it starts the next stretch, a session of its own (sessions.ts).
 
 import type { DaemonState, SessionEvent, SessionSummary } from "@ivy/protocol";
 import {
   ChevronLeft,
   CircleAlert,
-  CornerDownRight,
   LoaderCircle,
   Search as SearchIcon,
   Settings as SettingsIcon,
-  SquarePen,
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, follow } from "./api.ts";
 import { apply, type Chat, chatOf, emptyChat } from "./chat.ts";
 import { Composer, Permission, Queue } from "./composer.tsx";
-import { History } from "./history.tsx";
+import { forgetStretch, History, keepStretch } from "./history.tsx";
 import { presence } from "./presence.ts";
 import { Card, Contact } from "./profile.tsx";
-import { Search } from "./search.tsx";
-import { dayLabel, isRecent, timeLabel } from "./sessions.ts";
+import { type Found, Search } from "./search.tsx";
+import { carriesOn, isHers, when } from "./sessions.ts";
 import { SettingsPage } from "./settings.tsx";
 import { Timeline } from "./transcript.tsx";
 import { ImageViewer } from "./viewer.tsx";
@@ -51,11 +49,8 @@ export function App() {
   const [state, setState] = useState<DaemonState | undefined>();
   const [connected, setConnected] = useState(true);
   const [error, setError] = useState<string | undefined>();
-  /** The past conversation opened above, if any; its chat once read. */
-  const [reading, setReading] = useState<{ id: string; chat?: Chat } | undefined>();
-  const readingId = useRef<string | undefined>(undefined);
-  /** Set, a new object each time, to bring the one open into view. */
-  const [jump, setJump] = useState<object | undefined>();
+  /** Set, a new object each time, to bring a message found into view. */
+  const [jump, setJump] = useState<Found | undefined>();
   /** Set, a new number each time, to go back to the end of the conversation going on. */
   const [toEnd, setToEnd] = useState<number | undefined>();
 
@@ -82,19 +77,6 @@ export function App() {
     [failed],
   );
 
-  /** Open a past conversation (or close it, with none), reading it afresh: it may have gone on. */
-  const read = useCallback(
-    (id: string | undefined) => {
-      readingId.current = id;
-      setReading(id ? { id } : undefined);
-      if (!id) return;
-      api.session(id).then((view) => {
-        if (readingId.current === id) setReading({ id, chat: chatOf(view) });
-      }, failed);
-    },
-    [failed],
-  );
-
   const reloadList = useCallback(() => {
     api.sessions().then(setSessions, failed);
   }, [failed]);
@@ -107,21 +89,18 @@ export function App() {
       if (e.sessionId === chatId.current) {
         setChat((c) => (c && c.id === e.sessionId ? apply(c, e) : c));
       }
-      if (e.sessionId === readingId.current) {
-        setReading((r) => (r?.chat && r.id === e.sessionId ? { ...r, chat: apply(r.chat, e) } : r));
-      }
       if (LISTED.has(e.type)) reloadList();
       // She wrote first (only when the user hasn't written for a while): her conversation is
       // the one going on now, if that takes nothing from the user (a new chat, or the window
       // away); else it is in the list, and her notification takes them there.
       const away = document.hidden || !document.hasFocus();
-      if (e.type === "started" && !readingId.current && (!chatId.current || away)) {
+      if (e.type === "started" && (!chatId.current || away)) {
         setOffNext(false); // as open(id) does: a switch set for a new chat isn't for hers
         location.hash = encodeURIComponent(e.sessionId);
       }
     };
-    // Opening the window carries on a conversation from the last few hours; after longer, it
-    // starts a new one, and that one is history.
+    // Opening the window carries on the conversation the talk was in; after a pause, what is
+    // written starts the next, and that one is above it.
     let first = true;
     const onConnect = (up: boolean) => {
       setConnected(up);
@@ -131,13 +110,12 @@ export function App() {
       api.sessions().then((list) => {
         setSessions(list);
         const last = list[0];
-        if (carryOn && !chatId.current && last && isRecent(last)) {
+        if (carryOn && !chatId.current && last && carriesOn(last)) {
           location.hash = encodeURIComponent(last.id);
         }
       }, failed);
       api.state().then(setState, failed);
       void show(chatId.current ?? sessionInHash());
-      if (readingId.current) read(readingId.current);
     };
     void follow(onEvent, onConnect, stop.signal);
     const onHash = () => {
@@ -148,37 +126,20 @@ export function App() {
       stop.abort();
       removeEventListener("hashchange", onHash);
     };
-  }, [show, read, reloadList, failed]);
+  }, [show, reloadList, failed]);
 
   const open = useCallback(
     (id: string | undefined) => {
-      read(undefined);
       // A new one started from one off the record stays so (kept by mistake can't be undone;
       // the switch turns it off); any other starts on the record. Nothing is saved.
       if (id) setOffNext(false);
       else setOffNext((on) => on || offNow.current);
+      setJump(undefined);
       location.hash = id ? encodeURIComponent(id) : "";
       if (!id) void show(undefined); // an empty hash may not fire hashchange
     },
-    [read, show],
+    [show],
   );
-
-  /** Close the past conversation open above and go back down to the one going on. */
-  const back = useCallback(() => {
-    read(undefined);
-    setToEnd((n) => (n ?? 0) + 1);
-  }, [read]);
-
-  /** Carry on the past conversation open above: what was read of it shows at once. */
-  const carryOn = (id: string) => {
-    const known = reading?.id === id ? reading.chat : undefined;
-    if (known) {
-      chatId.current = id; // so the hash changing doesn't read it again
-      setChat(known);
-      setError(undefined);
-    }
-    open(id);
-  };
 
   // Her card; the search for a past conversation (⌘K); the settings (⌘,), over the
   // conversation, which stays as it was under them.
@@ -227,17 +188,16 @@ export function App() {
     const onKey = (e: KeyboardEvent) => {
       const plain = e.metaKey && !e.shiftKey && !e.altKey && !e.ctrlKey;
       if (e.key === "Escape" && !e.defaultPrevented) {
-        // Her card closes first, then the settings, then the past conversation open above.
+        // Her card closes first, then the settings.
         if (card && !card.closing) closeCard();
         else if (settings) setSettings(false);
-        else if (readingId.current) back();
       }
       // ⌘,: the settings, as in every Mac app.
       else if (plain && e.key === ",") {
         e.preventDefault();
         openSettings(!settings);
       }
-      // ⌘N: a new conversation, as the button at the top right.
+      // ⌘N: a fresh start, as on her card.
       else if (plain && e.key === "n") {
         e.preventDefault();
         open(undefined);
@@ -251,30 +211,54 @@ export function App() {
     };
     addEventListener("keydown", onKey);
     return () => removeEventListener("keydown", onKey);
-  }, [card, closeCard, settings, openSettings, back, open]);
+  }, [card, closeCard, settings, openSettings, open]);
 
-  /** Go to a past conversation found, open above to carry on. */
-  const pick = (id: string) => {
+  /** Go to a message found, where it is in the talk. */
+  const pick = (found: Found) => {
     setSettings(false); // to be seen
-    if (readingId.current !== id) read(id);
-    setJump({});
+    setJump(found);
   };
+
+  /** A conversation being started: a message sent meanwhile goes to it too, not to another. */
+  const starting = useRef<Promise<string> | undefined>(undefined);
 
   const send = async (text: string, images: string[]) => {
     setError(undefined);
+    // What is written goes on at the end, where the view goes with it.
+    setToEnd((n) => (n ?? 0) + 1);
+    setJump(undefined); // gone to; not again when the view changes
     try {
-      if (reading) {
-        const id = reading.id;
-        carryOn(id);
-        await api.send(id, text, images);
-        return;
+      const pending = starting.current;
+      let id = pending ? await pending : chat?.id;
+      let off = offNext;
+      const summary = chat && sessions.find((s) => s.id === chat.id);
+      const hers = sessions[0];
+      if (pending) {
+        // Goes where the message before it went.
+      } else if (chat && summary && hers && hers !== summary && isHers(hers) && carriesOn(hers)) {
+        // She wrote while this was on screen: her message is newer than it (it is listed, and
+        // hers first), and what is written now answers it, where she wrote it.
+        keepStretch(chat);
+        history.replaceState(null, "", `#${encodeURIComponent(hers.id)}`);
+        await show(hers.id);
+        id = hers.id;
+      } else if (chat && summary && !chat.running && !carriesOn(summary, chat.context)) {
+        // After a pause, a new day, or once it has grown too large, this starts the next
+        // stretch; one off the record stays so, as a fresh start from it does (see open).
+        keepStretch(chat);
+        off ||= chat.offRecord === true;
+        id = undefined;
       }
-      let id = chat?.id;
       if (!id) {
-        id = await api.createSession(offNext);
+        starting.current = api.createSession(off);
+        try {
+          id = await starting.current;
+        } finally {
+          starting.current = undefined;
+        }
         startedHere.current.add(id);
         chatId.current = id;
-        setChat(emptyChat(id, offNext));
+        setChat(emptyChat(id, off));
         setOffNext(false);
         history.replaceState(null, "", `#${encodeURIComponent(id)}`);
       }
@@ -299,29 +283,29 @@ export function App() {
   const remove = async (id: string) => {
     try {
       await api.deleteSession(id);
+      forgetStretch(id);
       if (chatId.current === id) open(undefined);
-      else if (readingId.current === id) read(undefined);
     } catch (err) {
       failed(err);
     }
     reloadList();
   };
 
-  // What is written goes to the past conversation open above, if one is.
-  const target = reading ? reading.chat : chat;
   // Off the record is decided as a conversation starts, for all of it (DESIGN.md §11, M3).
   const offRecord = chat ? chat.offRecord === true : offNext;
   const composer = (
     <Composer
-      busy={target?.running !== undefined}
-      replying={reading !== undefined}
+      busy={chat?.running !== undefined}
       noModel={state?.model === ""}
-      offRecord={offRecord && !reading}
+      offRecord={offRecord}
       onSend={send}
-      onStop={() => target && api.interrupt(target.id).catch(failed)}
+      onStop={() => chat && api.interrupt(chat.id).catch(failed)}
     />
   );
-  const readingSummary = reading && sessions.find((s) => s.id === reading.id);
+  const past = sessions.filter((s) => s.id !== chat?.id);
+  // Set apart from the past above by when it began; one just started here, now.
+  const current = chat && sessions.find((s) => s.id === chat.id);
+  const began = chat && past[0] ? when(current?.createdAt, past[0].createdAt) : undefined;
   const errorBanner = error && (
     <div className="error-banner fresh" role="alert">
       <CircleAlert size={15} />
@@ -383,14 +367,6 @@ export function App() {
                 </button>
                 <button
                   type="button"
-                  className="icon new"
-                  title="New chat (⌘N)"
-                  onClick={() => open(undefined)}
-                >
-                  <SquarePen size={17} />
-                </button>
-                <button
-                  type="button"
                   className="icon gear"
                   title="Settings (⌘,)"
                   onClick={() => openSettings(true)}
@@ -415,35 +391,24 @@ export function App() {
             onError={failed}
             onClose={closeCard}
             remembers={remembers}
-            offRecord={{ on: offRecord, open: !chat && !reading, onChange: setOffNext }}
+            offRecord={{ on: offRecord, open: !chat, onChange: setOffNext }}
+            onFresh={chat ? () => open(undefined) : undefined}
           />
         )}
         {settings && <SettingsPage state={state} onState={setState} onError={failed} />}
         <ImageViewer />
-        {searching && (
-          <Search
-            sessions={sessions.filter((s) => s.id !== chat?.id)}
-            onPick={pick}
-            onClose={closeSearch}
-          />
-        )}
+        {searching && <Search onPick={pick} onClose={closeSearch} />}
         <Timeline
           key={chat?.id ?? ""}
           chat={chat}
           toEnd={toEnd}
+          jump={chat && jump?.id === chat.id ? jump : undefined}
           history={(place) => (
-            <History
-              sessions={sessions.filter((s) => s.id !== chat?.id)}
-              place={place}
-              reading={reading}
-              jump={jump}
-              onRead={read}
-              onContinue={carryOn}
-              onDelete={remove}
-            />
+            <History sessions={past} place={place} jump={jump} onDelete={remove} />
           )}
           fill={!!chat && !startedHere.current.has(chat.id)}
-          offRecord={offRecord && !reading}
+          offRecord={offRecord}
+          began={began}
         />
         <div className="dock">
           {setup}
@@ -456,23 +421,6 @@ export function App() {
               }}
             />
           )}
-          {readingSummary && (
-            <div className="replying fresh">
-              <CornerDownRight size={14} />
-              <span className="text">
-                Replying to {when(readingSummary)}
-                <span className="preview">{readingSummary.preview || "Untitled"}</span>
-              </span>
-              <button
-                type="button"
-                className="icon"
-                title={chat ? "Back to this conversation (Esc)" : "Cancel (Esc)"}
-                onClick={back}
-              >
-                <X size={14} />
-              </button>
-            </div>
-          )}
           {chat && chat.queue.length > 0 && (
             <Queue
               queue={chat.queue}
@@ -484,10 +432,4 @@ export function App() {
       </main>
     </div>
   );
-}
-
-/** "Yesterday 9:05" */
-function when(s: SessionSummary): string {
-  const date = new Date(s.updatedAt);
-  return `${dayLabel(date)} ${timeLabel(date)}`;
 }

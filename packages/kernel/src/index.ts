@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import Anthropic from "@anthropic-ai/sdk";
-import type { IvyPlugin } from "@ivy/plugin-api";
+import type { ConversationHistory, IvyPlugin } from "@ivy/plugin-api";
 import { Agent } from "./agent.ts";
 import { Capabilities } from "./capabilities.ts";
 import {
@@ -70,6 +70,8 @@ export interface Ivy {
   plugins: PluginHost;
   config: Config;
   paths: Paths;
+  /** Past conversations as plugins read them: off the record and taken back, nothing. */
+  history: ConversationHistory;
   /** Frozen per session: `start(id, …)` when a session starts or is loaded again. */
   systemPrompt: SystemPrompt;
   capabilities: Capabilities;
@@ -225,6 +227,7 @@ export async function createIvy(opts: IvyOptions): Promise<Ivy> {
     plugins,
     config,
     paths,
+    history,
     systemPrompt,
     capabilities,
     permissions,

@@ -15,6 +15,7 @@ import {
   type Ivy,
   isImageName,
   isSessionId,
+  lastPrompt,
   type PermissionChoice,
   promptText,
   removeSession,
@@ -163,6 +164,7 @@ export class Sessions {
       ...(streaming !== undefined && { streaming }),
       queue: [...live.queue],
       tokens: tokensFromUsage(summarizeUsage(this.ivy.paths.sessions, { sessionId: id })),
+      context: lastPrompt(this.ivy.paths.sessions, id),
       ...(permission && { permission }),
       ...(live.session.offRecord && { offRecord: true as const }),
     };

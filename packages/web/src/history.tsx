@@ -1,38 +1,46 @@
-// What came before: past conversations above the current one, oldest first, under the day
-// they happened, each folded to a line until opened. Scrolling up through them reads like
+// What came before: past conversations above the current one, oldest first, each the stretch of
+// the talk it was, shown whole after when it began. Scrolling up through them reads like
 // scrolling back through a long conversation with someone.
 
 import type { SessionSummary } from "@ivy/protocol";
-import { ChevronDown, LoaderCircle, Trash2 } from "lucide-react";
-import { useLayoutEffect, useRef, useState } from "react";
-import { arrange, type Chat } from "./chat.ts";
-import { byDay, timeLabel } from "./sessions.ts";
-import { type Place, ShownView } from "./transcript.tsx";
+import { LoaderCircle, Trash2 } from "lucide-react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { api } from "./api.ts";
+import { arrange, type Chat, chatOf } from "./chat.ts";
+import { type Found, lightUp, messageIn } from "./search.tsx";
+import { when } from "./sessions.ts";
+import { Divider, type Place, ShownView } from "./transcript.tsx";
+
+/** Stretches as last read: one just left shows at once, above the next. */
+const stretches = new Map<string, Chat>();
+
+/** Keep what a conversation holds, as it ends a stretch, to show it above the next at once. */
+export const keepStretch = (chat: Chat) => stretches.set(chat.id, chat);
+/** Let go of what one held, deleted or ended: nothing of it stays in the window. */
+export const forgetStretch = (id: string) => stretches.delete(id);
 
 /** How many past conversations show at first, and how many more each "Earlier" brings. */
 const PAGE = 20;
+/** Room held for a stretch not read yet, by its turns, so the page doesn't jump much once it is. */
+const unread = (turns: number) => Math.min(80 + turns * 120, 720);
 
 export function History(props: {
   /** Newest first, as the daemon lists them; without the conversation going on now. */
   sessions: SessionSummary[];
   /** Where it is in the timeline. */
   place: Place;
-  /** The one opened, if any, and what it holds once read. */
-  reading: { id: string; chat?: Chat } | undefined;
-  /** Set (a new object each time) to go to the one opened, wherever it is. */
-  jump: object | undefined;
-  onRead(id: string | undefined): void;
-  onContinue(id: string): void;
+  /** Set (a new object each time) to go to a message found, wherever it is. */
+  jump: Found | undefined;
   onDelete(id: string): void;
 }) {
-  const { reading } = props;
+  const { jump } = props;
   const [paged, setShown] = useState(PAGE);
   // One gone to from further back than the pages loaded shows too, with all after it.
-  const needed = reading ? props.sessions.findIndex((s) => s.id === reading.id) + 1 : 0;
+  const needed = jump ? props.sessions.findIndex((s) => s.id === jump.id) + 1 : 0;
   const shown = Math.max(paged, needed);
-  // Deleting takes two clicks: the trash button, then the Delete it turns into.
+  // One asked to confirm a delete, at a time.
   const [confirming, setConfirming] = useState<string | undefined>();
-  const sessions = props.sessions.slice(0, shown);
+  const sessions = props.sessions.slice(0, shown).reverse();
   if (sessions.length === 0) return null;
   return (
     <div className="history">
@@ -48,107 +56,132 @@ export function History(props: {
           Earlier conversations
         </button>
       )}
-      {byDay(sessions).map((day) => (
-        <section key={day.label} className="day">
-          <h2>{day.label}</h2>
-          {day.sessions.map((s) => (
-            <Past
-              key={s.id}
-              session={s}
-              open={reading?.id === s.id}
-              chat={reading?.id === s.id ? reading.chat : undefined}
-              jump={reading?.id === s.id ? props.jump : undefined}
-              place={props.place}
-              confirming={s.id === confirming}
-              onConfirm={(yes) => setConfirming(yes ? s.id : undefined)}
-              onRead={props.onRead}
-              onContinue={props.onContinue}
-              onDelete={props.onDelete}
-            />
-          ))}
-        </section>
+      {sessions.map((s, i) => (
+        <Stretch
+          key={s.id}
+          session={s}
+          when={when(s.createdAt, sessions[i - 1]?.createdAt)}
+          jump={jump?.id === s.id ? jump : undefined}
+          place={props.place}
+          confirming={s.id === confirming}
+          onConfirm={(yes) => setConfirming(yes ? s.id : undefined)}
+          onDelete={props.onDelete}
+        />
       ))}
     </div>
   );
 }
 
 /**
- * One past conversation: a line with when and how it began; opened, all of it. One is open at a
- * time, and what is written while it is goes to it.
+ * An earlier stretch of the talk, whole, after when it began: read once it nears the view (or is
+ * gone to), and again when it has gone on.
  */
-function Past(props: {
+function Stretch(props: {
   session: SessionSummary;
-  open: boolean;
-  chat: Chat | undefined;
-  jump: object | undefined;
+  when: string;
+  jump: Found | undefined;
   place: Place;
   confirming: boolean;
   onConfirm(yes: boolean): void;
-  onRead(id: string | undefined): void;
-  onContinue(id: string): void;
   onDelete(id: string): void;
 }) {
-  const { session: s, open, chat, confirming, jump, place } = props;
-  const toggle = () => props.onRead(open ? undefined : s.id);
-  const line = useRef<HTMLDivElement>(null);
+  const { session: s, jump, place } = props;
+  const [chat, setChat] = useState(() => stretches.get(s.id));
+  const self = useRef<HTMLDivElement>(null);
+  // Near the view, within a screen of it: read only then, as most of the past is never
+  // scrolled to.
+  const [near, setNear] = useState(() => chat !== undefined || jump !== undefined);
+  if (jump && !near) setNear(true);
+  useEffect(() => {
+    const el = self.current;
+    if (near || !el) return;
+    const watch = new IntersectionObserver(
+      (seen) => seen.some((e) => e.isIntersecting) && setNear(true),
+      {
+        root: el.closest(".transcript"),
+        rootMargin: "100% 0px",
+      },
+    );
+    watch.observe(el);
+    return () => watch.disconnect();
+  }, [near]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: read again when it has gone on
+  useEffect(() => {
+    if (!near) return;
+    let shown = true;
+    api.session(s.id).then(
+      (view) => {
+        const read = chatOf(view);
+        stretches.set(s.id, read);
+        if (!shown) return;
+        // Growing above what is being read, it leaves the view where it is.
+        if (self.current) place.keepIfAbove(self.current);
+        setChat(read);
+      },
+      // Gone meanwhile (deleted, or off the record and ended): the list drops it next.
+      () => forgetStretch(s.id),
+    );
+    return () => {
+      shown = false;
+    };
+  }, [near, s.id, s.updatedAt]);
+  // Gone to, and again once read, to the message found in it: what loads above it then keeps
+  // it where it is.
+  const read = chat !== undefined;
   useLayoutEffect(() => {
-    if (jump && line.current) place.reveal(line.current);
-  }, [jump, place]);
+    const el = self.current;
+    if (!jump || !el) return;
+    const message = read ? messageIn(el, jump) : undefined;
+    place.reveal(message ?? el);
+    if (message) lightUp(message);
+  }, [jump, place, read]);
   return (
-    // Leaving the line drops a pending confirm; the buttons inside take the keys.
+    // Leaving it drops a pending confirm; the buttons inside take the keys.
     // biome-ignore lint/a11y/noStaticElementInteractions: see above
     <div
-      ref={line}
-      className={`past${open ? " open" : ""}${confirming ? " confirming" : ""}`}
-      onMouseLeave={() => confirming && props.onConfirm(false)}
+      ref={self}
+      className={`stretch${props.confirming ? " confirming" : ""}`}
+      onMouseLeave={() => props.confirming && props.onConfirm(false)}
     >
-      <div className="past-head">
-        <button type="button" className="past-row" aria-expanded={open} onClick={toggle}>
-          <span className="time">{timeLabel(new Date(s.updatedAt))}</span>
-          <span className="preview">{s.preview || "Untitled"}</span>
-          {s.busy && <span className="busy" title="Replying" />}
-          <ChevronDown size={14} className="fold" />
-        </button>
-        {/* A conversation Ivy is replying in can't be deleted; stop it first. */}
-        {!s.busy &&
-          (confirming ? (
-            <button
-              type="button"
-              className="delete confirm"
-              onClick={() => {
-                props.onConfirm(false);
-                props.onDelete(s.id);
-              }}
-              onKeyDown={(e) => e.key === "Escape" && props.onConfirm(false)}
-            >
-              Delete
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="delete"
-              title="Delete"
-              onClick={() => props.onConfirm(true)}
-            >
-              <Trash2 size={14} />
-            </button>
-          ))}
-      </div>
-      {open && (
-        <div className="past-body">
-          {chat ? (
-            arrange(chat.items).map((s) => (
-              // A past conversation is read once, whole; where each part starts is stable.
-              <ShownView key={s.at} shown={s} sessionId={chat.id} fresh={false} />
-            ))
-          ) : (
-            <LoaderCircle size={16} className="spin loading" />
-          )}
-          <button type="button" className="continue" onClick={() => props.onContinue(s.id)}>
-            Continue this conversation
-          </button>
+      <Divider when={props.when}>
+        {!s.busy && (
+          <Delete
+            confirming={props.confirming}
+            onConfirm={props.onConfirm}
+            onDelete={() => props.onDelete(s.id)}
+          />
+        )}
+      </Divider>
+      {chat ? (
+        arrange(chat.items).map((shown) => (
+          <ShownView key={shown.at} shown={shown} sessionId={chat.id} fresh={false} />
+        ))
+      ) : (
+        <div className="unread" style={{ height: unread(s.turns) }}>
+          {near && <LoaderCircle size={16} className="spin loading" />}
         </div>
       )}
     </div>
+  );
+}
+
+/** Deleting takes two clicks: the trash button, then the Delete it turns into. */
+function Delete(props: { confirming: boolean; onConfirm(yes: boolean): void; onDelete(): void }) {
+  return props.confirming ? (
+    <button
+      type="button"
+      className="delete confirm"
+      onClick={() => {
+        props.onConfirm(false);
+        props.onDelete();
+      }}
+      onKeyDown={(e) => e.key === "Escape" && props.onConfirm(false)}
+    >
+      Delete
+    </button>
+  ) : (
+    <button type="button" className="delete" title="Delete" onClick={() => props.onConfirm(true)}>
+      <Trash2 size={14} />
+    </button>
   );
 }

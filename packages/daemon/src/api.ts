@@ -48,6 +48,7 @@ import {
 } from "@ivy/protocol";
 import type { z } from "zod";
 import { statusReport, usageReport } from "./reports.ts";
+import { findMessages } from "./search.ts";
 import type { Routes } from "./server.ts";
 import { PromptError, SessionNotFoundError, type Sessions } from "./sessions.ts";
 import { codeVersion } from "./version.ts";
@@ -326,6 +327,10 @@ export function api(ivy: Ivy, sessions: Sessions): Routes {
         const report: Report = { text: statusReport(ivy, id, file, parts) };
         return Response.json(report);
       }
+      case "GET /search":
+        return Response.json(
+          findMessages(ivy.history, new URL(req.url).searchParams.get("q") ?? ""),
+        );
       case "GET /sessions":
         return Response.json(sessions.list());
       case "POST /sessions": {

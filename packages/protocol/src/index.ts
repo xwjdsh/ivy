@@ -116,6 +116,18 @@ export function formatTokens(t: Tokens): string {
   return `${compact(t.in)} in${cached} / ${compact(t.out)} out`;
 }
 
+/** GET /search?q=: a message holding every word of the query, newest first. */
+export interface MessageHit {
+  sessionId: string;
+  /** ISO time it was written. */
+  ts: string;
+  role: "user" | "assistant";
+  /** Which of that conversation's matches of this role it is, first 0: to find it there. */
+  nth: number;
+  /** Around the match, cut short with "…". */
+  text: string;
+}
+
 /** GET /sessions: most recently active first. */
 export interface SessionSummary {
   id: string;
@@ -148,6 +160,8 @@ export interface SessionView {
   /** Prompts waiting for the running turn to end, oldest first. */
   queue: Prompt[];
   tokens: Tokens;
+  /** The whole prompt of its last model call: how much of the model's context it fills. */
+  context: number;
   /** A permission prompt waiting for an answer, if any. */
   permission?: PermissionAsk;
   /** Off the record: kept nowhere, deleted once let go. */
