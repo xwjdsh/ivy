@@ -49,7 +49,8 @@ export function nextDate(date: string): string {
 /**
  * A day's conversations as the writer reads them: what was said in it, in the order said,
  * conversation by conversation; Ivy's replies in turns that read outside content left out
- * (docs/design/security.md#outside-content). Empty when the user said nothing that day.
+ * (docs/design/security.md#a-turn-that-read-outside-content). Empty when the user said nothing that
+ * day.
  */
 export function dayTranscript(history: ConversationHistory, date: string): string {
   const start = dayStart(date);

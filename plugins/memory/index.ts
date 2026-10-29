@@ -57,7 +57,7 @@ const TAGS_HELP = 'Comma-separated, in both languages, e.g. "dentist, 牙医, �
 
 /**
  * Why a turn that read outside content asks before it writes to the files in every session
- * (docs/design/security.md#outside-content): the words may be someone else's.
+ * (docs/design/security.md#a-turn-that-read-outside-content): the words may be someone else's.
  */
 const OUTSIDE = "this turn read outside content";
 
@@ -306,7 +306,7 @@ export function createMemoryPlugin(): IvyPlugin {
           const found = find(screen(context(store().read()).files).files, input);
           const content = searchText(found);
           // An entry saved from outside content may carry its words
-          // (docs/design/security.md#outside-content).
+          // (docs/design/security.md#a-turn-that-read-outside-content).
           return found.some((f) => f.ext) ? { content, outside: true } : content;
         },
       }),

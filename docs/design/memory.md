@@ -3,7 +3,7 @@
 > What Ivy remembers about the user, and how: the memory plugin. Part of the [design](../DESIGN.md); what outside content may write is in [security.md](security.md#outside-content), her own journal in [companion.md](companion.md#ivys-inner-life).
 
 
-Memory is what makes Ivy *personal*, so it gets its own design. What matters is injected whole, and the model decides what is relevant (as in Hermes, DESIGN §10.1): retrieving the top few notes by keyword score misses synonyms and the other language ("牙医" / "dentist"); whole injection never misses.
+Memory is what makes Ivy *personal*, so it gets its own design. What matters is injected whole, and the model decides what is relevant (as in Hermes, [related-work.md](related-work.md)): retrieving the top few notes by keyword score misses synonyms and the other language ("牙医" / "dentist"); whole injection never misses.
 
 ## Goals
 
@@ -13,7 +13,7 @@ Memory is what makes Ivy *personal*, so it gets its own design. What matters is 
 4. **Safe.** Memory is injected into prompts every session, so it must not become an injection channel; nothing is ever silently dropped.
 5. **Any model.** Rules live in Ivy, not in model features; tools have small flat schemas.
 
-**How quality is kept**, in this order of preference: code for what is certain (caps, dates, archiving old versions, near-duplicate checks, safety scan, taint), tool design for what can be steered (separate `due` and `since` fields, `changed` as a parameter, errors that return candidates and usage), and prompt rules only for real judgment (what to save, where, how to word it, whether a fact changed). Evals (`bun run eval`, DESIGN §11) measure the prompt part across models. Graphiti shows why (DESIGN §10.1).
+**How quality is kept**, in this order of preference: code for what is certain (caps, dates, archiving old versions, near-duplicate checks, safety scan, taint), tool design for what can be steered (separate `due` and `since` fields, `changed` as a parameter, errors that return candidates and usage), and prompt rules only for real judgment (what to save, where, how to word it, whether a fact changed). Evals (`bun run eval`, DESIGN §11) measure the prompt part across models. Graphiti shows why ([related-work.md](related-work.md)).
 
 ## Two hot files, and an archive by topic
 
@@ -70,7 +70,7 @@ The ones that carry a design decision; the rest (merging, language, checking bef
 - **The archive**: what no longer needs to be in front of the model: done todos (moved automatically), facts about past events, things rarely needed, each in the topic it is about. A new topic only for a person or an area that will come up again and fits none there is, never one per entry; `general` for what fits nowhere else.
 - **Don't save:** things easy to look up again, guesses about the user, vague entries (pronouns, generic nouns), secrets (passwords, keys, card numbers; refuse and say why). Sensitive personal data (health, relationships) goes to the hot files only after asking, as they go out with every request; shared by the user as part of their life, it is kept in the archive. A passing feeling isn't saved: the day's note (M3) records it from the conversation. What Ivy only infers (a mood, a reason, a pattern she thinks she sees) is never saved as a fact about the user; it becomes one when the user says it. When in doubt about something the user shared of their life, keep it in the archive: it costs nothing until searched, and a detail dropped can't be recalled.
 - **Be specific:** keep numbers, names, brands and qualifiers ("GameCube", not "a game console"; "Mei's father", not "dad"). A word generalized away can't be searched for.
-- **Only from this conversation:** save what the user said or what was done in this session, not what was read from memory itself (re-saving what was recalled is how junk multiplies, DESIGN §10.1). Confirm an entry (`update` with no changes) only when the user restates it or says it still holds.
+- **Only from this conversation:** save what the user said or what was done in this session, not what was read from memory itself (re-saving what was recalled is how junk multiplies, [related-work.md](related-work.md)). Confirm an entry (`update` with no changes) only when the user restates it or says it still holds.
 - **Absolute dates only:** "next Friday" is saved as 2026-10-23; a relative date is wrong a week later.
 - **Tags bridge words:** add the key terms in the other language and common synonyms (`#dentist #牙医 #看牙`), so archive search works across Chinese and English.
 
@@ -93,7 +93,7 @@ There is no `/remember` command: the user just says it, and the model routes it 
 ## Tidying (automatic, never asks)
 
 Moving between hot and cold deletes nothing (the archive stays searchable), so tidying runs without confirmation: the model's moves show as tool calls, the rule-based ones are noted in the verbose log.
-- **By rule:** a todo marked done moves to the archive (into its topic, or `general`), and so does an entry whose `ends:` date has passed (marked `until:`). When `update` changes an entry's text, the old version goes to the archive: marked `until:` with the new version's `since:` (or today, and never before the old `since:`) if the fact changed, `replaced:` if it was only reworded. The bar for `changed` is strict (DESIGN §10.1): new activity or extra detail is not a change. This keeps history ("where did I live before?") and, more importantly, makes consolidation safe: whatever the model merges or shortens under cap pressure survives word for word in the archive. Overdue open todos stay in `MEMORY.md`; `/memory` flags long-overdue ones, since moving them would silently give up on them.
+- **By rule:** a todo marked done moves to the archive (into its topic, or `general`), and so does an entry whose `ends:` date has passed (marked `until:`). When `update` changes an entry's text, the old version goes to the archive: marked `until:` with the new version's `since:` (or today, and never before the old `since:`) if the fact changed, `replaced:` if it was only reworded. The bar for `changed` is strict ([related-work.md](related-work.md)): new activity or extra detail is not a change. This keeps history ("where did I live before?") and, more importantly, makes consolidation safe: whatever the model merges or shortens under cap pressure survives word for word in the archive. Overdue open todos stay in `MEMORY.md`; `/memory` flags long-overdue ones, since moving them would silently give up on them.
 - **By the model, when a hot file is full:** the over-cap error makes it consolidate (above). Generous limits keep this rare.
 - **Back from the archive:** when an archive entry is in use again, the model moves it back.
 
@@ -101,7 +101,13 @@ Moving between hot and cold deletes nothing (the archive stays searchable), so t
 
 `reminders` reports todos as they come due, at their time or, for a todo with a date alone, at `[plugins.memory] remind_at`; the scheduler announces them (DESIGN §5.6). Follow-ups come due are reported too, as hers, until done; one comes due while the user is talking is given in that turn's context instead, to bring up in passing, and is then done; off the record it isn't given, as marking it done would keep something of that conversation.
 
-`contextFor` lists todos in `MEMORY.md` that are due today or overdue, with their time, put to the model once a conversation (on later turns listed as already given, to bring up again only if asked), to be mentioned in passing where it fits, as a statement, or not at all: the notification at its time is the reminder, which doesn't depend on the conversation. It also carries what the turn recalls: what the user just wrote is scored against the archive and past conversations (not the hot files, in the prompt already), with no model call, and the few best hits that share a rare word with it go in (a common one says nothing), each given once in a conversation, quoted and framed as the past, not instructions, to be used only if it fits. Nothing it brings may taint the turn, so a reply marked `outside` and an `ext` entry are left out. The reflection plugin does the same for the daily notes, from what was said and seen, never what Ivy sensed, an impression being hers, not the user's truth ([companion.md](companion.md#notes-and-reviews)). The evals set how rare and how many. And it carries changes to the hot files since the session started (above), as whole lines within the plugin's share of the turn's context, then a count of the rest and a pointer to search.
+`contextFor` brings three things into each turn's context, within the plugin's share of it (2000 characters, DESIGN §6.2):
+
+- **Due todos:** the todos in `MEMORY.md` due today or overdue, with their time, put to the model once a conversation (on later turns listed as already given, to bring up again only if asked), to be mentioned in passing where it fits, as a statement, or not at all: the notification at its time is the reminder, which doesn't depend on the conversation.
+- **Recall:** what the user just wrote is scored against the archive and past conversations (not the hot files, in the prompt already), with no model call, and the few best hits that share a rare word with it go in (a common one says nothing), each given once in a conversation, quoted and framed as the past, not instructions, to be used only if it fits. Nothing it brings may taint the turn, so a reply marked `outside` and an `ext` entry are left out. The evals set how rare and how many.
+- **Changes since the session started:** changes to the hot files (above), as whole lines, then a count of the rest and a pointer to search.
+
+The reflection plugin recalls from the daily notes the same way, from what was said and seen, never what Ivy sensed, an impression being hers, not the user's truth ([companion.md](companion.md#notes-and-reviews)).
 
 ## The day's pass
 

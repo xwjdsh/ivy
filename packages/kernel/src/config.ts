@@ -8,8 +8,8 @@ export const EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const;
 const Effort = z.enum(EFFORT_LEVELS);
 
 /**
- * The protocols Ivy speaks (DESIGN.md §5.2.1): `anthropic`, the Messages API; `openai`,
- * Chat Completions. Adding one also needs a ModelClient (see createModelClient).
+ * The protocols Ivy speaks (docs/design/models.md#two-protocols): `anthropic`, the Messages API;
+ * `openai`, Chat Completions. Adding one also needs a ModelClient (see createModelClient).
  */
 export const PROVIDER_TYPES = ["anthropic", "openai"] as const;
 export type ProviderType = (typeof PROVIDER_TYPES)[number];

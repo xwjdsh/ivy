@@ -115,34 +115,7 @@ The kernel runs in the daemon (`ivy daemon`), which owns sessions and runs the s
 
 ### 5.2 Model Client
 
-- `@anthropic-ai/sdk` and `openai`, each wrapped in a thin module so the rest of the code never touches raw API shapes.
-- Speaks the protocol of the `[providers.*]` endpoint of the model in use (§5.2.1). Adaptive thinking where the model has it, and one `effort` level from `[generation]` (switch with `/effort`); the default model is in §10.
-- Server-side refusal fallback (`fallbacks: "default"`) is on where supported (decided by `Capabilities`), as Anthropic recommends: if the model declines, Anthropic re-runs the request on a fallback model within the same call, and a notice names both models, so a swap is never silent.
-- **Compatible endpoints vary.** Effort, adaptive thinking, prompt caching, refusal fallback, `clear_at` system messages, compaction and server tools are Anthropic API features; a compatible endpoint or a non-Claude model may ignore or reject them.
-- **Capabilities** decide per request which optional features a model gets on its provider's endpoint, from these sources:
-  1. **Models API** (Anthropic's own API only; OpenAI's lists models without what they support): `client.models.list()` reports effort support and levels, `max_tokens`, context window, thinking types, server tools and more. Fetched in the background and cached. New models need no code change. It does *not* report mid-conversation system messages or refusal fallback.
-  2. **Learned:** when the endpoint answers a request with a 400 naming an optional feature it used, the agent turns that feature off for that model, tells the user with a notice, and resends the step. Images are learned the same way: a model that refuses them gets, from then on, a line saying an image was left out in place of each one (the session keeps them).
-  3. **Probed:** a feature an endpoint could ignore without a trace, which only a vendor's own API is otherwise trusted with (§5.2.1), is tried once per model and endpoint, where nothing else reports it, with a small request, and kept if the reply shows it working. The probe runs in the background on the model's first turn there, so turns before it finishes go without search, the model told it can't (§8). Server-side web search is the one (§8): a proxy in front of a vendor's API may pass it or not, and from a reply without a search an ignored tool can't be told from one the model didn't need.
-  4. **Defaults:** on the official API, Claude models get the optional features, except a fixed pattern of *older* models known to lack them (this list only covers the past, so it never grows). Other endpoints get the basics plus what they may ignore or refuse (§5.2.1).
-- An official endpoint is recognised by `base_url` (`api.anthropic.com`, `api.openai.com`), not by `type`: `type` names the protocol, which official and compatible endpoints share.
-- **Prompt caching:** tools and system prompt are kept byte-stable (plugins sorted by id, no timestamps), with a cache breakpoint after them. Volatile context (the time, todos due today) goes with the new user message, as a `clear_at` system message or a `<context>` block (§5.3), never into the system prompt, so the cached prefix stays intact.
-- **Helper model (M3):** side work that only extracts or sums up (a fetched page read for what was asked, a session's title and key points) runs on `[agent] helper_model`, a small fast model named like the main one (`provider/model`, on any provider), as Claude Code gives such work to Haiku: quick and cheap. It also runs the Auto mode's classifier (§5.5), a narrow yes or no on the user's own words. What the user reads in Ivy's voice (the day's note, a review, her journal) stays on the main model, as it is Ivy speaking; what needs judgment (what is worth keeping) runs on whichever model the evals favour (§11). Key points decide what Ivy picks up later, so the recall evals check them before a small model is trusted with them. The helper sees what it sums up, a conversation included, so its provider is trusted like the main one. Unset, the helper is the main model at `low` effort.
-- **Switching models:** `/model` offers each provider's `models` list, or without one what its endpoint lists (`GET /v1/models`), and switches across providers; `/model <provider/model>` switches directly. `/effort` works the same way. Both save the choice in `config.toml` (§7). Requests carry only params the model accepts (`Capabilities`). A switch costs one prompt-cache miss (the cache is per model, and the top-level effort is part of the cached request).
-- **Long sessions — compaction (planned):** client-side, so it works on every endpoint; Anthropic's server-side compaction only as an enhancement. Cheap relief first (oversized old tool results, no model call), then a summary of older history; before summarizing, what is worth keeping is saved to memory (summaries lose details). The originals stay in the session file. What is in progress (files changed, tasks, the user's corrections) survives as state the session already records, not as prose: a summary alone tends to lose a correction (context-mode, §10.1).
-- **Oversized tool output (planned, M5):** kept out of the context when the tool returns, not only at compaction: a result over a size limit is stored whole for the session, and the model gets its start, its size and a handle to search or read parts of it. The kernel does this for every tool, as it owns the loop.
-- **Providers and models:** `config.toml` can define several `[providers.<name>]` (each with `type`, `api_key`, `base_url`, optional `models` naming what `/model` offers from it, needed when its endpoint lists none, and optional `refusal_fallback`, default true). A model is named by one string, `"<provider>/<model id>"`, split at the first `/` (the id may contain more), as in OpenCode and LiteLLM; `[agent] model` is the main one (none in a new install: Ivy sends nothing until one is chosen), and every other place that picks a model (helper model, later jobs and subagents) uses the same form. `type` is `"anthropic"` or `"openai"` (§5.2.1); `base_url` left out is the vendor's own API for it. Generation settings (`effort`, `max_tokens`) live in `[generation]`, independent of the provider.
-- Endpoints come only from `config.toml`; an API key from `config.toml` or, on macOS, the Keychain (a provider without `api_key` looks there, under its name). `ANTHROPIC_*` environment variables and `ant` profiles are deliberately ignored, so there is one place to look. Config is strict: unknown keys are errors.
-
-#### 5.2.1 Two protocols
-
-`type = "anthropic"` speaks the Messages API, `type = "openai"` Chat Completions: between them nearly every model is reachable, on its vendor's API, a proxy or a local server.
-
-- **Ivy's own format is Anthropic's**, in memory and in session files: the richest of the common ones (text, images, tool calls and results, thinking as blocks). The `openai` client translates at its edge, both ways, so the agent loop, sessions and traces stay as they are.
-- **`type` says the protocol, `base_url` only what is the vendor's alone.** An optional feature an endpoint can ignore harmlessly, or refuse with a 400, is sent to every endpoint and dropped for a model on a 400 (§5.2), so a vendor that copies Anthropic's or OpenAI's extensions gets them. What would be lost silently if ignored (`clear_at` system messages: the turn's context would vanish unseen), or belongs to one vendor (refusal fallback, Models API facts), goes to its own API alone, told by `base_url` (`api.anthropic.com`, `api.openai.com`). A proxy in front of a vendor's own API is treated as any other endpoint for these, a simple rule taken over a per-provider switch. The one exception is a feature that can be probed once and seen to work (§5.2, source 3), as server-side search can be.
-- **OpenAI's Responses API, later, is a third `type`**: a protocol of its own, which carries a reasoning model's reasoning across tool calls; any endpoint that speaks it can use it.
-- **Switching models mid-session:** each reply records where it came from, the endpoint's `base_url` and the model, and its thinking (Anthropic's signed blocks, the reasoning text a Chat Completions endpoint sent) goes back only to that model at that endpoint. Elsewhere it is dropped: another backend may reject what it can't verify, even behind one proxy, and what matters stays in the reply's text. It costs nothing, as a model's thinking is needed only within its own turn and `/model` applies from the next one. The vendor's search blocks and their citations go only to a model offered the search. Told by the endpoint, not the provider's name, which may be pointed elsewhere.
-- **Usage is counted as Anthropic counts it** (input without the cached tokens, cache reads apart), so tokens and cache hits read the same on either protocol.
-- **Why translate at the edge, not a shared library:** a multi-provider library (pi's, §10.1) brings its own message format, model catalog and capability rules, which would replace Ivy's session format and capabilities, for two protocols. Its notes on each endpoint's quirks guide the translation instead. A library becomes worth it if many native APIs (Gemini, Bedrock, ...) are wanted.
+Providers speak one of two protocols (Anthropic's Messages API, OpenAI's Chat Completions); what each model gets is decided per request; a helper model does side work and a writer what Ivy writes outside a conversation: [models.md](design/models.md).
 
 ### 5.3 Context Builder
 
@@ -195,11 +168,13 @@ Due (the user also gets a notification at its time; mention one only in passing 
 - **Side effects survive crashes honestly** (DSH, §10.1; needed before M6): before running an `external` or `dangerous` tool, record that it started; if the session reloads without its result, the model is told the outcome is *unknown* (it may already have happened) instead of the call being dropped and possibly repeated, e.g. an email sent twice.
 - **System prompt snapshot (planned):** record the system prompt in the session when a session starts, so a request can be rebuilt from the session file alone (traces can be off or pruned).
 - Usage (tokens, cache hits, and a cost estimate that is recorded but not shown) is written per model call; `/usage` reports tokens.
-- A turn that read outside content records it (an `outside` line, naming the tool), and is tainted until the user's next prompt (§8.1).
+- A turn that read outside content records it (an `outside` line, naming the tool), and is tainted until the user's next prompt ([security.md](design/security.md#a-turn-that-read-outside-content)).
 - **Started by Ivy (M3):** a session she opens when writing first is marked so in its first line; as the API wants a user turn first, it begins with a context block saying so, then her message, with no prompt of the user's.
-- **Taken back (M3):** a line marks the part from one of the user's messages to the end of the turn that took it back, by place, not time, so the kernel's history leaves it out, and its key points go, to be summed up again without it. Only a tool that declares it may take back (`ctx.takeBack`, core's `take_back`, asked in a tainted turn, so a page read then can't make her erase what the user kept, §8.1); the kernel finds each plugin's own calls in the part and gives them to its `takenBack` hook to undo (§6.2). It is marked before anything is undone, so an undo that fails leaves nothing readable behind.
-- **Off the record (M3):** set in a session's first line as it starts, for all of it; the window's split after a pause (§5.7) starts the next one off the record too, as kept by mistake can't be undone. Plugins read past conversations only through the kernel's history (§6.2), which reads one off the record as nothing, so no plugin needs to know; the user still sees it, marked, until it ends. When it is let go (idle, deleted, or Ivy stopping; one left by a crash on the next start) it is deleted for good, its images, key points and traces too, not moved to the trash, which can be restored.
-- **Key points (M3):** when a session is let go (idle, or on the next start for those Ivy stopped in), the helper model sums it up: a title, what mattered, what was left open. They are kept beside it (`<id>.points.json`, covering it up to its last message; a conversation taken up again is summed up again when let go), so the transcript stays written by its session alone. They are metadata, not memory: plugins read them with the history, and the next conversation starts from them, its first turn waiting a few seconds for one still being summed up (§11, M3). A conversation of a single message isn't summed up; Ivy's replies in tainted turns are marked as left out, not shown (§8.1).
+- **Taken back (M3):** a line marks the part from one of the user's messages to the end of the turn that took it back, by place, not time, so the kernel's history leaves it out, and its key points go, to be summed up again without it. Only a tool that declares it may take back (`ctx.takeBack`, core's `take_back`, asked in a tainted turn: [security.md](design/security.md#a-turn-that-read-outside-content)); the kernel finds each plugin's own calls in the part and gives them to its `takenBack` hook to undo (§6.2). It is marked before anything is undone, so an undo that fails leaves nothing readable behind.
+- **Off the record (M3):** set in a session's first line as it starts, for all of it (what the user is told, and why it carries over the window's splits: [companion.md](design/companion.md#off-the-record-and-taken-back)). Plugins read past conversations only through the kernel's history (§6.2), which reads one off the record as nothing, so no plugin needs to know; the user still sees it, marked, until it ends. When it is let go (below), deleted, or Ivy stops (one left by a crash, on the next start), it is deleted for good, its images, key points and traces too, not moved to the trash, which can be restored.
+- **Key points (M3):** when a session is let go (idle, or on the next start for those Ivy stopped in), the helper model sums it up: a title, what mattered, what was left open. They are kept beside it (`<id>.points.json`, covering it up to its last message; a conversation taken up again is summed up again when let go), so the transcript stays written by its session alone. They are metadata, not memory: plugins read them with the history, and a conversation's first turn picks up from the last one's, if it ended within 30 days, waiting a few seconds for one still being summed up; they reach the model as Ivy's summary, not the user's words. A conversation of a single message isn't summed up; Ivy's replies in tainted turns are marked as left out, not shown ([security.md](design/security.md#a-turn-that-read-outside-content)).
+- **Let go:** a session idle 30 minutes, with nothing running or waiting on the user, is let go: plugins are told (`sessionReleased`), it is summed up into key points, and one off the record is deleted. Written to again, it is loaded afresh.
+- **Deleted:** a deleted conversation moves to `sessions/trash/` with its images and key points, out of every list and every reader; moving it back restores it. One Ivy is replying in can't be deleted until stopped.
 - **Images the user sends** are uploaded to the daemon as files when attached (not base64 in a request), and a prompt names them; those never sent are cleared. Sent, they move to a folder beside the session file, of its name, each named by its content's hash; the session line names the file instead of holding it, so the file stays readable, and the store reads them back into image blocks when it loads. They live and go with their session, and stay in the history sent to the model; compaction (§5.2) is where history gets shorter.
 
 ### 5.5 Permission Gate
@@ -215,7 +190,10 @@ Loads, configures and runs plugins; see §6 for the plugin contract. Responsibil
 - A plugin command whose name clashes with a built-in one is an error at startup.
 - Namespacing: tool names are `<plugin>__<tool>` to avoid collisions.
 - Per-plugin data directory (`dataDir`); secrets access planned.
-- **Scheduler** (in the daemon, M2): it asks the plugins which reminders came due since its last check (`reminders`), and the app shows them as notifications. No agent runs, so no model call or permission is involved. Each reminder is announced once; after a sleep or a stopped daemon the missed ones come marked late, unless they are long past (overdue todos still come up in chat). A reminder has no side effect, so it is shown late rather than lost, and a crash may repeat one rather than drop it. Reminders wait for the app (§5.7). A reminder that is Ivy's to bring up (`from: "ivy"`, a follow-up, M3) is no notification: it comes at every check until handled, and the daemon writes her message only when she may: `[agent] writes_first` on, outside `writes_first_quiet`, under `writes_first_per_day`, the user not talking with her in the last hour, and her last one answered (an unanswered one holds her back a few days, then is let go); the writer, shown what the user said lately that bears on it (the user's own words, untainted, §8.1), drops one already talked about (§11, M3). **Jobs (M3)** are caught up instead: a plugin's job runs once a local date from its time on, not waiting for the app, and is told when it last ran to the end (at most a week back), so what a sleep, a stopped daemon or a failed run missed is done at the next chance; a job that fails is tried the next day.
+- **Scheduler** (in the daemon, M2): it asks the plugins every minute what came due since its last check (`reminders`). No agent runs for a reminder, so no model call or permission is involved.
+  - **Reminders** show as the app's notifications. Each is announced once; after a sleep or a stopped daemon the missed ones come marked late, unless more than 12 hours late (overdue todos still come up in chat). A reminder has no side effect, so it is shown late rather than lost, and a crash may repeat one rather than drop it. Reminders wait for the app ([interfaces.md](design/interfaces.md)).
+  - **Hers to bring up** (`from: "ivy"`, a follow-up, M3) is no notification: it comes at every check until handled, and the daemon writes her message ([companion.md](design/companion.md#ivy-writes-first)) only when she may: `[agent] writes_first` on (the default); outside `writes_first_quiet` (`22:00-09:00` by default); under `writes_first_per_day` (1 by default, at most 5); the user not talking with her in the last hour; and her last one answered (an unanswered one holds her back three days). The writer ([models.md](design/models.md#helper-and-writer)), shown the user's own words from the last week that bear on it (untainted) and the last conversation's key points, drops one already talked about. The notification is her message's first line.
+  - **Jobs (M3)** are caught up instead: a plugin's job runs once a local date from its time on, not waiting for the app, and is told when it last ran to the end (at most a week back), so what a sleep, a stopped daemon or a failed run missed is done at the next chance; a job that fails is tried the next day.
 - **MCP bridge** (M5): any MCP server listed in config is wrapped as a plugin automatically, so existing MCP servers (Gmail, Calendar, GitHub, ...) are usable with no new code.
 
 ### 5.7 Interfaces
@@ -248,7 +226,7 @@ Principles; details are decided when this is built.
 | `takenBack({ sessionId, calls })` | The user took back part of a conversation: undo what the plugin's own tools wrote there, from their calls, and say what was undone and what wasn't | Memory removes lines saved there; the journal, entries written there |
 | `contextFor(turn)` | Dynamic text added per turn | The current time; todos due today; memory changes since the session started |
 | `reminders(window)` | What came due since the daemon last asked, shown as notifications (M2); one `from: "ivy"` is hers to write about, offered until its `handled()` | Todos at their time; follow-ups come due |
-| `commands` | Slash commands for the user | `/today`, `/memory [query]` |
+| `commands` | Slash commands for the user | `/memory [query]`, `/remembered`, `/journal` |
 | `jobs` | Daily work the daemon runs, caught up when missed (§5.6) | Each morning, the note on the day before; after each week, the look back at it |
 | `hooks` | Lifecycle callbacks (planned, added when a plugin needs one) | `onSessionStart`, `beforeToolCall` |
 
@@ -301,14 +279,27 @@ export interface PluginContext {
   soulFile: string;           // SOUL.md: read freely; changed only by an approved proposal
   log: Logger;
   history: ConversationHistory;  // past conversations as text, and their key points; read-only
-  writer: WriterModel;        // Ivy writing in her own words (§5.7): the main model, her prompt, no tools
+  writer: WriterModel;        // Ivy writing in her own words (§5.2): the main model, her prompt, no tools
   helper: HelperModel;        // side work on the helper model (§5.2): text in, text out, no tools
   // Planned: secrets (macOS Keychain), kernel (notify, call other tools)
 }
 
+export interface Reminder { id: string; title: string; body?: string; at?: Date; from?: "ivy"; handled?(): Promise<void> | void }
+export interface JobDef { name: string; at(): string; run(r: { now: Date; since: Date; signal: AbortSignal }): Promise<void> }  // at: "HH:MM", local
+export interface ConversationHistory {  // only through here: off the record reads as nothing, taken-back parts are left out
+  sessions(): { id: string; updatedAt: string }[];
+  messages(id: string): PastMessage[];  // what the user typed and Ivy answered; `outside` on a reply from a tainted turn
+  points(id: string): SessionPoints | undefined;
+}
+// CommandContext.sessionId is absent when a command runs outside a conversation.
+// A plugin's turn context and session section are capped (CONTEXT_MAX_CHARS, 2000 characters for a turn).
+// Shared helpers: search ranking and recall, the day (below), the marker for a left-out reply.
+
 ```
 
 A plugin is a folder with an `index.ts` that default-exports an `IvyPlugin`. The contract is versioned (`apiVersion`) in M5, when user plugins arrive.
+
+**A day runs from 04:00 to 04:00** everywhere: the daily notes, the day's pass, the weeks (a week ends Monday 04:00), the jobs' time and the window's split, so a late talk belongs to the day before. Plugins share it through `@ivy/plugin-api`.
 
 ### 6.3 Trust model
 
@@ -338,6 +329,7 @@ Ivy reuses other agents' work through open standards, not their plugin formats:
 ├── daemon.sock          # the daemon's socket, for the user alone (M2, §5.7)
 ├── daemon/              # the daemon's own state, e.g. reminders already announced; daemon.log of one `ivy` started
 ├── sessions/            # append-only JSONL transcripts; beside each, its key points (<id>.points.json) and a folder of the images sent in it
+│   └── trash/           #   deleted conversations, restorable by moving them back (§5.4)
 ├── data/<pluginId>/     # per-plugin storage
 │   ├── memory/          #   memory plugin: USER.md, MEMORY.md (hot), archive/<topic>.md (cold), kept.json (what the day's pass kept lately) (§8.1)
 │   ├── journal/         #   journal plugin: IVY.md, Ivy's own journal (§8.1)
@@ -358,10 +350,10 @@ The data root is `$IVY_HOME`, default `~/.ivy`, which the terminal and the app s
 
 | Plugin | Milestone | Summary | Key tools |
 |---|---|---|---|
-| `core` | M0 / M1 | Current time in every turn's context, with how long since the user last wrote and, as a conversation starts, where the last one was left (M3); date arithmetic | `date_calc` |
-| `memory` | M1 | Preferences, facts and todos as markdown files: capped hot files injected whole per session, a searchable archive (§8.1) | `save`, `update`, `move`, `delete`, `search`, `session_search` |
+| `core` | M0 / M1 | Current time in every turn's context, with how long since the user last wrote and, as a conversation starts, where the last one was left (M3); date arithmetic | `date_calc`, `take_back` |
+| `memory` | M1 | Preferences, facts and todos as markdown files: capped hot files injected whole per session, a searchable archive (§8.1) | `save`, `update`, `move`, `delete`, `search`, `read_topic`, `session_search` |
 | `journal` | M1 | `IVY.md`, Ivy's own first-person journal of what she lived with the user, in every session; proposals for `SOUL.md`; `/journal` to read it; off with `enabled = false` (§8.1) | `write`, `revise`, `propose_soul_edit` |
-| `reflection` | M3 | The user's days and moods as a note on each day and a look back at each week built from them (monthly later), in Ivy's words, from what the user shared; one job each morning, kept as files (§11, M3) | job `reflect` |
+| `reflection` | M3 | The user's days and moods as a note on each day and a look back at each week built from them (monthly later), in Ivy's words, from what the user shared; one job each morning, kept as files ([companion.md](design/companion.md#notes-and-reviews)) | job `reflect` |
 | `fs` | M5 | Read, write and edit files in allowed directories (§8.3); with `shell`, the basics a conversation needs, on any model | `read`, `write`, `edit`, `glob`, `grep` |
 | `shell` | M5 | Run commands, in a sandbox (§8.3) | `run` |
 | `coding-agent` | M5 | Coding and work tasks handed to any coding CLI that speaks the Agent Client Protocol, run as a subagent (principle 8). The agent's own permission requests go through Ivy's gate. Without one installed, Ivy's `fs` and `shell` still do the basics on any model (principle 7) | `run` |
@@ -403,7 +395,8 @@ Bun workspace monorepo. Packages and plugins only; their files are visible in th
 
 ```
 ivy/
-├── docs/DESIGN.md           # this file
+├── docs/DESIGN.md           # this file: the overview
+├── docs/design/             # the topics in full: companion, interfaces, memory, models, security, decisions, related work
 ├── examples/                # starter config.toml and SOUL.md for the data dir
 ├── packages/
 │   ├── kernel/              # loop, model client, capabilities, context, sessions, permissions, plugin host, traces
@@ -413,11 +406,14 @@ ivy/
 │   ├── web/                 # the chat window's page (React), the app's frontend
 │   └── cli/                 # `ivy`: the daemon's client, TUI, one-shot mode, slash commands
 ├── evals/                   # real-model eval cases and their runner (`bun run eval`)
+├── scripts/                 # builds, and the check that design citations point somewhere
 ├── app/                     # the macOS app, in Go with MyGo (§5.7)
 └── plugins/
     ├── core/                # time context + date_calc
     ├── memory/              # long-term memory (§8.1); its lines module is shared
-    └── journal/             # IVY.md, Ivy's own journal (§8.1)
+    ├── journal/             # IVY.md, Ivy's own journal (§8.1)
+    ├── reflection/          # daily notes and weekly reviews (M3)
+    └── web/                 # web search and fetch (M3)
 ```
 
 ## 10. Tech Stack
@@ -440,21 +436,7 @@ ivy/
 
 ### 10.1 Related work
 
-Compared on 2026-10-17/18. What each project is, what Ivy took, and what it left.
-
-- **[pi](https://github.com/earendil-works/pi)**: a deliberately minimal terminal coding agent (four tools, ~35 providers, no permission system). Took: client-side compaction, steering, deferred MCP tools, and its notes on OpenAI-compatible endpoints' quirks. Left: no permissions (Ivy acts outside the machine), project-level context files, its multi-provider library (its own message format; Ivy translates at the edge, §5.2.1).
-- **[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)**: a large harness where everything, even the loop, is a plugin; OS sandbox for commands. Took: cheap compaction before summaries, "unknown outcome" for interrupted side effects, system prompt snapshots, a sandboxed shell. Left: a kernel-less design, approvals without rules.
-- **[Hermes Agent](https://github.com/nousresearch/hermes-agent)**: the closest to Ivy, a personal agent with SOUL.md/USER.md, capped memory injected whole and frozen per session, skills, cron jobs and chat gateways. Took: the capped, frozen hot files with over-cap errors that force consolidation; patches by unique substring (it dropped whole-entry replace after models wiped unrelated entries); the memory safety scan; session search with CJK bigrams; jobs as fresh agents; skills. Ivy adds the searchable archive, todos with due dates and tidying between hot and cold.
-- **[OpenClaw](https://github.com/openclaw/openclaw)**: a gateway daemon owning many chat apps and devices, with a plugin and skill registry. Took: memory flush before compaction, the gateway as the model for the M2 daemon, keeping outside content out of standing memory, `NO_REPLY` for jobs with nothing to report. Left: embeddings for memory, heartbeat turns inside the user's session, in-process third-party plugins from a registry (its registry hosted hundreds of malicious skills), and the agent rewriting its own `SOUL.md`; its author's [soul.md](https://soul.md/) essay shaped `IVY.md`, Ivy's own journal kept apart from the user's `SOUL.md` (§8.1).
-- **[Orca](https://github.com/stablyai/orca)**: a desktop app that runs many coding CLIs side by side, each in its own git worktree. Took: delegating to coding CLIs over the Agent Client Protocol, with their permission requests routed into the host's own approval flow. Left: the rest (a full IDE).
-- **[context-mode](https://github.com/mksglu/context-mode)**: an MCP server and hooks that keep bulky tool output out of coding agents' context (it runs code in a sandbox, indexes output in SQLite FTS5 and returns what matches) and keep working state across compaction. Took: holding oversized output back as the tool returns, with a handle to search it; state (files, tasks, corrections) kept apart from the summary at compaction; a graded loop guard. Left: the hooks-and-MCP wrapping, which exists to reach other agents' loops (Ivy owns its own), and its code (Elastic License 2.0, not MIT).
-- **Agent memory projects** (Mem0, Letta, Zep/Graphiti, LangMem, Memobase, MemoryOS, A-MEM, Cognee, supermemory, Basic Memory, agentmemory, claude-mem, Claude Code, Codex, Anthropic's memory tool):
-  - *Same core as Ivy:* capped memory injected whole with fail-and-consolidate (Hermes, Letta, Claude Code); plain markdown as the truth (Basic Memory, Claude Code).
-  - *Evidence for simple:* on LoCoMo, full context beat Mem0 (72.9 vs 66.9, Mem0's own paper) and Letta scored 74.0 with files and grep.
-  - *Evidence against automatic capture:* an audit of Mem0's auto-extracted memories found 97.8% junk, one invented preference copied 808 times by re-extracting what was recalled; claude-mem's per-call observer added 64% to users' spend. Hence explicit tool writes, and a re-save that changes nothing.
-  - *Graphiti's lesson:* letting a small model judge contradictions across the whole store retired many true facts. Hence a strict bar for "changed", decided in the conversation, with old versions archived, never deleted.
-  - *Taken as rules:* Graphiti's save rules (no vague entries, keep specifics, absolute dates, deadlines aren't end dates), usage shown to the model (Letta), a date per line (Claude Code), a reminder that memory can be stale (Codex), a rare-word veto in duplicate checks (claude-mem).
-  - *Left:* vector stores, knowledge graphs, per-turn extraction pipelines (several model calls per turn; Graphiti fails on models without structured output), decay formulas with hand-set thresholds.
+pi, DeepSeek Harness, Hermes, OpenClaw, Orca, context-mode and the agent memory projects, compared, with what Ivy took and left: [related-work.md](design/related-work.md).
 
 ## 11. Roadmap
 
@@ -472,9 +454,7 @@ Each milestone ends with a few days of real use and an update to this doc.
 
 ### M2 — Daemon & app
 Goal: Ivy runs in the background and can reach the user, so a reminder comes on time. Before company and work, because jobs, background tasks and subagents need a process that outlives the terminal, and the switch to a client is cheapest while there is little to move.
-- The daemon owns sessions and runs the kernel; the TUI and one-shot mode become its clients (§5.7).
-- The app (MyGo): a regular app that keeps the daemon running, start at login, the `ivy` command, and a chat window (§5.7).
-- Due todos as notifications at their time (§5.6), opening the chat window when clicked.
+- The daemon, the app and its chat window, due todos as notifications ([interfaces.md](design/interfaces.md), §5.6).
 - **Done when:** "remind me at 5 pm to pick up the parcel" pops up at 5 pm without Ivy open in a terminal, and clicking it opens the chat, where the same sessions as in the terminal carry on.
 
 ### M3 — Company
@@ -484,8 +464,8 @@ Goal: Ivy is someone the user wants to keep talking to (G1, G8): more like a per
 - **Tuned by evals, not by feel:** recall cases (something said once, weeks ago, asked about in other words), "reads like a person" cases, and the existing memory and journal sets. What a pattern can tell (Markdown, one question, an assistant's opener, the user's language) is checked in code; the rest by a judge model that sees what Ivy knew (her prompt, the turn's context, her tools' results), so recalling well isn't taken for inventing. A case sets the time of day it happens, so a reply never depends on when the evals run, and may run a plugin's job over its conversations, as at the day's end, to check what the job wrote. Cases cut from the user's own conversations are kept in `~/.ivy/evals/`, never in the repository. They set the limits, how much each turn recalls, whether meaning-based search earns its place, and the rules and prompts; every change and every model is compared on them. What real use catches becomes a case.
   - Finding the right memory is not using it well, so cases also follow, across sessions, what [companion.md](design/companion.md) promises: memory used lightly (not raised again and again, nothing private where it doesn't fit); an old feeling not taken for how the user is now; saying so when she doesn't remember (companion.md, Never pretending); a correction holding in later conversations, not only in the files (memory.md, Done when 5); Off the record and Taken back (companion.md) held to.
   - A review is judged on whether it is worth reading (what kept coming back, what changed, what was left open), not only on being accurate.
-- **Around it, the reasons to come back.** Jobs: the daemon runs the plugins' jobs once a day, catching up what was missed (§5.6), Ivy's words coming from `writer` (§5.7); they write files and send no notifications.
-- Session titles and key points (§5.4): what the picking up of threads and the search start from.
+- **Around it, the reasons to come back.** Jobs: the daemon runs the plugins' jobs once a day, catching up what was missed (§5.6), Ivy's words coming from the writer ([models.md](design/models.md#helper-and-writer)); they write files and send no notifications.
+- Key points (§5.4): what a conversation's first turn picks up from.
 - **Done when:** I talk to Ivy most days because I want to, and the week's review is one I want to read (answering it comes with how notes are used, [companion.md](design/companion.md#notes-and-reviews)).
 
 ### M4 — Reached from anywhere
@@ -524,7 +504,7 @@ Goal: help with mail, calendar and the day's brief, built from MCP servers and s
 
 ## 12. Open Questions
 
-1. **Notifications:** macOS from M2; also to the phone? → decide with the gateway (M4).
+1. **Notifications to the phone:** through the gateway (M4), or a push service of their own? → decide with the gateway.
 2. **Search API for the fallback:** which one, for models without server-side search (§8)? → decide when first needed.
 3. **Mail and calendar servers:** which MCP servers, and how they keep the daemon signed in (OAuth, offline access)? → decide in M6.
 

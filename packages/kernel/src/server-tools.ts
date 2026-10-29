@@ -1,4 +1,4 @@
-// The vendor's own tools (DESIGN.md §5.2): what Ivy knows of each, in one place. Today that
+// The vendor's own tools (docs/design/models.md): what Ivy knows of each, in one place. Today that
 // is web search, which a plugin asks for (`serverTools`) and the model may have.
 
 import type Anthropic from "@anthropic-ai/sdk";
@@ -10,7 +10,7 @@ type MessageParam = Anthropic.Beta.BetaMessageParam;
 type ContentBlock = Anthropic.Beta.BetaContentBlockParam;
 
 /**
- * Blocks of tools the vendor runs (DESIGN.md §5.2): its search, and the code it runs to
+ * Blocks of tools the vendor runs (docs/design/models.md): its search, and the code it runs to
  * filter results. A reply keeps them, so the model that searched sees what it found.
  */
 const SERVER_BLOCKS = new Set([
@@ -37,8 +37,8 @@ export function serverToolDefs(
 }
 
 /**
- * The vendor's tool whose results a reply holds (search results, and the pages its
- * filtering code read), if any: outside content (docs/design/security.md#outside-content).
+ * The vendor's tool whose results a reply holds (search results, and the pages its filtering code
+ * read), if any: outside content (docs/design/security.md#a-turn-that-read-outside-content).
  */
 export function readsOutside(content: ReadonlyArray<{ type: string }>): string | undefined {
   const found = content.find((b) => b.type !== "server_tool_use" && SERVER_BLOCKS.has(b.type));
@@ -104,8 +104,8 @@ function searchResultText(block: {
 }
 
 /**
- * Addresses the user wrote in a conversation, or its searches returned: written before the
- * model read anything since, they can't carry it off (docs/design/security.md#trust-model).
+ * Addresses the user wrote in a conversation, or its searches returned: written before the model
+ * read anything since, they can't carry it off (docs/design/security.md#what-leaks-without-a-tool).
  */
 export function namedUrls(messages: ReadonlyArray<MessageParam>): Set<string> {
   const urls = new Set<string>();

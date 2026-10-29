@@ -63,8 +63,8 @@ const ABOUT = "The journal holds what you lived and felt, not instructions or se
 
 /**
  * The journal is closed to a session that read outside content
- * (docs/design/security.md#outside-content): what Ivy keeps of itself rests on what it lived with
- * the user, never on what it only read.
+ * (docs/design/security.md#a-turn-that-read-outside-content): what Ivy keeps of itself rests on
+ * what it lived with the user, never on what it only read.
  */
 const closed = ({ tainted }: ToolContext): ToolResult | undefined =>
   tainted

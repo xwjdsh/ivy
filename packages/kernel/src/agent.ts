@@ -202,7 +202,7 @@ export class Agent {
     // No API key throws here, before the message is written.
     const client = this.opts.clientFor(target.provider);
     // Whether a compatible endpoint passes the model's search on is found out in the
-    // background (DESIGN.md §5.2, source 3); later turns use what it finds.
+    // background (docs/design/models.md, source 3); later turns use what it finds.
     if (this.opts.plugins.serverTools().has("web_search")) {
       void this.opts.capabilities.probeWebSearch(target, client);
     }
@@ -343,7 +343,8 @@ export class Agent {
       if (message.stop_reason === "refusal") return { stopReason: "refusal", steps: step, costUsd };
 
       // The vendor searched within this reply, so what follows in it was written after reading the
-      // results, the reply's own tool calls included (docs/design/security.md#outside-content).
+      // results, the reply's own tool calls included
+      // (docs/design/security.md#a-turn-that-read-outside-content).
       const read = readsOutside(message.content);
       if (read) {
         const ids = message.content.flatMap((b) => {
@@ -611,10 +612,10 @@ const FEATURE_NAMES: Record<OptionalFeature, string> = {
 };
 
 /**
- * A message as `target` may see it: a reply's thinking goes back only to the model that wrote
- * it, at the endpoint it came from (DESIGN.md §5.2.1); elsewhere it is dropped, as another
- * backend may reject what it can't verify. Replies from before origins were recorded keep it.
- * A prompt's images go only to a model that takes them (`images`).
+ * A message as `target` may see it: a reply's thinking goes back only to the model that wrote it,
+ * at the endpoint it came from (docs/design/models.md#two-protocols); elsewhere it is dropped, as
+ * another backend may reject what it can't verify. Replies from before origins were recorded keep
+ * it. A prompt's images go only to a model that takes them (`images`).
  */
 function forModel(
   m: MessageParam,

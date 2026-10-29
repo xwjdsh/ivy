@@ -42,8 +42,8 @@ export class Points {
   /**
    * Sum up a conversation, unless it is summed up through its last message already, or too slight.
    * Ivy's replies after outside content are marked as left out
-   * (docs/design/security.md#outside-content). Never throws: a conversation without points is only
-   * one the next can't pick up from.
+   * (docs/design/security.md#a-turn-that-read-outside-content). Never throws: a conversation
+   * without points is only one the next can't pick up from.
    */
   sumUp(id: string): Promise<void> {
     const running = this.running.get(id);

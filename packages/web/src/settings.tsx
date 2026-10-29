@@ -223,7 +223,10 @@ function Models(props: {
   );
 }
 
-/** The protocols a provider can speak (DESIGN.md §5.2.1), and where each vendor's own API is. */
+/**
+ * The protocols a provider can speak (docs/design/models.md#two-protocols), and where each vendor's
+ * own API is.
+ */
 const PROTOCOLS: Record<string, { name: string; vendor: string; url: string }> = {
   anthropic: { name: "Anthropic", vendor: "Anthropic API", url: "https://api.anthropic.com" },
   openai: { name: "OpenAI", vendor: "OpenAI API", url: "https://api.openai.com/v1" },

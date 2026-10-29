@@ -1,4 +1,4 @@
-// API keys in the macOS Keychain (DESIGN.md §5.2): a provider without `api_key` in
+// API keys in the macOS Keychain (docs/design/models.md): a provider without `api_key` in
 // config.toml has its key here, as a generic password of service "Ivy" ("Ivy Dev" in
 // development) and account the provider's name. Read and written through /usr/bin/security,
 // whose signature never changes, so a rebuilt `ivy` is never asked for access again (the

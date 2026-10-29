@@ -8,7 +8,7 @@ export type RiskLevel = "read" | "write" | "external" | "dangerous";
 /**
  * `outside`: the result is outside content (a web page, mail, search results, or words that
  * may repeat them), someone else's text: the session has read it, and is tainted until the
- * user speaks again (docs/design/security.md#outside-content).
+ * user speaks again (docs/design/security.md#a-turn-that-read-outside-content).
  */
 export type ToolResult = string | { content: string; isError?: boolean; outside?: boolean };
 
@@ -88,13 +88,16 @@ export interface CallInfo {
   /** As ToolContext.tainted. */
   tainted: boolean;
   /**
-   * Addresses the user wrote in this session or a search returned (as `normalUrl` gives
-   * them): they can't carry what the model read since (docs/design/security.md#trust-model).
+   * Addresses the user wrote in this session or a search returned (as `normalUrl` gives them): they
+   * can't carry what the model read since (docs/design/security.md#what-leaks-without-a-tool).
    */
   urls: ReadonlySet<string>;
 }
 
-/** Side work on the helper model (DESIGN.md §5.2): text in, text out, no tools. */
+/**
+ * Side work on the helper model (docs/design/models.md#helper-and-writer): text in, text out, no
+ * tools.
+ */
 export interface HelperModel {
   complete(call: {
     /** What the helper is for this time, as its system prompt. */
@@ -264,7 +267,7 @@ export interface CommandDef {
 
 /**
  * A tool the model's vendor runs on its own servers, offered where the model has it
- * (DESIGN.md §5.2). Its results are outside content.
+ * (docs/design/models.md). Its results are outside content.
  */
 export type ServerTool = "web_search";
 

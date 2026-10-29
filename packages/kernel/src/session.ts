@@ -29,7 +29,7 @@ interface StoredImage {
 
 /**
  * Where a reply came from: the endpoint (its `base_url`, see endpointKey) and the model. Its
- * thinking goes back only to that model there (DESIGN.md §5.2.1).
+ * thinking goes back only to that model there (docs/design/models.md#two-protocols).
  */
 export interface Origin {
   endpoint: string;
@@ -59,7 +59,7 @@ export type SessionRecord =
   | { type: "usage"; ts: string; usage: Anthropic.Beta.BetaUsage; costUsd: number }
   /**
    * The session read outside content here, from `tool`: tainted until the user's next prompt
-   * (docs/design/security.md#outside-content).
+   * (docs/design/security.md#a-turn-that-read-outside-content).
    */
   | { type: "outside"; ts: string; tool: string; ids?: string[] }
   /**
@@ -274,7 +274,7 @@ export class Session {
 
   /**
    * Whether the session read outside content since the user's last prompt
-   * (docs/design/security.md#outside-content).
+   * (docs/design/security.md#a-turn-that-read-outside-content).
    */
   get tainted(): boolean {
     return this.outside;

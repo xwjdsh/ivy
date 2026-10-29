@@ -452,7 +452,7 @@ export interface Found {
   place: string;
   /**
    * Saved from outside content: finding it taints the turn
-   * (docs/design/security.md#outside-content).
+   * (docs/design/security.md#a-turn-that-read-outside-content).
    */
   ext: boolean;
 }

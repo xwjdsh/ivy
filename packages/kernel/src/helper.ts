@@ -1,8 +1,8 @@
-// The helper model (DESIGN.md §5.2): side work that only extracts or sums up (a fetched page
-// read for what was asked, a session's key points) runs on `[agent] helper_model`, a small
-// fast model; unset, on the main model at low effort. A call carries no tools, so text it reads
-// can only shape its answer; what it read from outside is outside content all the same, which
-// its caller marks.
+// The helper model (docs/design/models.md#helper-and-writer): side work that only extracts or sums
+// up (a fetched page read for what was asked, a session's key points) runs on `[agent]
+// helper_model`, a small fast model; unset, on the main model at low effort. A call carries no
+// tools, so text it reads can only shape its answer; what it read from outside is outside content
+// all the same, which its caller marks.
 
 import type { HelperModel } from "@ivy/plugin-api";
 import { type Capabilities, downgradable } from "./capabilities.ts";

@@ -162,7 +162,8 @@ export class Capabilities {
       fallbacks: modern && provider.refusal_fallback && !off.has("fallbacks"),
       systemMessages: modern && !off.has("systemMessages"),
       maxTokens: facts?.maxTokens,
-      // Harmless if ignored, and a 400 if refused: tried everywhere (DESIGN.md §5.2.1).
+      // Harmless if ignored, and a 400 if refused: tried everywhere
+      // (docs/design/models.md#two-protocols).
       streamUsage: !off.has("streamUsage"),
       cacheKey: !off.has("cacheKey"),
       images: !off.has("images"),
@@ -296,7 +297,7 @@ export class Capabilities {
       `endpoint: ${provider.base_url} (${openai ? "Chat Completions" : "Messages API"}, ${official ? "the vendor's own" : "compatible"})`,
       `model facts: ${facts ? "from the Models API" : official && !openai ? "none cached yet" : "n/a"}`,
       `effort: ${caps.effort ?? "not sent"} (configured ${this.configuredEffort}${facts?.effortLevels ? `; model has ${facts.effortLevels.join("/")}` : ""}${capped}${learned.includes("effort") ? "; rejected earlier (learned)" : ""})`,
-      // What each protocol has of its own (DESIGN.md §5.2.1).
+      // What each protocol has of its own (docs/design/models.md#two-protocols).
       ...(openai
         ? [
             `usage in the stream: ${why(caps.streamUsage, "streamUsage")}`,

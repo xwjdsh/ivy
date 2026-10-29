@@ -11,7 +11,7 @@ export interface StreamHandlers {
 
 /**
  * What a request may carry besides the Messages API's own fields, for a client that speaks
- * another protocol (DESIGN.md §5.2.1); the Anthropic client has no use for it.
+ * another protocol (docs/design/models.md#two-protocols); the Anthropic client has no use for it.
  */
 export interface RequestExtras {
   /** Ask for usage at the end of the stream (Chat Completions' `stream_options`). */
@@ -69,8 +69,9 @@ export class AnthropicModelClient implements ModelClient {
 const OFFICIAL_HOSTS = { anthropic: "api.anthropic.com", openai: "api.openai.com" } as const;
 
 /**
- * The vendor's own API for a protocol, told by `base_url` alone: what is the vendor's alone
- * goes there only (DESIGN.md §5.2.1). A proxy in front of it counts as any other endpoint.
+ * The vendor's own API for a protocol, told by `base_url` alone: what is the vendor's alone goes
+ * there only (docs/design/models.md#two-protocols). A proxy in front of it counts as any other
+ * endpoint.
  */
 export function isOfficialApi(type: keyof typeof OFFICIAL_HOSTS, baseUrl: string): boolean {
   try {

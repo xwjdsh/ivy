@@ -1,9 +1,9 @@
-// OpenAI's Chat Completions, for `type = "openai"` (DESIGN.md §5.2.1). Ivy's own format is the
-// Messages API's; this client translates at its edge, both ways, so the agent loop, sessions
-// and traces never see Chat Completions. On OpenAI's own API it uses what is OpenAI's alone
-// (max_completion_tokens, the developer role); elsewhere the plainest request, as many
-// endpoints copy the protocol loosely. Errors come out as the Anthropic SDK's, so the loop
-// handles both protocols' 400s alike.
+// OpenAI's Chat Completions, for `type = "openai"` (docs/design/models.md#two-protocols). Ivy's own
+// format is the Messages API's; this client translates at its edge, both ways, so the agent loop,
+// sessions and traces never see Chat Completions. On OpenAI's own API it uses what is OpenAI's
+// alone (max_completion_tokens, the developer role); elsewhere the plainest request, as many
+// endpoints copy the protocol loosely. Errors come out as the Anthropic SDK's, so the loop handles
+// both protocols' 400s alike.
 
 import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
@@ -115,8 +115,9 @@ export function toChatRequest(
   // The developer role is OpenAI's: elsewhere it could be taken for a user's message.
   if (system) messages.push({ role: official ? "developer" : "system", content: system });
 
-  // A model's reasoning goes back only within its own turn: after the last thing the user
-  // typed (DESIGN.md §5.2.1). Earlier reasoning is the endpoint's to drop, and some reject it.
+  // A model's reasoning goes back only within its own turn: after the last thing the user typed
+  // (docs/design/models.md#two-protocols). Earlier reasoning is the endpoint's to drop, and some
+  // reject it.
   const turnStart = lastPromptIndex(request.messages);
   request.messages.forEach((m, i) => {
     messages.push(...toChatMessages(m, i > turnStart));
@@ -346,8 +347,8 @@ function stopReason(finish: string | null, hasCalls: boolean): ModelMessage["sto
 }
 
 /**
- * Usage as Anthropic counts it (DESIGN.md §5.2.1): input without what was read from the
- * cache, which Chat Completions counts in the prompt's tokens.
+ * Usage as Anthropic counts it (docs/design/models.md#two-protocols): input without what was read
+ * from the cache, which Chat Completions counts in the prompt's tokens.
  */
 export function usageOf(usage: OpenAI.CompletionUsage | undefined): Anthropic.Beta.BetaUsage {
   const cached = usage?.prompt_tokens_details?.cached_tokens ?? 0;

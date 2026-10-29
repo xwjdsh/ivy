@@ -6,7 +6,7 @@ import { fetchPage, type Page } from "./page.ts";
 /**
  * Pages read in one turn at most: unasked reads only go where the user or a search pointed,
  * but a run of asked ones, each to an address the model picked, could still spell something
- * out (docs/design/security.md#trust-model).
+ * out (docs/design/security.md#what-leaks-without-a-tool).
  */
 const MAX_FETCHES = 5;
 /** What the helper is given of a page; the rest is cut off. */
@@ -25,15 +25,16 @@ const READER = (today: string) =>
 
 /**
  * An address as the transcript and a permission prompt show it: whole, as what it carries past the
- * site is what a prompt is there to show (docs/design/security.md#trust-model), less its scheme.
+ * site is what a prompt is there to show (docs/design/security.md#what-leaks-without-a-tool), less
+ * its scheme.
  */
 const shownUrl = (url: string) => url.replace(/^https?:\/\/(www\.)?/, "");
 
 /**
  * Knowing what the user is talking about (DESIGN.md §8, `web`): the model's own server-side search
  * where it has one, and pages read by the helper model, which hands the main model an answer rather
- * than the page (docs/design/security.md#trust-model). Both bring outside content
- * (docs/design/security.md#outside-content).
+ * than the page (docs/design/security.md#what-leaks-without-a-tool). Both bring outside content
+ * (docs/design/security.md#a-turn-that-read-outside-content).
  */
 export function createWebPlugin(read = fetchPage) {
   let helper: HelperModel | undefined;
