@@ -43,9 +43,12 @@ export type SessionRecord =
       id: string;
       createdAt: string;
       model: string;
-      /** Off the record (DESIGN.md §11, M3): nothing reads it, and it is deleted once let go. */
+      /**
+       * Off the record (docs/design/companion.md#off-the-record-and-taken-back): nothing reads it,
+       * and it is deleted once let go.
+       */
       offRecord?: true;
-      /** Started by Ivy, writing first (DESIGN.md §11, M3). */
+      /** Started by Ivy, writing first (docs/design/companion.md#ivy-writes-first). */
       fromIvy?: true;
     }
   /**
@@ -54,7 +57,10 @@ export type SessionRecord =
    */
   | { type: "message"; ts: string; message: MessageParam; context?: string; origin?: Origin }
   | { type: "usage"; ts: string; usage: Anthropic.Beta.BetaUsage; costUsd: number }
-  /** The session read outside content here, from `tool`: tainted until the user's next prompt (DESIGN.md §8.1). */
+  /**
+   * The session read outside content here, from `tool`: tainted until the user's next prompt
+   * (docs/design/security.md#outside-content).
+   */
   | { type: "outside"; ts: string; tool: string; ids?: string[] }
   /**
    * What was said from the user's `prompt`th message (from 1) to the end of the turn this
@@ -221,8 +227,9 @@ export class Session {
   }
 
   /**
-   * Begin a conversation with her message (DESIGN.md §11, M3). The API wants a user turn
-   * first: a context block saying she wrote first, which is no prompt of the user's.
+   * Begin a conversation with her message (docs/design/companion.md#ivy-writes-first). The API
+   * wants a user turn first: a context block saying she wrote first, which is no prompt of the
+   * user's.
    */
   appendOpening(text: string, note: string): void {
     const opener: MessageParam = {
@@ -265,7 +272,10 @@ export class Session {
     this.write(...records);
   }
 
-  /** Whether the session read outside content since the user's last prompt (DESIGN.md §8.1). */
+  /**
+   * Whether the session read outside content since the user's last prompt
+   * (docs/design/security.md#outside-content).
+   */
   get tainted(): boolean {
     return this.outside;
   }
@@ -441,9 +451,9 @@ function takenBackAt(records: SessionRecord[]): (at: number) => boolean {
 }
 
 /**
- * Delete a session for good, with its images and key points: an off-the-record one, once let
- * go (DESIGN.md §11, M3). Not to the trash, which can be restored. Its traces are the
- * caller's (they live outside the sessions folder).
+ * Delete a session for good, with its images and key points: an off-the-record one, once let go
+ * (docs/design/companion.md#off-the-record-and-taken-back). Not to the trash, which can be
+ * restored. Its traces are the caller's (they live outside the sessions folder).
  */
 export function removeSession(dir: string, id: string): boolean {
   const file = join(dir, `${id}.jsonl`);
@@ -527,9 +537,9 @@ export function sessionHistory(dir: string): ConversationHistory {
   type Read = { mtimeMs: number; size: number; messages: PastMessage[]; offRecord: boolean };
   const read = new Map<string, Read>();
   /**
-   * A session as plugins may read it. One off the record reads as nothing at all: every
-   * reader of past conversations (key points, recall, the day's pass and notes, search)
-   * comes through here, so none needs to know (DESIGN.md §11, M3).
+   * A session as plugins may read it. One off the record reads as nothing at all: every reader of
+   * past conversations (key points, recall, the day's pass and notes, search) comes through here,
+   * so none needs to know (docs/design/companion.md#off-the-record-and-taken-back).
    */
   const readSession = (sessionId: string): Read | undefined => {
     const file = join(dir, `${sessionId}.jsonl`);

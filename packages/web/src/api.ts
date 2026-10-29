@@ -1,5 +1,5 @@
-// The chat window's side of the daemon's protocol (DESIGN.md §5.7). The page is the app's
-// own; its requests go to ivy://, a scheme the app forwards to the daemon's socket.
+// The chat window's side of the daemon's protocol (docs/design/interfaces.md). The page is the
+// app's own; its requests go to ivy://, a scheme the app forwards to the daemon's socket.
 
 import {
   type CommandInfo,
@@ -60,7 +60,7 @@ export const api = {
   createSession: async (offRecord = false) =>
     (await request<{ id: string }>("POST", "/sessions", { offRecord })).id,
   session: (id: string) => request<SessionView>("GET", `/sessions/${id}`),
-  /** The session's file goes to the trash folder (DESIGN.md §5.7). */
+  /** The session's file goes to the trash folder (DESIGN.md §5.4). */
   deleteSession: (id: string) => request<void>("DELETE", `/sessions/${id}`),
   settings: () => request<Settings>("GET", "/settings"),
   addProvider: (p: {

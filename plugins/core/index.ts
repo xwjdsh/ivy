@@ -14,8 +14,9 @@ import {
 
 /**
  * "Don't keep that", said after: what the user said from a message on is taken back
- * (DESIGN.md §11, M3). The kernel marks the part, so key points, notes, recall and search
- * never read it, and each plugin undoes what its tools wrote there.
+ * (docs/design/companion.md#off-the-record-and-taken-back). The kernel marks the part, so key
+ * points, notes, recall and search never read it, and each plugin undoes what its tools wrote
+ * there.
  */
 const takeBack = defineTool({
   name: "take_back",

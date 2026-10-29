@@ -8,7 +8,7 @@ export type RiskLevel = "read" | "write" | "external" | "dangerous";
 /**
  * `outside`: the result is outside content (a web page, mail, search results, or words that
  * may repeat them), someone else's text: the session has read it, and is tainted until the
- * user speaks again (DESIGN.md §8.1).
+ * user speaks again (docs/design/security.md#outside-content).
  */
 export type ToolResult = string | { content: string; isError?: boolean; outside?: boolean };
 
@@ -26,9 +26,10 @@ export interface ToolContext {
   tainted: boolean;
   log: Logger;
   /**
-   * Take back what the user said from the message `from` matches on (a piece of it, exactly
-   * one of theirs in this conversation): every plugin undoes what its tools wrote since, and
-   * nothing reads that part later (DESIGN.md §11, M3). Only for a tool that `takesBack`.
+   * Take back what the user said from the message `from` matches on (a piece of it, exactly one of
+   * theirs in this conversation): every plugin undoes what its tools wrote since, and nothing reads
+   * that part later (docs/design/companion.md#off-the-record-and-taken-back). Only for a tool that
+   * `takesBack`.
    */
   takeBack?(from: string): Promise<TakeBackResult>;
 }
@@ -62,13 +63,13 @@ export interface ToolDef<S extends z.ZodType = z.ZodType> {
    */
   summary?(input: z.infer<S>): string;
   /**
-   * What of Ivy's own the tool acts on, if only that: her `records` (memory, a date worked
-   * out) or her `journal`. A fact about the tool; the window decides from it, and from whether
-   * a result is outside content, how a call shows (DESIGN.md §5.7): with it, a call folds with
-   * her own things even when what it found counts as outside. Left out, the tool may act on
-   * the user's world, and shows as a line; so does an `external` or `dangerous` tool, whatever
-   * this says. A tool that keeps anything of Ivy's must say so: in a conversation off the
-   * record, one with `own` that isn't `read` doesn't run (DESIGN.md §5.5).
+   * What of Ivy's own the tool acts on, if only that: her `records` (memory, a date worked out) or
+   * her `journal`. A fact about the tool; the window decides from it, and from whether a result is
+   * outside content, how a call shows (docs/design/interfaces.md): with it, a call folds with her
+   * own things even when what it found counts as outside. Left out, the tool may act on the user's
+   * world, and shows as a line; so does an `external` or `dangerous` tool, whatever this says. A
+   * tool that keeps anything of Ivy's must say so: in a conversation off the record, one with `own`
+   * that isn't `read` doesn't run (docs/design/security.md#permission-gate).
    */
   own?: "records" | "journal";
   /** May take back part of the conversation (`ctx.takeBack`): core's tool alone. */
@@ -88,7 +89,7 @@ export interface CallInfo {
   tainted: boolean;
   /**
    * Addresses the user wrote in this session or a search returned (as `normalUrl` gives
-   * them): they can't carry what the model read since (DESIGN.md §6.3).
+   * them): they can't carry what the model read since (docs/design/security.md#trust-model).
    */
   urls: ReadonlySet<string>;
 }
@@ -231,8 +232,8 @@ export interface Reminder {
   /** When it came due. A reminder more than 12 hours late (asleep all weekend) is dropped. */
   at?: Date;
   /**
-   * Hers to bring up, not a notification (a follow-up, DESIGN.md §11, M3): the daemon writes
-   * her a message, when it may, and offers it at every check until `handled`.
+   * Hers to bring up, not a notification (a follow-up, docs/design/companion.md#ivy-writes-first):
+   * the daemon writes her a message, when it may, and offers it at every check until `handled`.
    */
   from?: "ivy";
   /** Sent, or dropped as already talked about: done with. */

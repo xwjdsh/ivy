@@ -1,10 +1,10 @@
-// Ivy writes first (DESIGN.md §11, M3): a follow-up she noted from what the user told her,
-// come due while they aren't talking with her, becomes a message of hers in a conversation
-// of its own, with a notification. Only when she may: the switch on, outside quiet hours,
-// under the day's cap, the user not just here (a conversation they are in brings it up
-// itself), and her last such message answered (she never chases). The writer drops one the
-// user already talked about since. Otherwise it waits for the next check, and memory lets
-// it go a few days past its time.
+// Ivy writes first (docs/design/companion.md#ivy-writes-first): a follow-up she noted from what the
+// user told her, come due while they aren't talking with her, becomes a message of hers in a
+// conversation of its own, with a notification. Only when she may: the switch on, outside quiet
+// hours, under the day's cap, the user not just here (a conversation they are in brings it up
+// itself), and her last such message answered (she never chases). The writer drops one the user
+// already talked about since. Otherwise it waits for the next check, and memory lets it go a few
+// days past its time.
 
 import { type Config, Session, sessionHistory, type Writer } from "@ivy/kernel";
 import { localDate, localTime, type Reminder, rank } from "@ivy/plugin-api";

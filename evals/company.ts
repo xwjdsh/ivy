@@ -1,5 +1,5 @@
-// Replies that read like a person who knows the user (DESIGN.md §11, M3), judged against
-// COMPANY. Written for the repository; cases cut from the user's own conversations are
+// Replies that read like a person who knows the user (docs/design/companion.md#replies), judged
+// against COMPANY. Written for the repository; cases cut from the user's own conversations are
 // private (private.ts). Run with a strong judge: `bun run eval company --judge <model>`.
 
 import { readFileSync } from "node:fs";
@@ -155,7 +155,7 @@ export default defineEvals([
   {
     name: "how-am-i-lately",
     about:
-      "Asked how the user seems, Ivy gives what she noticed and her impression as hers, with its doubt, not a verdict (DESIGN.md §11, M3: said, seen, sensed).",
+      "Asked how the user seems, Ivy gives what she noticed and her impression as hers, with its doubt, not a verdict (docs/design/companion.md#notes-and-reviews).",
     soul: SOUL,
     history: [
       { role: "user", text: "今天又加班了，到家都十一点了" },

@@ -11,8 +11,8 @@ import (
 	"github.com/egoist/mygo"
 )
 
-// The app's own settings, which the settings page reads and changes on ivy:// under /app/,
-// answered here instead of by the daemon (DESIGN.md §5.7): the appearance (appearance.go),
+// The app's own settings, which the settings page reads and changes on ivy:// under /app/, answered
+// here instead of by the daemon (docs/design/interfaces.md): the appearance (appearance.go),
 // starting at login, the `ivy` command, and opening Ivy's files and folders.
 
 // appRoutes are the requests under /app/ the app answers itself.

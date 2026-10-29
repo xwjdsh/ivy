@@ -291,7 +291,8 @@ export function App() {
     reloadList();
   };
 
-  // Off the record is decided as a conversation starts, for all of it (DESIGN.md §11, M3).
+  // Off the record is decided as a conversation starts, for all of it
+  // (docs/design/companion.md#off-the-record-and-taken-back).
   const offRecord = chat ? chat.offRecord === true : offNext;
   const composer = (
     <Composer

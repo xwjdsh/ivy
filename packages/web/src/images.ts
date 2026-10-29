@@ -1,5 +1,5 @@
 // Images attached to a message go as they are; only one past what the APIs take is shrunk,
-// or one of a type they don't take converted (DESIGN.md §5.7). The daemon checks again.
+// or one of a type they don't take converted (docs/design/interfaces.md). The daemon checks again.
 
 /** The types every API takes, and the most an image may weigh or measure. */
 const TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];

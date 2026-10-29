@@ -18,13 +18,13 @@ export type Item = Entry | { kind: "note"; text: string; tone: "warn" | "error" 
 export type ToolItem = Extract<Item, { kind: "tool" }>;
 
 /**
- * What a transcript shows, in order: its items, with finished calls gathered into marks under
- * the reply that follows them, by what each call is, as a person says "I looked it up" or
- * "noted" rather than shows the notes (DESIGN.md §5.7): `aside`, one acting only on her own
- * records or journal (the label's `own`, which the daemon gives no tool that reaches outside),
- * and `sources`, any other whose result was outside content (a search, a page: where her words
- * came from). A call that failed, or is anything else, is a line. `at`: the index of the item
- * it starts with, a stable key.
+ * What a transcript shows, in order: its items, with finished calls gathered into marks under the
+ * reply that follows them, by what each call is, as a person says "I looked it up" or "noted"
+ * rather than shows the notes (docs/design/interfaces.md): `aside`, one acting only on her own
+ * records or journal (the label's `own`, which the daemon gives no tool that reaches outside), and
+ * `sources`, any other whose result was outside content (a search, a page: where her words came
+ * from). A call that failed, or is anything else, is a line. `at`: the index of the item it starts
+ * with, a stable key.
  */
 export type Shown =
   | { item: Item; at: number }

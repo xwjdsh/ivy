@@ -1,7 +1,7 @@
-// The settings page (DESIGN.md §5.7), in the window in place of the conversation, by section.
-// What can be changed here is changed in place: the providers in config.toml, a line or a
-// table at a time, their keys in the Keychain, never shown back. Permissions and plugins are
-// shown, and changed in config.toml, one click away.
+// The settings page (docs/design/interfaces.md), in the window in place of the conversation, by
+// section. What can be changed here is changed in place: the providers in config.toml, a line or a
+// table at a time, their keys in the Keychain, never shown back. Permissions and plugins are shown,
+// and changed in config.toml, one click away.
 
 import type { DaemonState, ProviderInfo, Settings } from "@ivy/protocol";
 import { ExternalLink, KeyRound, Plus } from "lucide-react";

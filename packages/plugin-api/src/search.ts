@@ -151,7 +151,7 @@ function matchWeight(q: string, counts: Map<string, number>): number {
 export const RECALL_RARE = 0.05;
 
 /**
- * What a turn recalls from a plugin's records (DESIGN.md §8.1, Per-turn context): the best
+ * What a turn recalls from a plugin's records (docs/design/memory.md#per-turn-context): the best
  * hits for what the user just wrote, sharing a rare word with it, none `given` before in the
  * conversation, at most `caps[kind]` of each kind, within `maxChars`. Each line is quoted
  * and the whole is framed as the past, not instructions: it goes into the turn's context,

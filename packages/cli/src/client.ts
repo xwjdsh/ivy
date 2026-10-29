@@ -1,4 +1,4 @@
-// The `ivy` command's side of the daemon's protocol (DESIGN.md §5.7): requests over the
+// The `ivy` command's side of the daemon's protocol (docs/design/interfaces.md): requests over the
 // daemon's socket, its event stream, and starting a daemon when none answers.
 
 import { spawn } from "node:child_process";

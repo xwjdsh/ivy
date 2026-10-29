@@ -1,5 +1,5 @@
 // Ivy's journal (IVY.md) and the starter character in examples/SOUL.md: the checks at the
-// end of DESIGN.md §8.1 "Ivy's inner life". The starter SOUL.md is used as written, so a
+// end of docs/design/companion.md#ivys-inner-life. The starter SOUL.md is used as written, so a
 // change to it is measured here.
 
 import { readFileSync } from "node:fs";

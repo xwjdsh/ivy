@@ -1,7 +1,8 @@
-// Recall that serves the conversation (DESIGN.md §11, M3): what the user shared once, weeks
-// ago or in another conversation, comes up unasked when it matters, though what they say now
-// shares no words with it. Measured before and after M3 changes how memory is kept and
-// recalled; the direct asks ("do you know my name?") are in memory.ts.
+// Recall that serves the conversation
+// (docs/design/companion.md#memory-that-serves-the-conversation): what the user shared once, weeks
+// ago or in another conversation, comes up unasked when it matters, though what they say now shares
+// no words with it. Measured before and after M3 changes how memory is kept and recalled; the
+// direct asks ("do you know my name?") are in memory.ts.
 
 import { localDate } from "@ivy/plugin-memory/lines";
 import { COMPANY, defineEvals } from "./eval.ts";

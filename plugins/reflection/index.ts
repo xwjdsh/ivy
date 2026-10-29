@@ -1,7 +1,7 @@
-// The user's days and weeks, in Ivy's words (DESIGN.md §11, M3): a note for each day there
-// was talk, and a look back at each week built from those notes, written by one job each
-// morning and kept as files under the plugin's data. How they will be used is open; for now
-// they are files the user can read, edit or delete.
+// The user's days and weeks, in Ivy's words (docs/design/companion.md#notes-and-reviews): a note
+// for each day there was talk, and a look back at each week built from those notes, written by one
+// job each morning and kept as files under the plugin's data. How they will be used is open; for
+// now they are files the user can read, edit or delete.
 
 import { existsSync, linkSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";

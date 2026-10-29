@@ -1,6 +1,6 @@
-// What each turn recalls from the daily notes (DESIGN.md §8.1): what the user just wrote,
-// scored against what the notes say the user said and what was seen to recur, a sentence
-// at a time. Never what Ivy sensed: an impression is hers, not the user's truth, and would
+// What each turn recalls from the daily notes (docs/design/memory.md#per-turn-context): what the
+// user just wrote, scored against what the notes say the user said and what was seen to recur, a
+// sentence at a time. Never what Ivy sensed: an impression is hers, not the user's truth, and would
 // go to the model with every request it matched. No model call: one keyword ranking.
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";

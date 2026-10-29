@@ -76,7 +76,7 @@ async function main(): Promise<number> {
     return 1;
   }
 
-  // Ivy runs in the daemon; this process only shows it (DESIGN.md §5.7).
+  // Ivy runs in the daemon; this process only shows it (docs/design/interfaces.md).
   const paths = resolvePaths();
   const client = await connect(paths);
 

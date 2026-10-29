@@ -1,6 +1,7 @@
-// The daemon's requests besides /health and /events: sessions, prompts, permission answers,
-// the model and effort, and what the settings page shows and changes (DESIGN.md §5.7). Bodies are JSON, checked against @ivy/protocol; a refusal is
-// `{ error }` with a status that says what kind.
+// The daemon's requests besides /health and /events: sessions, prompts, permission answers, the
+// model and effort, and what the settings page shows and changes (docs/design/interfaces.md).
+// Bodies are JSON, checked against @ivy/protocol; a refusal is `{ error }` with a status that says
+// what kind.
 
 import {
   addProvider,

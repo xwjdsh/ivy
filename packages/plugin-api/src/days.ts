@@ -1,6 +1,7 @@
-// A user's day, as the jobs that look back on it read it (DESIGN.md §11, M3): it ends at the
-// rollover hour, so a talk past midnight belongs to the day it began in, and what was said in
-// it is the user's words and Ivy's replies, but not those that came from outside content.
+// A user's day, as the jobs that look back on it read it
+// (docs/design/companion.md#notes-and-reviews): it ends at the rollover hour, so a talk past
+// midnight belongs to the day it began in, and what was said in it is the user's words and Ivy's
+// replies, but not those that came from outside content.
 
 import { localDate, localTime } from "./dates.ts";
 import type { ConversationHistory } from "./index.ts";
@@ -48,7 +49,7 @@ export function nextDate(date: string): string {
 /**
  * A day's conversations as the writer reads them: what was said in it, in the order said,
  * conversation by conversation; Ivy's replies in turns that read outside content left out
- * (§8.1). Empty when the user said nothing that day.
+ * (docs/design/security.md#outside-content). Empty when the user said nothing that day.
  */
 export function dayTranscript(history: ConversationHistory, date: string): string {
   const start = dayStart(date);

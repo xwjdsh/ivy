@@ -57,7 +57,7 @@ const TAGS_HELP = 'Comma-separated, in both languages, e.g. "dentist, 牙医, �
 
 /**
  * Why a turn that read outside content asks before it writes to the files in every session
- * (DESIGN.md §8.1): the words may be someone else's.
+ * (docs/design/security.md#outside-content): the words may be someone else's.
  */
 const OUTSIDE = "this turn read outside content";
 
@@ -305,7 +305,8 @@ export function createMemoryPlugin(): IvyPlugin {
         run: (input) => {
           const found = find(screen(context(store().read()).files).files, input);
           const content = searchText(found);
-          // An entry saved from outside content may carry its words (§8.1).
+          // An entry saved from outside content may carry its words
+          // (docs/design/security.md#outside-content).
           return found.some((f) => f.ext) ? { content, outside: true } : content;
         },
       }),
@@ -411,8 +412,9 @@ export function createMemoryPlugin(): IvyPlugin {
       const current = screen(store().read()).files;
       const parts: string[] = [];
       // A follow-up come due while the user is here is hers to bring up now, in passing, once;
-      // given, it is done, so it is never also sent to them (DESIGN.md §11, M3). Not off the
-      // record, where marking it done would keep something of that conversation: it waits.
+      // given, it is done, so it is never also sent to them
+      // (docs/design/companion.md#ivy-writes-first). Not off the record, where marking it done
+      // would keep something of that conversation: it waits.
       const follows = offRecord ? [] : dueFollows(current, now, ready().remindAt);
       if (follows.length) {
         parts.push(`${FOLLOW_HEAD}\n${follows.map((f) => `- ${f.text}`).join("\n")}`);

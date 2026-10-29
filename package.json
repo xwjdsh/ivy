@@ -14,7 +14,7 @@
     "build:app": "bun scripts/build-app.ts",
     "test": "bun test",
     "typecheck": "tsc --noEmit -p . && tsc --noEmit -p packages/web",
-    "lint": "biome check .",
+    "lint": "biome check . && bun scripts/check-design-links.ts",
     "format": "biome format --write .",
     "eval": "bun evals/run.ts"
   },

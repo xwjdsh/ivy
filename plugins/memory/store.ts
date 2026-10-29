@@ -200,9 +200,10 @@ export interface KeepInput {
 }
 
 /**
- * Keep in the archive what the day's pass found said and not saved (DESIGN.md §11, M3). It
- * is kept only if nothing like it is in any file: a pass that misjudges adds nothing that
- * is already there, in other words or not.
+ * Keep in the archive what the day's pass found said and not saved
+ * (docs/design/companion.md#memory-that-serves-the-conversation). It is kept only if nothing like
+ * it is in any file: a pass that misjudges adds nothing that is already there, in other words or
+ * not.
  */
 export function keep(ctx: Context, input: KeepInput): (Change & { line: string }) | undefined {
   const { text, tags } = contentAndTags(input.content, input.tags ?? []);
@@ -449,7 +450,10 @@ export interface Found {
   line: string;
   /** Where it is, as the model and the user read it: "MEMORY.md", "archive/family". */
   place: string;
-  /** Saved from outside content: finding it taints the turn (DESIGN.md §8.1). */
+  /**
+   * Saved from outside content: finding it taints the turn
+   * (docs/design/security.md#outside-content).
+   */
   ext: boolean;
 }
 

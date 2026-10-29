@@ -40,7 +40,10 @@ export function saveHelperModel(paths: Paths, model: string | undefined): Config
   );
 }
 
-/** Save whether Ivy writes first, `[agent] writes_first` (DESIGN.md §11, M3). */
+/**
+ * Save whether Ivy writes first, `[agent] writes_first`
+ * (docs/design/companion.md#ivy-writes-first).
+ */
 export function saveWritesFirst(paths: Paths, on: boolean): Config {
   return saveEdit(
     paths,

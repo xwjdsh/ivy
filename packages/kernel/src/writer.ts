@@ -1,6 +1,6 @@
-// Ivy speaking, for what she writes herself (DESIGN.md §11, M3): a day's note, a review. On
-// the main model, as she is in conversation: her rules, SOUL.md and the plugins' session
-// sections (her memory, so she knows the names; her journal, so her impressions are hers),
+// Ivy speaking, for what she writes herself (docs/design/companion.md#notes-and-reviews): a day's
+// note, a review. On the main model, as she is in conversation: her rules, SOUL.md and the plugins'
+// session sections (her memory, so she knows the names; her journal, so her impressions are hers),
 // then the task. No tools: what it reads can only shape what it writes.
 
 import type { WriterModel } from "@ivy/plugin-api";

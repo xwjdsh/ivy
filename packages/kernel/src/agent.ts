@@ -223,7 +223,7 @@ export class Agent {
       });
     }
     // Off the record, said on every turn, so she says so herself when it matters and offers
-    // to keep nothing (DESIGN.md §11, M3).
+    // to keep nothing (docs/design/companion.md#off-the-record-and-taken-back).
     const context = await this.opts.plugins.turnContext(
       { sessionId: session.id, userText, now: new Date(), offRecord: session.offRecord },
       session.offRecord ? [{ id: "conversation", text: OFF_RECORD }] : [],
@@ -342,8 +342,8 @@ export class Agent {
       // A refusal may cut content off mid-block; don't keep it in history.
       if (message.stop_reason === "refusal") return { stopReason: "refusal", steps: step, costUsd };
 
-      // The vendor searched within this reply, so what follows in it was written after
-      // reading the results, the reply's own tool calls included (DESIGN.md §8.1).
+      // The vendor searched within this reply, so what follows in it was written after reading the
+      // results, the reply's own tool calls included (docs/design/security.md#outside-content).
       const read = readsOutside(message.content);
       if (read) {
         const ids = message.content.flatMap((b) => {
@@ -466,10 +466,11 @@ export class Agent {
    * see the session as it was before it: their input was written before any result.
    */
   /**
-   * Take back what was said from the user's message `from` matches (DESIGN.md §11, M3): the
-   * part is marked, so nothing reads it later, and its key points go, to be summed up again
-   * without it; then each plugin undoes what its tools wrote there. The marking comes first:
-   * an undo that fails leaves nothing readable behind.
+   * Take back what was said from the user's message `from` matches
+   * (docs/design/companion.md#off-the-record-and-taken-back): the part is marked, so nothing reads
+   * it later, and its key points go, to be summed up again without it; then each plugin undoes what
+   * its tools wrote there. The marking comes first: an undo that fails leaves nothing readable
+   * behind.
    */
   private async takeBack(session: Session, from: string): Promise<TakeBackResult> {
     const span = session.spanFrom(from);

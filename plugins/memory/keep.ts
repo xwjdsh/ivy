@@ -1,8 +1,8 @@
-// The day's memory pass (DESIGN.md §11, M3, kept even when missed): after each day there was
-// talk, the writer reads what was said and names what the user said that should have been
-// kept and wasn't; code keeps each in the archive, never a hot file, if nothing like it is
-// in any file. It reads the day as the jobs do, without replies from outside content, so
-// what it keeps is untainted. What it kept is listed for /memory.
+// The day's memory pass (docs/design/companion.md#memory-that-serves-the-conversation): after each
+// day there was talk, the writer reads what was said and names what the user said that should have
+// been kept and wasn't; code keeps each in the archive, never a hot file, if nothing like it is in
+// any file. It reads the day as the jobs do, without replies from outside content, so what it keeps
+// is untainted. What it kept is listed for /memory.
 
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";

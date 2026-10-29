@@ -1,6 +1,6 @@
-// What she remembers about the user, on the other side of her card, in her words (§5.7): the
-// memory plugin's /remembered, to read. A correction is told to her, in a conversation, where
-// her memory tools make it.
+// What she remembers about the user, on the other side of her card, in her words
+// (docs/design/interfaces.md): the memory plugin's /remembered, to read. A correction is told to
+// her, in a conversation, where her memory tools make it.
 
 import { ChevronLeft } from "lucide-react";
 import { useEffect, useRef, useState } from "react";

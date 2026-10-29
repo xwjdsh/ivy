@@ -1,6 +1,6 @@
-// The day's memory pass (DESIGN.md §8.1): after a day's talk, what the user said in passing
-// and nobody saved is kept in the archive; nothing guessed, nothing read, nothing the user
-// asked to forget. The day is given as history, so no turn of the conversation saves it
+// The day's memory pass (docs/design/memory.md#the-days-pass): after a day's talk, what the user
+// said in passing and nobody saved is kept in the archive; nothing guessed, nothing read, nothing
+// the user asked to forget. The day is given as history, so no turn of the conversation saves it
 // first, and the pass alone is measured.
 
 import { defineEvals } from "./eval.ts";

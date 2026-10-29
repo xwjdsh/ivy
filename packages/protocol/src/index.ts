@@ -1,5 +1,5 @@
 // What Ivy's daemon and its clients (the TUI, the chat window) say to each other, over HTTP
-// and Server-Sent Events on the daemon's Unix socket (DESIGN.md §5.7).
+// and Server-Sent Events on the daemon's Unix socket (docs/design/interfaces.md).
 //
 // What a client shows comes from the daemon: tool labels, history as entries, a permission
 // prompt's choices. Clients only draw it. Only types are taken from the kernel, so a web
@@ -217,7 +217,10 @@ export function stopNote(end: TurnEnd): string | undefined {
 export type SessionEvent = { sessionId: string } & SessionChange;
 
 export type SessionChange =
-  /** A conversation Ivy started herself, her message first (DESIGN.md §11, M3). */
+  /**
+   * A conversation Ivy started herself, her message first
+   * (docs/design/companion.md#ivy-writes-first).
+   */
   | { type: "started" }
   /** A message arrived: it runs now, or waits for the running turn. */
   | { type: "prompt"; prompt: Prompt }
@@ -302,7 +305,7 @@ export interface DaemonState {
   canSwitchModel: boolean;
   /** The helper model for side work, "<provider>/<model id>"; "" when side work runs on `model`. */
   helperModel: string;
-  /** Ivy writes first, from follow-ups (DESIGN.md §11, M3). */
+  /** Ivy writes first, from follow-ups (docs/design/companion.md#ivy-writes-first). */
   writesFirst: boolean;
   /** The effort levels /effort offers. */
   efforts: string[];
@@ -405,7 +408,10 @@ export type Switched = DaemonState & { saved: boolean; error?: string };
 /** POST /sessions */
 export const CreateSession = z.object({
   display: z.enum(DISPLAYS).default("markdown"),
-  /** Off the record (DESIGN.md §11, M3): set when it starts, for all of it. */
+  /**
+   * Off the record (docs/design/companion.md#off-the-record-and-taken-back): set when it starts,
+   * for all of it.
+   */
   offRecord: z.boolean().default(false),
 });
 /** POST /sessions/:id/prompts: text, images (as POST /images named them), or both. */

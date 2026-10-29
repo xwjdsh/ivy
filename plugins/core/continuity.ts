@@ -1,5 +1,5 @@
-// A sense of time and of going on (DESIGN.md §11, M3): how long since the user last wrote,
-// and, as a conversation starts, where the last one was left.
+// A sense of time and of going on (docs/design/companion.md#a-sense-of-time-and-of-going-on): how
+// long since the user last wrote, and, as a conversation starts, where the last one was left.
 
 import { type ConversationHistory, localDate, localTime } from "@ivy/plugin-api";
 import { weekdayOf } from "./dates.ts";

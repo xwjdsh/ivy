@@ -79,7 +79,7 @@ export interface EvalCase {
 }
 
 /**
- * How a companion's reply is judged (DESIGN.md §11, M3: replies that read like a person).
+ * How a companion's reply is judged (docs/design/companion.md#replies).
  * A criterion that doesn't apply to the reply (no memory in play, nothing to ask back) passes.
  */
 export const COMPANY = [

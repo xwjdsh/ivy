@@ -1,7 +1,7 @@
-// Ivy's app: a thin shell around `ivy daemon` (DESIGN.md §5.7), in the Dock. It keeps the
-// daemon running, shows its reminders as notifications of Ivy's own, shows the chat window
-// (the app's web page, a client of the daemon), starts at login, and installs the `ivy`
-// command. All of Ivy's logic stays in the daemon.
+// Ivy's app: a thin shell around `ivy daemon` (docs/design/interfaces.md), in the Dock. It keeps
+// the daemon running, shows its reminders as notifications of Ivy's own, shows the chat window (the
+// app's web page, a client of the daemon), starts at login, and installs the `ivy` command. All of
+// Ivy's logic stays in the daemon.
 package main
 
 import (

@@ -13,11 +13,11 @@ import (
 	"github.com/egoist/mygo"
 )
 
-// The chat window shows the app's web page (packages/web, the app's frontend, embedded by
-// `mygo build`), so the interface is TypeScript like the rest of Ivy (DESIGN.md §5.7). The
-// page talks to the daemon through ivy://, a scheme of the app's own whose requests this
-// app forwards to the daemon's socket: the daemon listens on no TCP port, and nothing else
-// can reach it this way. The app answers its own settings there itself (appRoutes).
+// The chat window shows the app's web page (packages/web, the app's frontend, embedded by `mygo
+// build`), so the interface is TypeScript like the rest of Ivy (docs/design/interfaces.md). The
+// page talks to the daemon through ivy://, a scheme of the app's own whose requests this app
+// forwards to the daemon's socket: the daemon listens on no TCP port, and nothing else can reach it
+// this way. The app answers its own settings there itself (appRoutes).
 const daemonScheme = "ivy"
 
 // schemeHandler serves ivy://: the app's own settings, and the daemon for the rest.
@@ -78,8 +78,8 @@ var quitting bool
 // settingsWanted is set when the settings are asked for before the page is there to show them.
 var settingsWanted bool
 
-// openSettings shows the chat window with its settings page (DESIGN.md §5.7). The page opens
-// it on the "ivy:settings" event, or, if that came before it listened, on the flag it finds.
+// openSettings shows the chat window with its settings page (docs/design/interfaces.md). The page
+// opens it on the "ivy:settings" event, or, if that came before it listened, on the flag it finds.
 func openSettings() {
 	if w := chatWindow; w != nil {
 		openChat()

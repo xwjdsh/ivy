@@ -69,7 +69,10 @@ const ConfigSchema = z.strictObject({
       helper_model: z.string().min(1).optional(),
       /** Max model calls per user turn before the loop stops. */
       max_steps: z.number().int().positive().default(25),
-      /** Ivy writes first, from follow-ups the user's words gave her (DESIGN.md §11, M3). */
+      /**
+       * Ivy writes first, from follow-ups the user's words gave her
+       * (docs/design/companion.md#ivy-writes-first).
+       */
       writes_first: z.boolean().default(true),
       /** When she doesn't, as "HH:MM-HH:MM", local; it may cross midnight. */
       writes_first_quiet: z

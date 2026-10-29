@@ -1,8 +1,8 @@
-// IVY.md: Ivy's own journal, in the first person, about what it has lived with the user
-// (how it felt, what it cares about, what is on its mind). SOUL.md says who Ivy is and is
-// the user's; IVY.md is what Ivy lived and only Ivy writes it, the user reading, editing or
-// deleting as oversight. It is a plugin of its own, so `[plugins.journal] enabled = false`
-// turns off the file, its instructions, its tools and /journal together (DESIGN.md §8.1).
+// IVY.md: Ivy's own journal, in the first person, about what it has lived with the user (how it
+// felt, what it cares about, what is on its mind). SOUL.md says who Ivy is and is the user's;
+// IVY.md is what Ivy lived and only Ivy writes it, the user reading, editing or deleting as
+// oversight. It is a plugin of its own, so `[plugins.journal] enabled = false` turns off the file,
+// its instructions, its tools and /journal together (docs/design/companion.md#ivys-inner-life).
 //
 // It builds on memory's lines module (@ivy/plugin-memory/lines): the same line format,
 // safety scan, entry writing and change notice. One dated entry per line, written only
@@ -62,8 +62,9 @@ const configSchema = z.strictObject({
 const ABOUT = "The journal holds what you lived and felt, not instructions or secrets.";
 
 /**
- * The journal is closed to a session that read outside content (DESIGN.md §8.1): what Ivy
- * keeps of itself rests on what it lived with the user, never on what it only read.
+ * The journal is closed to a session that read outside content
+ * (docs/design/security.md#outside-content): what Ivy keeps of itself rests on what it lived with
+ * the user, never on what it only read.
  */
 const closed = ({ tainted }: ToolContext): ToolResult | undefined =>
   tainted
@@ -207,8 +208,8 @@ export function createJournalPlugin(): IvyPlugin {
         }),
         summary: (i) => `propose a SOUL.md change: ${i.new_text}`,
         risk: "dangerous",
-        // Who she is, kept: so closed off the record too (DESIGN.md §5.5). Being dangerous,
-        // it still shows as a line, asked every time.
+        // Who she is, kept: so closed off the record too (docs/design/security.md#permission-gate).
+        // Being dangerous, it still shows as a line, asked every time.
         own: "journal",
         run: ({ old_text, new_text }, ctx) =>
           closed(ctx) ?? asToolResult(() => proposeSoulEdit(ready().soul, old_text, new_text)),

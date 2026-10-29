@@ -1,7 +1,7 @@
-// Sessions in the daemon (DESIGN.md §5.7). Each has one inbox: a message that arrives while
-// a turn runs waits for it, then runs as the next turn, whichever client sent it. What
-// happens goes out as events to every client, so several can follow one session; any of
-// them may answer a permission prompt, and the first answer counts.
+// Sessions in the daemon (docs/design/interfaces.md). Each has one inbox: a message that arrives
+// while a turn runs waits for it, then runs as the next turn, whichever client sent it. What
+// happens goes out as events to every client, so several can follow one session; any of them may
+// answer a permission prompt, and the first answer counts.
 //
 // A session is loaded when a client first asks for it and let go once it has been idle a
 // while, so a daemon that runs for weeks doesn't keep every session it ever opened.
@@ -311,7 +311,7 @@ export class Sessions {
 
   /**
    * An off-the-record session ended: gone for good, its images and traces too, as the user
-   * was told (DESIGN.md §11, M3). Whether it was there.
+   * was told (docs/design/companion.md#off-the-record-and-taken-back). Whether it was there.
    */
   private forget(id: string): boolean {
     rmSync(join(this.ivy.paths.traces, id), { recursive: true, force: true });

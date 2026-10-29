@@ -1,8 +1,9 @@
-// What each turn recalls without the model having to think of it (DESIGN.md §8.1): what the
-// user just wrote, scored against the archive and past conversations, the few best hits
-// going into the turn's context. The hot files are in the prompt already, so they aren't
-// searched. Nothing unasked may taint a turn: a reply that followed outside content and an
-// entry saved from it (`ext`) are left out. No model call: one keyword ranking.
+// What each turn recalls without the model having to think of it
+// (docs/design/memory.md#per-turn-context): what the user just wrote, scored against the archive
+// and past conversations, the few best hits going into the turn's context. The hot files are in the
+// prompt already, so they aren't searched. Nothing unasked may taint a turn: a reply that followed
+// outside content and an entry saved from it (`ext`) are left out. No model call: one keyword
+// ranking.
 
 import {
   type ConversationHistory,

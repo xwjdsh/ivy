@@ -38,7 +38,7 @@ export function serverToolDefs(
 
 /**
  * The vendor's tool whose results a reply holds (search results, and the pages its
- * filtering code read), if any: outside content (DESIGN.md §8.1).
+ * filtering code read), if any: outside content (docs/design/security.md#outside-content).
  */
 export function readsOutside(content: ReadonlyArray<{ type: string }>): string | undefined {
   const found = content.find((b) => b.type !== "server_tool_use" && SERVER_BLOCKS.has(b.type));
@@ -105,7 +105,7 @@ function searchResultText(block: {
 
 /**
  * Addresses the user wrote in a conversation, or its searches returned: written before the
- * model read anything since, they can't carry it off (DESIGN.md §6.3).
+ * model read anything since, they can't carry it off (docs/design/security.md#trust-model).
  */
 export function namedUrls(messages: ReadonlyArray<MessageParam>): Set<string> {
   const urls = new Set<string>();
